@@ -11,8 +11,18 @@ import time
 from chat_api import ApiError, ChatAPI, load_server, save_server
 
 
+TUI_LOGO = """
+        ╭────────╮
+        │  ╭───╮ │
+        │  │ P │ │
+        │  ╰─╮ ╰╮│
+        ╰────╰──╯╯
+            <◆>
+"""
+
+
 def login(api: ChatAPI):
-    print("\n  PolyChat TUI\n  ────────────")
+    print("\n  账号认证\n  ────────")
     mode = input("登录 [L] / 注册 [R]: ").strip().lower()
     username = input("用户名: ").strip()
     password = getpass.getpass("密码: ")
@@ -20,6 +30,8 @@ def login(api: ChatAPI):
 
 
 def choose_server(initial: str | None = None):
+    print(TUI_LOGO)
+    print("        PolyChat TUI\n")
     default = initial or load_server()
     while True:
         address = input(f"服务器地址 [{default}]: ").strip() or default
@@ -57,7 +69,7 @@ class TUI:
     def draw(self):
         s = self.screen; s.erase(); h, w = s.getmaxyx()
         if h < 8 or w < 35: s.addnstr(0, 0, "终端窗口太小", max(1, w - 1)); s.refresh(); return
-        title = f" PolyChat  #{self.room['name']}  ·  {self.user['username']} "
+        title = f" ◖P◗ PolyChat  #{self.room['name']}  ·  {self.user['username']} "
         s.attron(curses.A_REVERSE); s.addnstr(0, 0, title.ljust(w), w - 1); s.attroff(curses.A_REVERSE)
         lines = []
         for msg in self.messages:
