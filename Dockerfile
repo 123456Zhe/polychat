@@ -2,10 +2,13 @@ FROM node:24-bookworm-slim
 
 WORKDIR /app
 
-COPY --chown=node:node package.json server.mjs ./
+COPY --chown=node:node package.json package-lock.json server.mjs ./
 COPY --chown=node:node web ./web
 
-RUN mkdir -p /app/data/uploads && chown -R node:node /app/data
+RUN npm ci --omit=dev --ignore-scripts \
+    && npm cache clean --force \
+    && mkdir -p /app/data/uploads \
+    && chown -R node:node /app/data
 
 USER node
 

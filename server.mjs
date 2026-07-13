@@ -7,6 +7,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC = join(ROOT, 'web');
+const KATEX_DIST = join(ROOT, 'node_modules', 'katex', 'dist');
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
 const DB_PATH = process.env.DB_PATH || join(ROOT, 'data', 'polychat.db');
@@ -352,14 +353,29 @@ async function api(req, res, url) {
   return json(res, 404, { error: '接口不存在' });
 }
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf' };
 function staticFile(res, pathname) {
+  let vendorFile = null;
+  if (pathname === '/vendor/katex.min.css') vendorFile = join(KATEX_DIST, 'katex.min.css');
+  else if (pathname === '/vendor/katex.min.js') vendorFile = join(KATEX_DIST, 'katex.min.js');
+  else if (/^\/vendor\/fonts\/KaTeX_[A-Za-z0-9_-]+\.(woff2?|ttf)$/.test(pathname)) {
+    vendorFile = join(KATEX_DIST, pathname.slice('/vendor/'.length));
+  }
+  if (vendorFile) {
+    try {
+      const body = readFileSync(vendorFile);
+      res.writeHead(200, { 'content-type': MIME[extname(vendorFile)] || 'application/octet-stream', 'cache-control': 'public, max-age=31536000, immutable' });
+      return res.end(body);
+    } catch { return json(res, 404, { error: '页面不存在' }); }
+  }
   const relative = pathname === '/' ? 'index.html' : pathname.slice(1);
   const safe = normalize(relative).replace(/^(\.\.[/\\])+/, '');
   if (!['index.html', 'app.js', 'style.css', 'icon.png'].includes(safe)) return json(res, 404, { error: '页面不存在' });
   try {
-    res.writeHead(200, { 'content-type': MIME[extname(safe)] || 'application/octet-stream', 'cache-control': 'no-cache' });
-    res.end(readFileSync(join(PUBLIC, safe)));
+    const body = readFileSync(join(PUBLIC, safe));
+    const cacheControl = safe === 'index.html' ? 'no-cache' : 'public, max-age=3600';
+    res.writeHead(200, { 'content-type': MIME[extname(safe)] || 'application/octet-stream', 'cache-control': cacheControl });
+    res.end(body);
   } catch { json(res, 404, { error: '页面不存在' }); }
 }
 
