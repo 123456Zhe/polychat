@@ -1,5 +1,5 @@
 const $ = selector => document.querySelector(selector);
-const state = { mode: 'login', user: null, room: null, rooms: [], lastId: 0, timer: null, roomTimer: null, eventTimer: null, eventCursor: null, unread: new Map(), notificationsEnabled: false, pendingFile: null, sending: false };
+const state = { mode: 'login', user: null, room: null, rooms: [], lastId: 0, timer: null, roomTimer: null, eventTimer: null, eventCursor: null, unread: new Map(), notificationsEnabled: false, pendingFile: null, previewUrl: null, sending: false };
 
 async function request(path, options = {}) {
   const response = await fetch(path, { ...options, headers: { 'content-type': 'application/json', ...(options.headers || {}) } });
@@ -257,15 +257,23 @@ async function uploadAvatar(file) {
     state.user = user; updateAccountAvatars(); $('#avatar-status').textContent = '头像已更新'; toast('头像已更新');
   } catch (error) { $('#avatar-status').textContent = error.message; }
 }
-function selectFile(file) {
+function selectFile(file, source = '等待发送') {
   if (!file) return;
   if (file.size > 10 * 1024 * 1024) return toast('单个文件不能超过 10 MB');
   if (!file.size) return toast('不能发送空文件');
   state.pendingFile = file; $('#attachment-name').textContent = file.name;
-  $('#attachment-status').textContent = `${formatSize(file.size)} · 等待发送`;
+  $('#attachment-status').textContent = `${formatSize(file.size)} · ${source}`;
+  if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
+  state.previewUrl = file.type.startsWith('image/') ? URL.createObjectURL(file) : null;
+  $('#attachment-thumbnail').classList.toggle('hidden', !state.previewUrl);
+  $('#attachment-preview .file-icon').classList.toggle('hidden', Boolean(state.previewUrl));
+  if (state.previewUrl) $('#attachment-thumbnail').src = state.previewUrl;
   $('#attachment-preview').classList.remove('hidden');
 }
 function clearSelectedFile() {
+  if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
+  state.previewUrl = null; $('#attachment-thumbnail').removeAttribute('src');
+  $('#attachment-thumbnail').classList.add('hidden'); $('#attachment-preview .file-icon').classList.remove('hidden');
   state.pendingFile = null; $('#file-input').value = ''; $('#attachment-preview').classList.add('hidden');
   $('#attachment-status').textContent = '';
 }
@@ -287,6 +295,16 @@ $('#file-input').addEventListener('change', event => selectFile(event.target.fil
 $('#remove-attachment').addEventListener('click', clearSelectedFile);
 for (const name of ['dragenter', 'dragover']) $('#composer').addEventListener(name, event => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; $('#composer').classList.add('dragover'); });
 for (const name of ['dragleave', 'drop']) $('#composer').addEventListener(name, event => { event.preventDefault(); $('#composer').classList.remove('dragover'); if (name === 'drop') selectFile(event.dataTransfer.files[0]); });
+$('#composer').addEventListener('paste', event => {
+  const item = [...(event.clipboardData?.items || [])].find(candidate => candidate.kind === 'file' && candidate.type.startsWith('image/'));
+  if (!item) return;
+  const image = item.getAsFile(); if (!image) return;
+  event.preventDefault();
+  const subtype = image.type.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+  selectFile(new File([image], `clipboard-${stamp}.${subtype}`, { type:image.type, lastModified:Date.now() }), '来自剪贴板');
+  toast('已添加剪贴板图片，按发送即可上传');
+});
 $('#new-room').addEventListener('click', async () => { const name = prompt('新聊天室名称'); if (!name) return; try { await request('/api/rooms', { method:'POST', body:JSON.stringify({ name }) }); await loadRooms(); } catch (e) { toast(e.message); } });
 $('#avatar').addEventListener('click', openAccount);
 $('#close-account').addEventListener('click', closeAccount);

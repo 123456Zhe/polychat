@@ -54,6 +54,7 @@
       <div id="messages" class="messages" aria-live="polite"></div>
       <form id="composer" class="composer">
         <div id="attachment-preview" class="attachment-preview hidden">
+          <img id="attachment-thumbnail" class="attachment-thumbnail hidden" alt="待发送图片预览">
           <span class="file-icon">↥</span><div><strong id="attachment-name"></strong><small id="attachment-status"></small></div>
           <button id="remove-attachment" type="button" title="移除附件">×</button>
         </div>
@@ -61,7 +62,7 @@
         <div class="compose-foot">
           <button id="attach-file" class="attach-file" type="button" title="添加文件">⌕</button>
           <input id="file-input" type="file" hidden>
-          <span><kbd>Enter</kbd> 发送 · <kbd>Shift Enter</kbd> 换行 · 可拖放文件</span>
+          <span><kbd>Enter</kbd> 发送 · <kbd>Shift Enter</kbd> 换行 · 可拖放文件或粘贴图片</span>
           <button class="send" title="发送">↑</button>
         </div>
       </form>
