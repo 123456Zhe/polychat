@@ -5,6 +5,7 @@ import base64
 import json
 import mimetypes
 import os
+from pathlib import Path
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -14,10 +15,58 @@ class ApiError(Exception):
     pass
 
 
+CONFIG_PATH = Path.home() / ".config" / "polychat" / "client.json"
+
+
+def normalize_server(value: str) -> str:
+    """Accept an IP, host:port, or full HTTP(S) URL."""
+    address = str(value).strip()
+    if not address:
+        raise ApiError("服务器地址不能为空")
+    has_scheme = "://" in address
+    parsed = urllib.parse.urlsplit(address if has_scheme else f"http://{address}")
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+        raise ApiError("服务器地址格式错误")
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        raise ApiError("服务器地址不能包含路径、参数或片段")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ApiError("服务器端口无效") from exc
+    host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    if port is not None:
+        host = f"{host}:{port}"
+    elif not has_scheme:
+        host = f"{host}:3000"
+    return f"{parsed.scheme}://{host}"
+
+
+def load_server(default: str = "http://127.0.0.1:3000") -> str:
+    try:
+        return normalize_server(json.loads(CONFIG_PATH.read_text(encoding="utf-8"))["server"])
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, ApiError):
+        return default
+
+
+def save_server(server: str):
+    try:
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG_PATH.write_text(json.dumps({"server": normalize_server(server)}, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
 class ChatAPI:
     def __init__(self, base_url: str = "http://127.0.0.1:3000"):
-        self.base_url = base_url.rstrip("/")
+        self.base_url = normalize_server(base_url)
         self.token: str | None = None
+
+    def set_server(self, base_url: str):
+        normalized = normalize_server(base_url)
+        if normalized != self.base_url:
+            self.base_url = normalized
+            self.token = None
+        return normalized
 
     def request(self, method: str, path: str, data=None, timeout: int = 8):
         body = json.dumps(data, ensure_ascii=False).encode() if data is not None else None

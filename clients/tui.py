@@ -8,7 +8,7 @@ import getpass
 import textwrap
 import time
 
-from chat_api import ApiError, ChatAPI
+from chat_api import ApiError, ChatAPI, load_server, save_server
 
 
 def login(api: ChatAPI):
@@ -17,6 +17,16 @@ def login(api: ChatAPI):
     username = input("用户名: ").strip()
     password = getpass.getpass("密码: ")
     return api.login(username, password, mode == "r")
+
+
+def choose_server(initial: str | None = None):
+    default = initial or load_server()
+    while True:
+        address = input(f"服务器地址 [{default}]: ").strip() or default
+        try:
+            return ChatAPI(address)
+        except ApiError as exc:
+            print(f"地址错误：{exc}")
 
 
 class TUI:
@@ -150,9 +160,11 @@ class TUI:
 
 def main():
     parser = argparse.ArgumentParser(description="PolyChat TUI client")
-    parser.add_argument("--server", default="http://127.0.0.1:3000")
-    args = parser.parse_args(); api = ChatAPI(args.server)
-    try: user = login(api); curses.wrapper(lambda screen: TUI(screen, api, user).run())
+    parser.add_argument("--server", help="交互提示中的初始服务器地址")
+    args = parser.parse_args(); api = choose_server(args.server)
+    try:
+        user = login(api); save_server(api.base_url)
+        curses.wrapper(lambda screen: TUI(screen, api, user).run())
     except (ApiError, KeyboardInterrupt) as exc: print(f"\n{exc}")
 
 

@@ -44,6 +44,8 @@ cd /home/zhe/polychat
 ./run-tui.sh
 ```
 
+GUI 登录页和 TUI 启动提示都可直接输入服务器 IP、`IP:端口` 或完整 URL；只输入 IP 时会自动使用 `http://IP:3000`，成功登录后会记住该地址。
+
 连接远程服务时：
 
 ```bash
@@ -97,6 +99,7 @@ $$
 
 ```bash
 npm test
+python3 -m unittest discover -s test -p 'test_client.py'
 python3 -m py_compile clients/chat_api.py clients/gui.py clients/tui.py
 ```
 

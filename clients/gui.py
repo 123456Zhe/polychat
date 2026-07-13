@@ -10,16 +10,16 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from chat_api import ApiError, ChatAPI
+from chat_api import ApiError, ChatAPI, load_server, save_server
 
 
 class PolyChatGUI(tk.Tk):
-    def __init__(self, server: str):
+    def __init__(self, server: str | None = None):
         super().__init__()
         self.title("PolyChat")
         self.geometry("1000x680")
         self.minsize(720, 480)
-        self.api = ChatAPI(server)
+        self.api = ChatAPI(server or load_server())
         self.events = queue.Queue()
         self.room = None
         self.last_id = 0
@@ -48,7 +48,10 @@ class PolyChatGUI(tk.Tk):
         wrap = ttk.Frame(self, padding=42)
         wrap.place(relx=.5, rely=.5, anchor="center", width=420)
         ttk.Label(wrap, text="PolyChat", font=("sans", 26, "bold")).pack(anchor="w")
-        ttk.Label(wrap, text="登录你的持久化账号", foreground="#778196").pack(anchor="w", pady=(2, 24))
+        ttk.Label(wrap, text="登录你的持久化账号", foreground="#778196").pack(anchor="w", pady=(2, 18))
+        ttk.Label(wrap, text="服务器地址").pack(anchor="w")
+        self.server_entry = ttk.Entry(wrap, font=("sans", 12)); self.server_entry.insert(0, self.api.base_url)
+        self.server_entry.pack(fill="x", pady=(5, 12), ipady=5)
         ttk.Label(wrap, text="用户名").pack(anchor="w")
         self.username = ttk.Entry(wrap, font=("sans", 12)); self.username.pack(fill="x", pady=(5, 14), ipady=5)
         ttk.Label(wrap, text="密码").pack(anchor="w")
@@ -60,6 +63,11 @@ class PolyChatGUI(tk.Tk):
         self.password.bind("<Return>", lambda _: self.authenticate(False)); self.username.focus()
 
     def authenticate(self, register: bool):
+        try:
+            self.api.set_server(self.server_entry.get())
+        except ApiError as exc:
+            self.auth_status.config(text=str(exc)); return
+        save_server(self.api.base_url)
         self.auth_status.config(text="正在连接…")
         self.background("auth", self.api.login, self.username.get(), self.password.get(), register)
 
@@ -180,5 +188,5 @@ class PolyChatGUI(tk.Tk):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PolyChat GUI client")
-    parser.add_argument("--server", default="http://127.0.0.1:3000")
+    parser.add_argument("--server", help="登录页中的初始服务器地址")
     args = parser.parse_args(); PolyChatGUI(args.server).mainloop()
