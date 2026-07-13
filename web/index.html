@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111827">
+  <title>PolyChat</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <main id="auth" class="auth-shell">
+    <section class="auth-card">
+      <div class="brand-mark">P</div>
+      <p class="eyebrow">MARKDOWN · LATEX · EVERYWHERE</p>
+      <h1>欢迎来到 PolyChat</h1>
+      <p class="muted">一个干净、持久、跨终端的聊天室。</p>
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-mode="login">登录</button>
+        <button class="tab" data-mode="register">注册</button>
+      </div>
+      <form id="auth-form">
+        <label>用户名<input id="username" autocomplete="username" minlength="2" maxlength="24" required></label>
+        <label>密码<input id="password" type="password" autocomplete="current-password" minlength="8" maxlength="128" required></label>
+        <p id="auth-error" class="error" role="alert"></p>
+        <button id="auth-submit" class="primary" type="submit">登录</button>
+      </form>
+    </section>
+  </main>
+
+  <main id="chat" class="chat-shell hidden">
+    <aside class="sidebar">
+      <header class="side-head"><div class="mini-logo">P</div><strong>PolyChat</strong></header>
+      <div class="room-title"><span>聊天室</span><button id="new-room" title="新建聊天室">＋</button></div>
+      <nav id="rooms" aria-label="聊天室"></nav>
+      <footer class="profile">
+        <span id="avatar"></span><div><strong id="profile-name"></strong><small>在线</small></div>
+        <button id="logout" title="退出登录">↗</button>
+      </footer>
+    </aside>
+    <section class="conversation">
+      <header class="topbar">
+        <button id="sidebar-toggle" class="mobile-only">☰</button>
+        <div><h2 id="room-name">大厅</h2><p>支持 Markdown 与 LaTeX</p></div>
+        <button id="notification-toggle" class="notify-button" type="button" aria-label="开启通知" title="开启桌面通知">🔕</button>
+        <span id="connection" class="status">● 已连接</span>
+      </header>
+      <div id="messages" class="messages" aria-live="polite"></div>
+      <form id="composer" class="composer">
+        <div id="attachment-preview" class="attachment-preview hidden">
+          <span class="file-icon">↥</span><div><strong id="attachment-name"></strong><small id="attachment-status"></small></div>
+          <button id="remove-attachment" type="button" title="移除附件">×</button>
+        </div>
+        <textarea id="message-input" rows="1" maxlength="10000" placeholder="输入消息…  支持 **Markdown** 和 $LaTeX$"></textarea>
+        <div class="compose-foot">
+          <button id="attach-file" class="attach-file" type="button" title="添加文件">⌕</button>
+          <input id="file-input" type="file" hidden>
+          <span><kbd>Enter</kbd> 发送 · <kbd>Shift Enter</kbd> 换行 · 可拖放文件</span>
+          <button class="send" title="发送">↑</button>
+        </div>
+      </form>
+    </section>
+  </main>
+  <div id="toast" role="status"></div>
+</body>
+</html>

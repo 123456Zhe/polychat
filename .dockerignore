@@ -1,0 +1,11 @@
+.git
+.gitignore
+data
+dist
+test
+clients
+*.build
+*.dist
+*.onefile-build
+__pycache__
+*.pyc
