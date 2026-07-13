@@ -11,6 +11,7 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Tkin
 - 多聊天室，可由任意已登录用户创建
 - 登录用户可传输文件；附件持久化保存、鉴权下载，单文件上限 10 MB
 - Web 端支持跨房间未读角标、页面标题未读数和可选的浏览器桌面通知
+- 账户支持持久化头像；Web 提供账户设置与预览，GUI/TUI 也可上传头像
 - Web 端支持标题、列表、引用、代码块、链接、图片、粗体、斜体、删除线等 Markdown
 - Web 端通过 KaTeX 支持行内 `$...$` 和块级 `$$...$$` LaTeX；CDN 不可用时显示原始公式
 - GUI 对常用 Markdown 样式做原生富文本显示，LaTeX 以清晰源码显示
@@ -92,6 +93,7 @@ $$
 - `/room 2`：进入编号为 2 的聊天室
 - `/sendfile ./报告.pdf`：发送文件
 - `/getfile 12 ./报告.pdf`：按消息中显示的文件 ID 下载
+- `/avatar ./头像.png`：上传当前账号头像
 - `/new 房间名`：新建聊天室
 - `/clear`：清空当前屏幕消息
 - `/help`：显示帮助
@@ -181,6 +183,8 @@ curl -I http://127.0.0.1:3000/
 | GET/POST | `/api/rooms` | 列出/创建房间 |
 | GET/POST | `/api/rooms/:id/messages` | 拉取/发送消息 |
 | GET | `/api/events?after=:id` | 增量获取跨房间消息通知 |
+| POST/DELETE | `/api/me/avatar` | 上传/移除当前账号头像 |
+| GET | `/api/users/:id/avatar` | 鉴权读取用户头像 |
 | POST | `/api/files` | 上传不超过 10 MB 的 Base64 文件 |
 | GET | `/api/files/:id` | 鉴权下载文件 |
 

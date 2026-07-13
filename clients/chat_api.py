@@ -117,6 +117,17 @@ class ChatAPI:
         uploaded = self.upload(path)
         return self.send(room_id, content, uploaded["id"])
 
+    def upload_avatar(self, path: str):
+        size = os.path.getsize(path)
+        mime_type = mimetypes.guess_type(path)[0] or ""
+        if mime_type not in ("image/png", "image/jpeg", "image/webp", "image/gif"):
+            raise ApiError("只支持 PNG、JPEG、WebP 或 GIF 图片")
+        if not 0 < size <= 2 * 1024 * 1024:
+            raise ApiError("头像需为 1 字节至 2 MB")
+        with open(path, "rb") as source:
+            encoded = base64.b64encode(source.read()).decode("ascii")
+        return self.request("POST", "/api/me/avatar", {"type": mime_type, "data": encoded}, timeout=30)["user"]
+
     def download(self, attachment_id: int, destination: str):
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
         req = urllib.request.Request(f"{self.base_url}/api/files/{attachment_id}", headers=headers)

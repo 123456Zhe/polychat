@@ -12,7 +12,8 @@ USER node
 ENV HOST=0.0.0.0 \
     PORT=3000 \
     DB_PATH=/app/data/polychat.db \
-    UPLOAD_DIR=/app/data/uploads
+    UPLOAD_DIR=/app/data/uploads \
+    AVATAR_DIR=/app/data/avatars
 
 EXPOSE 3000
 

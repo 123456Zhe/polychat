@@ -117,7 +117,7 @@ class TUI:
 
     def command(self, value):
         if value == "/quit": return False
-        if value == "/help": self.status = "/rooms · /room 编号 · /sendfile 路径 · /getfile ID 路径 · /new 名称 · /quit"; return True
+        if value == "/help": self.status = "/rooms · /room 编号 · /avatar 路径 · /sendfile 路径 · /getfile ID 路径 · /quit"; return True
         if value == "/rooms": self.status = "  ".join(f"{i + 1}:{r['name']}" for i, r in enumerate(self.rooms)); return True
         if value.startswith("/room "):
             try:
@@ -130,6 +130,10 @@ class TUI:
             return True
         if value.startswith("/sendfile "):
             try: self.api.send_file(self.room["id"], value[10:].strip()); self.fetch(); self.status = "文件已发送"
+            except (ApiError, OSError) as exc: self.status = str(exc)
+            return True
+        if value.startswith("/avatar "):
+            try: self.user = self.api.upload_avatar(value[8:].strip()); self.status = "头像已更新（图片可在 Web 中查看）"
             except (ApiError, OSError) as exc: self.status = str(exc)
             return True
         if value.startswith("/getfile "):

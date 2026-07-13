@@ -1,6 +1,6 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,6 +8,7 @@ const temporary = mkdtempSync(join(tmpdir(), 'polychat-test-'));
 process.env.NODE_ENV = 'test';
 process.env.DB_PATH = join(temporary, 'test.db');
 process.env.UPLOAD_DIR = join(temporary, 'uploads');
+process.env.AVATAR_DIR = join(temporary, 'avatars');
 const { server, db } = await import('../server.mjs');
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
@@ -97,4 +98,36 @@ test('全局消息事件支持增量通知且不回放旧消息', async () => {
   assert.equal(events.body.messages[0].id, sent.body.message.id);
   assert.equal(events.body.messages[0].username, 'notify_b');
   assert.equal(events.body.messages[0].room_name, '大厅');
+});
+
+test('账户头像支持安全上传、展示、历史消息关联和移除', async () => {
+  const registered = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'avatar_user', password: 'avatar-password' }) });
+  const auth = { authorization: `Bearer ${registered.body.token}` };
+  const avatar = readFileSync(new URL('../assets/polychat-icon.png', import.meta.url));
+
+  const uploaded = await api('/api/me/avatar', {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({ type: 'image/png', data: avatar.toString('base64') })
+  });
+  assert.equal(uploaded.response.status, 200);
+  assert.match(uploaded.body.user.avatar_url, /^\/api\/users\/\d+\/avatar\?v=/);
+
+  const downloaded = await fetch(base + uploaded.body.user.avatar_url, { headers: auth });
+  assert.equal(downloaded.status, 200);
+  assert.equal(downloaded.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), avatar);
+
+  const sent = await api('/api/rooms/1/messages', { method: 'POST', headers: auth, body: JSON.stringify({ content: '带头像的消息' }) });
+  assert.equal(sent.body.message.avatar_updated_at, uploaded.body.user.avatar_updated_at);
+
+  const invalid = await api('/api/me/avatar', {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({ type: 'image/svg+xml', data: Buffer.from('<svg/>').toString('base64') })
+  });
+  assert.equal(invalid.response.status, 400);
+
+  const removed = await api('/api/me/avatar', { method: 'DELETE', headers: auth });
+  assert.equal(removed.body.user.avatar_url, null);
+  const missing = await fetch(base + uploaded.body.user.avatar_url, { headers: auth });
+  assert.equal(missing.status, 404);
 });

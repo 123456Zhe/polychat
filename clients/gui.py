@@ -87,6 +87,7 @@ class PolyChatGUI(tk.Tk):
         ttk.Button(title, text="＋", width=3, command=self.new_room).pack(side="right")
         self.room_list = tk.Listbox(side, bg="#111827", fg="#aeb8ca", selectbackground="#28344a", selectforeground="white", borderwidth=0, highlightthickness=0, font=("sans", 12), activestyle="none")
         self.room_list.pack(fill="both", expand=True, padx=8); self.room_list.bind("<<ListboxSelect>>", self.select_room)
+        ttk.Button(side, text="更换头像", command=self.change_avatar).pack(fill="x", padx=12, pady=(4, 0))
         ttk.Label(side, text=f"●  {user['username']}  在线", style="Side.TLabel", padding=15).pack(fill="x")
         main = ttk.Frame(self); main.pack(side="left", fill="both", expand=True)
         self.room_title = ttk.Label(main, text="# 大厅", font=("sans", 16, "bold"), padding=(20, 16)); self.room_title.pack(fill="x")
@@ -132,6 +133,10 @@ class PolyChatGUI(tk.Tk):
         if not path: return
         content = self.input.get("1.0", "end").strip(); self.input.delete("1.0", "end")
         self.background("sent", self.api.send_file, self.room["id"], path, content)
+
+    def change_avatar(self):
+        path = filedialog.askopenfilename(title="选择 2 MB 以内的头像", filetypes=[("图片", "*.png *.jpg *.jpeg *.webp *.gif")], parent=self)
+        if path: self.background("avatar", self.api.upload_avatar, path)
 
     def insert_message(self, msg):
         self.history.config(state="normal")
@@ -180,6 +185,8 @@ class PolyChatGUI(tk.Tk):
                         if msg["id"] > self.last_id: self.insert_message(msg); self.last_id = msg["id"]
                 elif kind == "sent":
                     if value["id"] > self.last_id: self.insert_message(value); self.last_id = value["id"]
+                elif kind == "avatar":
+                    self.user = value; messagebox.showinfo("PolyChat", "头像已更新", parent=self)
                 elif kind == "error":
                     if hasattr(self, "auth_status") and self.auth_status.winfo_exists(): self.auth_status.config(text=str(value))
                     else: messagebox.showerror("PolyChat", str(value), parent=self)

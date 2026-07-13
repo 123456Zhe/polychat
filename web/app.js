@@ -32,7 +32,7 @@ $('#auth-form').addEventListener('submit', async event => {
 async function enterChat() {
   $('#auth').classList.add('hidden'); $('#chat').classList.remove('hidden');
   $('#profile-name').textContent = state.user.username;
-  $('#avatar').textContent = state.user.username.slice(0, 1).toUpperCase();
+  updateAccountAvatars();
   await loadRooms();
   clearInterval(state.roomTimer); state.roomTimer = setInterval(loadRooms, 3000);
   setupNotifications(); await pollEvents(true);
@@ -193,7 +193,9 @@ function appendMessage(message) {
   $('#messages').querySelector('.empty')?.remove();
   const article = document.createElement('article'); article.className = 'message';
   const hue = [...message.username].reduce((n, c) => n + c.codePointAt(0), 0) % 360;
-  const avatar = document.createElement('div'); avatar.className = 'avatar'; avatar.style.setProperty('--avatar', `hsl(${hue} 60% 52%)`); avatar.textContent = message.username[0].toUpperCase();
+  const avatar = document.createElement('div'); avatar.className = 'avatar'; avatar.style.setProperty('--avatar', `hsl(${hue} 60% 52%)`);
+  if (message.avatar_updated_at) { const image = document.createElement('img'); image.src = `/api/users/${message.user_id}/avatar?v=${message.avatar_updated_at}`; image.alt = `${message.username} 的头像`; avatar.append(image); }
+  else avatar.textContent = message.username[0].toUpperCase();
   const body = document.createElement('div'); const head = document.createElement('div'); head.className = 'message-head';
   const name = document.createElement('strong'); name.textContent = message.username;
   const time = document.createElement('time'); const date = new Date(message.created_at.replace(' ', 'T') + 'Z'); time.textContent = date.toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
@@ -231,6 +233,30 @@ function formatSize(size) {
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
+function setAvatar(image, initial, user) {
+  initial.textContent = user.username.slice(0, 1).toUpperCase();
+  if (user.avatar_url) { image.src = user.avatar_url; image.hidden = false; initial.hidden = true; }
+  else { image.removeAttribute('src'); image.hidden = true; initial.hidden = false; }
+}
+function updateAccountAvatars() {
+  setAvatar($('#avatar-image'), $('#avatar-initial'), state.user);
+  setAvatar($('#account-avatar-image'), $('#account-avatar-initial'), state.user);
+  $('#account-name').textContent = state.user.username;
+  $('#remove-avatar').disabled = !state.user.avatar_url;
+}
+function openAccount() { updateAccountAvatars(); $('#avatar-status').textContent = ''; $('#account-modal').classList.remove('hidden'); }
+function closeAccount() { $('#account-modal').classList.add('hidden'); }
+async function uploadAvatar(file) {
+  const allowed = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+  if (!file || !allowed.includes(file.type)) return toast('只支持 PNG、JPEG、WebP 或 GIF 图片');
+  if (!file.size || file.size > 2 * 1024 * 1024) return toast('头像需为 1 字节至 2 MB');
+  $('#avatar-status').textContent = '正在上传头像…';
+  try {
+    const dataUrl = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => reject(new Error('读取头像失败')); reader.readAsDataURL(file); });
+    const { user } = await request('/api/me/avatar', { method:'POST', body:JSON.stringify({ type:file.type, data:String(dataUrl).split(',', 2)[1] }) });
+    state.user = user; updateAccountAvatars(); $('#avatar-status').textContent = '头像已更新'; toast('头像已更新');
+  } catch (error) { $('#avatar-status').textContent = error.message; }
+}
 function selectFile(file) {
   if (!file) return;
   if (file.size > 10 * 1024 * 1024) return toast('单个文件不能超过 10 MB');
@@ -262,6 +288,16 @@ $('#remove-attachment').addEventListener('click', clearSelectedFile);
 for (const name of ['dragenter', 'dragover']) $('#composer').addEventListener(name, event => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; $('#composer').classList.add('dragover'); });
 for (const name of ['dragleave', 'drop']) $('#composer').addEventListener(name, event => { event.preventDefault(); $('#composer').classList.remove('dragover'); if (name === 'drop') selectFile(event.dataTransfer.files[0]); });
 $('#new-room').addEventListener('click', async () => { const name = prompt('新聊天室名称'); if (!name) return; try { await request('/api/rooms', { method:'POST', body:JSON.stringify({ name }) }); await loadRooms(); } catch (e) { toast(e.message); } });
+$('#avatar').addEventListener('click', openAccount);
+$('#close-account').addEventListener('click', closeAccount);
+$('#account-modal').addEventListener('click', event => { if (event.target === $('#account-modal')) closeAccount(); });
+$('#choose-avatar').addEventListener('click', () => $('#avatar-input').click());
+$('#avatar-input').addEventListener('change', event => { uploadAvatar(event.target.files[0]); event.target.value = ''; });
+$('#remove-avatar').addEventListener('click', async () => {
+  $('#avatar-status').textContent = '正在移除…';
+  try { const { user } = await request('/api/me/avatar', { method:'DELETE' }); state.user = user; updateAccountAvatars(); $('#avatar-status').textContent = '头像已移除'; }
+  catch (error) { $('#avatar-status').textContent = error.message; }
+});
 $('#notification-toggle').addEventListener('click', toggleNotifications);
 function markCurrentRoomRead() {
   if (!state.room || document.hidden || !document.hasFocus() || !state.unread.has(state.room.id)) return;

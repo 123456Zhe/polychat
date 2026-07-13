@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
@@ -11,11 +11,14 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
 const DB_PATH = process.env.DB_PATH || join(ROOT, 'data', 'polychat.db');
 const UPLOAD_DIR = process.env.UPLOAD_DIR || join(dirname(DB_PATH), 'uploads');
+const AVATAR_DIR = process.env.AVATAR_DIR || join(dirname(DB_PATH), 'avatars');
 const SESSION_DAYS = 30;
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const MAX_AVATAR_SIZE = 2 * 1024 * 1024;
 
 mkdirSync(join(ROOT, 'data'), { recursive: true });
 mkdirSync(UPLOAD_DIR, { recursive: true });
+mkdirSync(AVATAR_DIR, { recursive: true });
 export const db = new DatabaseSync(DB_PATH);
 db.exec(`
   PRAGMA journal_mode = WAL;
@@ -24,6 +27,9 @@ db.exec(`
     id INTEGER PRIMARY KEY,
     username TEXT NOT NULL UNIQUE COLLATE NOCASE,
     password_hash TEXT NOT NULL,
+    avatar_name TEXT,
+    avatar_mime TEXT,
+    avatar_updated_at INTEGER,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
   CREATE TABLE IF NOT EXISTS sessions (
@@ -60,6 +66,10 @@ db.exec(`
 if (!db.prepare('PRAGMA table_info(messages)').all().some(column => column.name === 'attachment_id')) {
   db.exec('ALTER TABLE messages ADD COLUMN attachment_id INTEGER REFERENCES attachments(id)');
 }
+const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map(column => column.name));
+if (!userColumns.has('avatar_name')) db.exec('ALTER TABLE users ADD COLUMN avatar_name TEXT');
+if (!userColumns.has('avatar_mime')) db.exec('ALTER TABLE users ADD COLUMN avatar_mime TEXT');
+if (!userColumns.has('avatar_updated_at')) db.exec('ALTER TABLE users ADD COLUMN avatar_updated_at INTEGER');
 
 function json(res, status, body, headers = {}) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers });
@@ -82,10 +92,27 @@ function currentUser(req) {
   const token = tokenOf(req);
   if (!token) return null;
   return db.prepare(`
-    SELECT users.id, users.username FROM sessions
+    SELECT users.id, users.username, users.avatar_updated_at FROM sessions
     JOIN users ON users.id = sessions.user_id
     WHERE sessions.token = ? AND sessions.expires_at > ?
   `).get(token, Date.now()) || null;
+}
+
+function publicUser(user) {
+  return {
+    id: user.id,
+    username: user.username,
+    avatar_updated_at: user.avatar_updated_at || null,
+    avatar_url: user.avatar_updated_at ? `/api/users/${user.id}/avatar?v=${user.avatar_updated_at}` : null
+  };
+}
+
+function validAvatar(bytes, type) {
+  if (type === 'image/png') return bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'));
+  if (type === 'image/jpeg') return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (type === 'image/gif') return ['GIF87a', 'GIF89a'].includes(bytes.subarray(0, 6).toString('ascii'));
+  if (type === 'image/webp') return bytes.length >= 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP';
+  return false;
 }
 
 function hashPassword(password) {
@@ -138,7 +165,7 @@ async function api(req, res, url) {
     try {
       const result = db.prepare('INSERT INTO users(username, password_hash) VALUES (?, ?)').run(name, hashPassword(String(password)));
       const token = createSession(Number(result.lastInsertRowid));
-      return json(res, 201, { token, user: { id: Number(result.lastInsertRowid), username: name } }, { 'set-cookie': cookie(token) });
+      return json(res, 201, { token, user: publicUser({ id: Number(result.lastInsertRowid), username: name }) }, { 'set-cookie': cookie(token) });
     } catch (error) {
       if (error.message.includes('UNIQUE')) return json(res, 409, { error: '用户名已存在' });
       throw error;
@@ -147,10 +174,10 @@ async function api(req, res, url) {
 
   if (req.method === 'POST' && url.pathname === '/api/login') {
     const { username = '', password = '' } = await readBody(req);
-    const user = db.prepare('SELECT id, username, password_hash FROM users WHERE username = ?').get(String(username).trim());
+    const user = db.prepare('SELECT id, username, password_hash, avatar_updated_at FROM users WHERE username = ?').get(String(username).trim());
     if (!user || !checkPassword(String(password), user.password_hash)) return json(res, 401, { error: '用户名或密码错误' });
     const token = createSession(user.id);
-    return json(res, 200, { token, user: { id: user.id, username: user.username } }, { 'set-cookie': cookie(token) });
+    return json(res, 200, { token, user: publicUser(user) }, { 'set-cookie': cookie(token) });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/logout') {
@@ -161,7 +188,49 @@ async function api(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/me') {
     const user = requireUser(req, res); if (!user) return;
-    return json(res, 200, { user });
+    return json(res, 200, { user: publicUser(user) });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/me/avatar') {
+    const user = requireUser(req, res); if (!user) return;
+    const { type = '', data = '' } = await readBody(req, 2_900_000);
+    const mimeType = String(type).toLowerCase();
+    if (typeof data !== 'string' || data.length > Math.ceil(MAX_AVATAR_SIZE / 3) * 4 + 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) {
+      return json(res, 400, { error: '头像数据格式错误或超过 2 MB' });
+    }
+    const bytes = Buffer.from(data, 'base64');
+    if (!bytes.length || bytes.length > MAX_AVATAR_SIZE || !validAvatar(bytes, mimeType)) {
+      return json(res, 400, { error: '只支持 2 MB 以内的 PNG、JPEG、WebP 或 GIF 图片' });
+    }
+    const storedName = randomBytes(24).toString('hex');
+    writeFileSync(join(AVATAR_DIR, storedName), bytes, { flag: 'wx', mode: 0o600 });
+    const previous = db.prepare('SELECT avatar_name FROM users WHERE id = ?').get(user.id);
+    const updatedAt = Date.now();
+    db.prepare('UPDATE users SET avatar_name = ?, avatar_mime = ?, avatar_updated_at = ? WHERE id = ?')
+      .run(storedName, mimeType, updatedAt, user.id);
+    if (previous?.avatar_name) { try { unlinkSync(join(AVATAR_DIR, previous.avatar_name)); } catch { /* stale file */ } }
+    return json(res, 200, { user: publicUser({ ...user, avatar_updated_at: updatedAt }) });
+  }
+
+  if (req.method === 'DELETE' && url.pathname === '/api/me/avatar') {
+    const user = requireUser(req, res); if (!user) return;
+    const previous = db.prepare('SELECT avatar_name FROM users WHERE id = ?').get(user.id);
+    db.prepare('UPDATE users SET avatar_name = NULL, avatar_mime = NULL, avatar_updated_at = NULL WHERE id = ?').run(user.id);
+    if (previous?.avatar_name) { try { unlinkSync(join(AVATAR_DIR, previous.avatar_name)); } catch { /* stale file */ } }
+    return json(res, 200, { user: publicUser({ ...user, avatar_updated_at: null }) });
+  }
+
+  const avatarMatch = url.pathname.match(/^\/api\/users\/(\d+)\/avatar$/);
+  if (avatarMatch && req.method === 'GET') {
+    if (!requireUser(req, res)) return;
+    const avatar = db.prepare('SELECT avatar_name, avatar_mime FROM users WHERE id = ?').get(Number(avatarMatch[1]));
+    if (!avatar?.avatar_name) return json(res, 404, { error: '用户尚未设置头像' });
+    try {
+      const bytes = readFileSync(join(AVATAR_DIR, avatar.avatar_name));
+      res.writeHead(200, { 'content-type': avatar.avatar_mime, 'content-length': bytes.length,
+        'cache-control': 'private, max-age=31536000, immutable', 'x-content-type-options': 'nosniff' });
+      return res.end(bytes);
+    } catch { return json(res, 404, { error: '头像文件不存在' }); }
   }
 
   if (req.method === 'GET' && url.pathname === '/api/rooms') {
@@ -248,7 +317,7 @@ async function api(req, res, url) {
     const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') || 100)));
     if (!db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId)) return json(res, 404, { error: '房间不存在' });
     const messages = db.prepare(`SELECT messages.id, messages.content, messages.created_at,
-      users.id AS user_id, users.username, attachments.id AS attachment_id,
+      users.id AS user_id, users.username, users.avatar_updated_at, attachments.id AS attachment_id,
       attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type,
       attachments.size AS attachment_size
       FROM messages JOIN users ON users.id = messages.user_id
@@ -270,7 +339,7 @@ async function api(req, res, url) {
     }
     const result = db.prepare('INSERT INTO messages(room_id, user_id, content, attachment_id) VALUES (?, ?, ?, ?)').run(roomId, user.id, text, attachmentId);
     const message = db.prepare(`SELECT messages.id, messages.content, messages.created_at,
-      users.id AS user_id, users.username, attachments.id AS attachment_id,
+      users.id AS user_id, users.username, users.avatar_updated_at, attachments.id AS attachment_id,
       attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type,
       attachments.size AS attachment_size
       FROM messages JOIN users ON users.id = messages.user_id

@@ -39,7 +39,8 @@
       <div class="room-title"><span>聊天室</span><button id="new-room" title="新建聊天室">＋</button></div>
       <nav id="rooms" aria-label="聊天室"></nav>
       <footer class="profile">
-        <span id="avatar"></span><div><strong id="profile-name"></strong><small>在线</small></div>
+        <button id="avatar" class="profile-avatar" type="button" title="账户设置"><img id="avatar-image" alt=""><span id="avatar-initial"></span></button>
+        <div><strong id="profile-name"></strong><small>在线 · 点击头像设置</small></div>
         <button id="logout" title="退出登录">↗</button>
       </footer>
     </aside>
@@ -66,6 +67,22 @@
       </form>
     </section>
   </main>
+  <div id="account-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="account-title">
+    <section class="account-card">
+      <button id="close-account" class="modal-close" type="button" aria-label="关闭">×</button>
+      <p class="eyebrow">ACCOUNT</p>
+      <h2 id="account-title">账户设置</h2>
+      <div class="account-avatar"><img id="account-avatar-image" alt="当前头像"><span id="account-avatar-initial"></span></div>
+      <strong id="account-name"></strong>
+      <p class="muted">上传 PNG、JPEG、WebP 或 GIF，最大 2 MB。</p>
+      <div class="account-actions">
+        <button id="choose-avatar" class="primary" type="button">上传新头像</button>
+        <button id="remove-avatar" type="button">移除头像</button>
+        <input id="avatar-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+      </div>
+      <p id="avatar-status" class="account-status" role="status"></p>
+    </section>
+  </div>
   <div id="toast" role="status"></div>
 </body>
 </html>
