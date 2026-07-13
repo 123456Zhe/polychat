@@ -281,11 +281,11 @@ async function api(req, res, url) {
   return json(res, 404, { error: '接口不存在' });
 }
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
 function staticFile(res, pathname) {
   const relative = pathname === '/' ? 'index.html' : pathname.slice(1);
   const safe = normalize(relative).replace(/^(\.\.[/\\])+/, '');
-  if (!['index.html', 'app.js', 'style.css'].includes(safe)) return json(res, 404, { error: '页面不存在' });
+  if (!['index.html', 'app.js', 'style.css', 'icon.png'].includes(safe)) return json(res, 404, { error: '页面不存在' });
   try {
     res.writeHead(200, { 'content-type': MIME[extname(safe)] || 'application/octet-stream', 'cache-control': 'no-cache' });
     res.end(readFileSync(join(PUBLIC, safe)));

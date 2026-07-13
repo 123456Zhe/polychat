@@ -11,6 +11,7 @@ python3 -c 'import tkinter' 2>/dev/null || {
 python3 -m nuitka \
   --onefile \
   --enable-plugin=tk-inter \
+  --include-data-file=assets/polychat-icon.png=polychat-icon.png \
   --output-dir=dist \
   --output-filename=PolyChat-GUI \
   --remove-output \

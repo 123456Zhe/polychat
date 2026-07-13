@@ -8,6 +8,7 @@ import re
 import threading
 import time
 import tkinter as tk
+from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from chat_api import ApiError, ChatAPI, load_server, save_server
@@ -17,6 +18,12 @@ class PolyChatGUI(tk.Tk):
     def __init__(self, server: str | None = None):
         super().__init__()
         self.title("PolyChat")
+        for icon_path in (Path(__file__).resolve().parent / "polychat-icon.png", Path(__file__).resolve().parent.parent / "assets" / "polychat-icon.png"):
+            if icon_path.exists():
+                try:
+                    self.app_icon = tk.PhotoImage(file=icon_path); self.iconphoto(True, self.app_icon)
+                except tk.TclError: pass
+                break
         self.geometry("1000x680")
         self.minsize(720, 480)
         self.api = ChatAPI(server or load_server())

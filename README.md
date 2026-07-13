@@ -1,5 +1,7 @@
 # PolyChat
 
+![PolyChat icon](assets/polychat-icon.png)
+
 PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Tkinter 桌面 GUI 和 curses 终端 TUI 客户端。服务端只依赖 Node.js 内置模块，数据保存在 SQLite 中。
 
 ## 功能
