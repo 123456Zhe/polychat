@@ -82,6 +82,8 @@ test('上传、发送和鉴权下载附件', async () => {
   assert.equal(downloaded.status, 200);
   assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), original);
   assert.match(downloaded.headers.get('content-disposition'), /filename\*=UTF-8''/);
+  const textInlineAttempt = await fetch(`${base}/api/files/${uploaded.body.file.id}?inline=1`, { headers: auth });
+  assert.match(textInlineAttempt.headers.get('content-disposition'), /^attachment;/);
 });
 
 test('全局消息事件支持增量通知且不回放旧消息', async () => {

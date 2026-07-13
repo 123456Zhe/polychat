@@ -14,6 +14,7 @@ const UPLOAD_DIR = process.env.UPLOAD_DIR || join(dirname(DB_PATH), 'uploads');
 const AVATAR_DIR = process.env.AVATAR_DIR || join(dirname(DB_PATH), 'avatars');
 const SESSION_DAYS = 30;
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const INLINE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const MAX_AVATAR_SIZE = 2 * 1024 * 1024;
 
 mkdirSync(join(ROOT, 'data'), { recursive: true });
@@ -298,10 +299,11 @@ async function api(req, res, url) {
     if (!file) return json(res, 404, { error: '文件不存在' });
     try {
       const bytes = readFileSync(join(UPLOAD_DIR, file.stored_name));
+      const inline = url.searchParams.get('inline') === '1' && INLINE_IMAGE_TYPES.has(file.mime_type);
       res.writeHead(200, {
         'content-type': file.mime_type,
         'content-length': bytes.length,
-        'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.original_name)}`,
+        'content-disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(file.original_name)}`,
         'cache-control': 'private, max-age=3600',
         'x-content-type-options': 'nosniff'
       });

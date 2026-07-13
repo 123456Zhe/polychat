@@ -203,11 +203,23 @@ function appendMessage(message) {
   head.append(name, time); body.append(head);
   if (message.content) body.append(content);
   if (message.attachment_id) {
-    const card = document.createElement('a'); card.className = 'file-card'; card.href = `/api/files/${message.attachment_id}`; card.target = '_blank'; card.rel = 'noopener'; card.download = message.attachment_name;
-    const icon = document.createElement('span'); icon.className = 'file-icon'; icon.textContent = message.attachment_type?.startsWith('image/') ? '▧' : '↧';
-    const info = document.createElement('div'); const fileName = document.createElement('strong'); fileName.textContent = message.attachment_name;
-    const meta = document.createElement('small'); meta.textContent = `${formatSize(message.attachment_size)} · 点击下载`;
-    info.append(fileName, meta); card.append(icon, info); body.append(card);
+    const inlineTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+    if (inlineTypes.has(message.attachment_type)) {
+      const wrap = document.createElement('div'); wrap.className = 'image-message';
+      const imageLink = document.createElement('a'); imageLink.href = `/api/files/${message.attachment_id}?inline=1`; imageLink.target = '_blank'; imageLink.rel = 'noopener';
+      const image = document.createElement('img'); image.className = 'message-image'; image.src = imageLink.href; image.alt = message.attachment_name; image.loading = 'lazy';
+      image.addEventListener('load', () => { const list = $('#messages'); if (list.scrollHeight - list.scrollTop - list.clientHeight < image.clientHeight + 180) list.scrollTop = list.scrollHeight; });
+      imageLink.append(image);
+      const footer = document.createElement('div'); const label = document.createElement('span'); label.textContent = `${message.attachment_name} · ${formatSize(message.attachment_size)}`;
+      const download = document.createElement('a'); download.href = `/api/files/${message.attachment_id}`; download.download = message.attachment_name; download.textContent = '下载原图';
+      footer.append(label, download); wrap.append(imageLink, footer); body.append(wrap);
+    } else {
+      const card = document.createElement('a'); card.className = 'file-card'; card.href = `/api/files/${message.attachment_id}`; card.target = '_blank'; card.rel = 'noopener'; card.download = message.attachment_name;
+      const icon = document.createElement('span'); icon.className = 'file-icon'; icon.textContent = '↧';
+      const info = document.createElement('div'); const fileName = document.createElement('strong'); fileName.textContent = message.attachment_name;
+      const meta = document.createElement('small'); meta.textContent = `${formatSize(message.attachment_size)} · 点击下载`;
+      info.append(fileName, meta); card.append(icon, info); body.append(card);
+    }
   }
   article.append(avatar, body); $('#messages').append(article);
 }
