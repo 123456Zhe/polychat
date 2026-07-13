@@ -126,6 +126,45 @@ docker compose logs -f polychat
 
 默认映射宿主机 `3000` 端口，SQLite 数据库与附件保存在项目的 `data/` 目录。升级代码后重新执行 `docker compose up -d --build`，数据库和附件不会被镜像构建覆盖。
 
+### 私有仓库部署与数据迁移
+
+在服务器上安装 Docker，并以不落盘的临时认证 Header 克隆私有仓库：
+
+```bash
+curl -fsSL https://get.docker.com | sh
+read -rsp "GitHub token: " GH_TOKEN; echo
+AUTH_HEADER=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+git -c http.extraHeader="Authorization: Basic $AUTH_HEADER" \
+  clone https://github.com/123456Zhe/polychat.git /opt/polychat
+unset AUTH_HEADER GH_TOKEN
+mkdir -p /opt/polychat/data/uploads
+```
+
+在原 PolyChat 电脑上，从仍在运行的 WAL 数据库创建一致性快照，然后上传数据库和附件：
+
+```bash
+cd /home/zhe/polychat
+rm -f /tmp/polychat-migrate.db
+node --input-type=module -e \
+  'import { DatabaseSync } from "node:sqlite"; const db = new DatabaseSync("data/polychat.db"); db.exec("VACUUM INTO '\''/tmp/polychat-migrate.db'\''"); db.close()'
+scp /tmp/polychat-migrate.db root@服务器IP:/opt/polychat/data/polychat.db
+scp -r data/uploads/. root@服务器IP:/opt/polychat/data/uploads/
+rm -f /tmp/polychat-migrate.db
+```
+
+回到服务器，修正容器内 `node` 用户的写入权限并启动：
+
+```bash
+chown -R 1000:1000 /opt/polychat/data
+cd /opt/polychat
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail=100 polychat
+curl -I http://127.0.0.1:3000/
+```
+
+需要从公网直接使用 HTTP 时，放行 TCP 3000 端口，例如 `ufw allow 3000/tcp`。公开服务建议尽快增加 HTTPS。
+
 ## API 摘要
 
 除注册与登录外，请用浏览器会话 Cookie，或发送 `Authorization: Bearer <token>`。
