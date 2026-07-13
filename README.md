@@ -164,6 +164,8 @@ curl -I http://127.0.0.1:3000/
 
 需要从公网直接使用 HTTP 时，放行 TCP 3000 端口，例如 `ufw allow 3000/tcp`。公开服务建议尽快增加 HTTPS。
 
+浏览器系统通知 API 只在 HTTPS（以及本机开发用的 `localhost`）安全上下文中可用。公网 HTTP 下房间未读角标和页面标题提醒仍可工作，但桌面通知必须先为域名配置受信任的 HTTPS 证书。
+
 ## API 摘要
 
 除注册与登录外，请用浏览器会话 Cookie，或发送 `Authorization: Bearer <token>`。

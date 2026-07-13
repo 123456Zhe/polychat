@@ -69,25 +69,39 @@ async function selectRoom(room) {
 }
 
 function setupNotifications() {
-  const supported = 'Notification' in window;
-  state.notificationsEnabled = supported && Notification.permission === 'granted' && localStorage.getItem('polychat_notifications') === 'on';
-  const button = $('#notification-toggle'); button.disabled = !supported; updateNotificationButton();
+  const available = !notificationUnavailableReason();
+  state.notificationsEnabled = available && Notification.permission === 'granted' && localStorage.getItem('polychat_notifications') === 'on';
+  updateNotificationButton();
+}
+
+function notificationUnavailableReason(context = window) {
+  if (!('Notification' in context)) return '当前浏览器不支持系统通知';
+  if (!context.isSecureContext) return '系统通知需要 HTTPS；当前仍可使用房间未读角标和页面标题提醒';
+  return '';
 }
 
 function updateNotificationButton() {
   const button = $('#notification-toggle');
-  if (!('Notification' in window)) { button.textContent = '🔕'; button.title = '当前浏览器不支持系统通知'; return; }
+  const unavailable = notificationUnavailableReason();
+  button.classList.toggle('unavailable', Boolean(unavailable));
+  if (unavailable) {
+    button.textContent = window.isSecureContext ? '🔕' : '🔒'; button.title = unavailable;
+    button.setAttribute('aria-label', unavailable); return;
+  }
   button.classList.toggle('active', state.notificationsEnabled); button.textContent = state.notificationsEnabled ? '🔔' : '🔕';
   button.setAttribute('aria-label', state.notificationsEnabled ? '关闭通知' : '开启通知');
   button.title = state.notificationsEnabled ? '桌面通知已开启' : (Notification.permission === 'denied' ? '通知权限已被浏览器阻止' : '开启桌面通知');
 }
 
 async function toggleNotifications() {
-  if (!('Notification' in window)) return toast('当前浏览器不支持系统通知');
+  const unavailable = notificationUnavailableReason();
+  if (unavailable) return toast(unavailable);
   if (state.notificationsEnabled) {
     state.notificationsEnabled = false; localStorage.setItem('polychat_notifications', 'off'); updateNotificationButton(); return toast('桌面通知已关闭');
   }
-  const permission = Notification.permission === 'default' ? await Notification.requestPermission() : Notification.permission;
+  let permission;
+  try { permission = Notification.permission === 'default' ? await Notification.requestPermission() : Notification.permission; }
+  catch { return toast('通知权限请求失败；请确认使用 HTTPS 并检查浏览器网站权限'); }
   if (permission !== 'granted') { updateNotificationButton(); return toast('通知权限未授予；可在浏览器网站设置中开启'); }
   state.notificationsEnabled = true; localStorage.setItem('polychat_notifications', 'on'); updateNotificationButton(); toast('桌面通知已开启');
 }
