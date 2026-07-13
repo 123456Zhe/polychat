@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+from datetime import datetime, timedelta, timezone, tzinfo
 import json
 import mimetypes
 import os
@@ -16,6 +17,29 @@ class ApiError(Exception):
 
 
 CONFIG_PATH = Path.home() / ".config" / "polychat" / "client.json"
+DEFAULT_TIMEZONE = timezone(timedelta(hours=8), "UTC+8")
+
+
+def local_timezone() -> tzinfo:
+    """Use the operating system timezone, falling back to UTC+8."""
+    try:
+        detected = datetime.now().astimezone().tzinfo
+        if detected is not None:
+            return detected
+    except (OSError, OverflowError, ValueError):
+        pass
+    return DEFAULT_TIMEZONE
+
+
+def format_server_time(value: str, target_timezone: tzinfo | None = None) -> str:
+    """Render the server's SQLite UTC timestamp in the client's timezone."""
+    try:
+        timestamp = datetime.fromisoformat(str(value).strip().replace(" ", "T"))
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        return timestamp.astimezone(target_timezone or local_timezone()).strftime("%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError, OverflowError, OSError):
+        return str(value)
 
 
 def normalize_server(value: str) -> str:

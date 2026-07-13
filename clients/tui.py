@@ -8,7 +8,7 @@ import getpass
 import textwrap
 import time
 
-from chat_api import ApiError, ChatAPI, load_server, save_server
+from chat_api import ApiError, ChatAPI, format_server_time, load_server, local_timezone, save_server
 
 
 TUI_LOGO = """
@@ -44,6 +44,7 @@ def choose_server(initial: str | None = None):
 class TUI:
     def __init__(self, screen, api, user):
         self.screen, self.api, self.user = screen, api, user
+        self.timezone = local_timezone()
         self.rooms = api.rooms(); self.room = self.rooms[0]; self.messages = []; self.last_id = 0
         self.input = ""; self.status = "Enter 发送 · ↑↓/PgUp/PgDn 滚动 · /help 查看命令"; self.last_poll = 0; self.last_room_poll = 0
         self.scroll = 0
@@ -73,7 +74,8 @@ class TUI:
         s.attron(curses.A_REVERSE); s.addnstr(0, 0, title.ljust(w), w - 1); s.attroff(curses.A_REVERSE)
         lines = []
         for msg in self.messages:
-            lines.append((f"{msg['username']}  {msg['created_at']}", curses.A_BOLD))
+            created_at = format_server_time(msg["created_at"], self.timezone)
+            lines.append((f"{msg['username']}  {created_at}", curses.A_BOLD))
             # Markdown/LaTeX source remains intact and readable in text terminals.
             for raw in msg["content"].splitlines() or [""]:
                 prefix = "│ " if raw.startswith("> ") else "  "
