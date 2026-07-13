@@ -126,17 +126,13 @@ docker compose logs -f polychat
 
 默认映射宿主机 `3000` 端口，SQLite 数据库与附件保存在项目的 `data/` 目录。升级代码后重新执行 `docker compose up -d --build`，数据库和附件不会被镜像构建覆盖。
 
-### 私有仓库部署与数据迁移
+### 服务器部署与数据迁移
 
-在服务器上安装 Docker，并以不落盘的临时认证 Header 克隆私有仓库：
+在服务器上安装 Docker 并克隆公开仓库：
 
 ```bash
 curl -fsSL https://get.docker.com | sh
-read -rsp "GitHub token: " GH_TOKEN; echo
-AUTH_HEADER=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
-git -c http.extraHeader="Authorization: Basic $AUTH_HEADER" \
-  clone https://github.com/123456Zhe/polychat.git /opt/polychat
-unset AUTH_HEADER GH_TOKEN
+git clone https://github.com/123456Zhe/polychat.git /opt/polychat
 mkdir -p /opt/polychat/data/uploads
 ```
 
