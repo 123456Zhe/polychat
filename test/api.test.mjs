@@ -120,12 +120,19 @@ test('全局消息事件支持增量通知且不回放旧消息', async () => {
 
 test('WebSocket 实时推送消息和消息更新事件', async () => {
   const registered = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'socket_user', password: 'socket-password' }) });
+  const peer = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'socket_peer', password: 'socket-peer-password' }) });
   const auth = { authorization: `Bearer ${registered.body.token}` };
   const socket = new WebSocket(`${base.replace('http:', 'ws:')}/ws?token=${encodeURIComponent(registered.body.token)}`);
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('WebSocket 连接超时')), 2000);
     socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
     socket.addEventListener('error', reject, { once: true });
+  });
+  const peerSocket = new WebSocket(`${base.replace('http:', 'ws:')}/ws?token=${encodeURIComponent(peer.body.token)}`);
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('第二个 WebSocket 连接超时')), 2000);
+    peerSocket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
+    peerSocket.addEventListener('error', reject, { once: true });
   });
   const nextEvent = type => new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`未收到 ${type} 事件`)), 2000);
@@ -142,7 +149,14 @@ test('WebSocket 实时推送消息和消息更新事件', async () => {
   const updated = nextEvent('message_update');
   await api(`/api/messages/${sent.body.message.id}`, { method: 'PUT', headers: auth, body: JSON.stringify({ content: '实时编辑' }) });
   assert.equal((await updated).message_id, sent.body.message.id);
-  socket.close();
+  const typing = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('未收到 typing 事件')), 2000);
+    const listener = event => { const payload = JSON.parse(event.data); if (payload.type !== 'typing') return; clearTimeout(timer); peerSocket.removeEventListener('message', listener); resolve(payload); };
+    peerSocket.addEventListener('message', listener);
+  });
+  socket.send(JSON.stringify({ type: 'typing', room_id: 1, typing: true }));
+  assert.equal((await typing).username, 'socket_user');
+  socket.close(); peerSocket.close();
 });
 
 test('消息历史支持从最新批次开始并向上分页加载', async () => {
@@ -176,6 +190,15 @@ test('消息支持回复、编辑、撤回、表情、搜索与私有房间权�
   assert.equal((await api(`/api/rooms/${roomId}/messages`, { headers: guestAuth })).response.status, 403);
 
   const first = await api(`/api/rooms/${roomId}/messages`, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ content: '可搜索的原消息' }) });
+  const threadReply = await api(`/api/rooms/${roomId}/messages`, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ content: '话题内回复', thread_root: first.body.message.id }) });
+  assert.equal(threadReply.body.message.thread_root, first.body.message.id);
+  const thread = await api(`/api/messages/${first.body.message.id}/thread`, { headers: ownerAuth });
+  assert.deepEqual(thread.body.messages.map(message => message.content), ['可搜索的原消息', '话题内回复']);
+  const mainTimeline = await api(`/api/rooms/${roomId}/messages`, { headers: ownerAuth });
+  assert.equal(mainTimeline.body.messages.some(message => message.id === threadReply.body.message.id), false);
+  assert.equal((await api(`/api/rooms/${roomId}/pins/${first.body.message.id}`, { method: 'PUT', headers: ownerAuth })).response.status, 200);
+  const pins = await api(`/api/rooms/${roomId}/pins`, { headers: ownerAuth });
+  assert.equal(pins.body.messages[0].id, first.body.message.id);
   const reply = await api(`/api/rooms/${roomId}/messages`, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ content: '这是回复', reply_to: first.body.message.id }) });
   assert.equal(reply.body.message.reply_to, first.body.message.id);
   assert.equal(reply.body.message.reply_content, '可搜索的原消息');

@@ -64,6 +64,7 @@ db.exec(`
     content TEXT NOT NULL,
     attachment_id INTEGER REFERENCES attachments(id),
     reply_to INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+    thread_root INTEGER REFERENCES messages(id) ON DELETE CASCADE,
     edited_at TEXT,
     deleted_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -81,6 +82,13 @@ db.exec(`
     emoji TEXT NOT NULL,
     PRIMARY KEY(message_id, user_id, emoji)
   );
+  CREATE TABLE IF NOT EXISTS room_pins (
+    room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    message_id INTEGER NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
+    pinned_by INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(room_id, message_id)
+  );
   INSERT OR IGNORE INTO rooms(id, name) VALUES (1, '大厅');
 `);
 if (!db.prepare('PRAGMA table_info(messages)').all().some(column => column.name === 'attachment_id')) {
@@ -92,6 +100,7 @@ const messageColumns = new Set(db.prepare('PRAGMA table_info(messages)').all().m
 if (!messageColumns.has('reply_to')) db.exec('ALTER TABLE messages ADD COLUMN reply_to INTEGER REFERENCES messages(id)');
 if (!messageColumns.has('edited_at')) db.exec('ALTER TABLE messages ADD COLUMN edited_at TEXT');
 if (!messageColumns.has('deleted_at')) db.exec('ALTER TABLE messages ADD COLUMN deleted_at TEXT');
+if (!messageColumns.has('thread_root')) db.exec('ALTER TABLE messages ADD COLUMN thread_root INTEGER REFERENCES messages(id) ON DELETE CASCADE');
 const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map(column => column.name));
 if (!userColumns.has('is_admin')) db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
 if (!userColumns.has('avatar_name')) db.exec('ALTER TABLE users ADD COLUMN avatar_name TEXT');
@@ -231,6 +240,11 @@ function broadcast(event, roomId = null) {
   for (const socket of sockets) {
     if (socket.readyState === 1 && (roomId == null || socketCanAccess(socket, roomId))) socket.send(payload);
   }
+}
+function onlineUsers() {
+  const users = new Map();
+  for (const socket of sockets) users.set(socket.user.id, { id: socket.user.id, username: socket.user.username });
+  return [...users.values()];
 }
 
 function cookie(token, clear = false) {
@@ -494,6 +508,43 @@ async function api(req, res, url) {
     return json(res, 200, { messages: hydrateMessages(rows, user.id) });
   }
 
+  const threadMatch = url.pathname.match(/^\/api\/messages\/(\d+)\/thread$/);
+  if (threadMatch && req.method === 'GET') {
+    const rootId = Number(threadMatch[1]);
+    const root = db.prepare('SELECT room_id FROM messages WHERE id = ? AND thread_root IS NULL').get(rootId);
+    if (!root) return json(res, 404, { error: '话题不存在' });
+    const context = requireRoomAccess(req, res, root.room_id); if (!context) return;
+    const rows = db.prepare(`SELECT messages.id, messages.room_id, messages.content, messages.created_at, messages.reply_to, messages.thread_root, messages.edited_at, messages.deleted_at,
+      users.id AS user_id, users.username, users.avatar_updated_at, parent.content AS reply_content, parent_user.username AS reply_username,
+      attachments.id AS attachment_id, attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type, attachments.size AS attachment_size
+      FROM messages JOIN users ON users.id = messages.user_id LEFT JOIN messages AS parent ON parent.id = messages.reply_to
+      LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id LEFT JOIN attachments ON attachments.id = messages.attachment_id
+      WHERE messages.id = ? OR messages.thread_root = ? ORDER BY messages.id LIMIT 500`).all(rootId, rootId);
+    return json(res, 200, { messages: hydrateMessages(rows, context.user.id) });
+  }
+
+  const pinCollectionMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/pins$/);
+  if (pinCollectionMatch && req.method === 'GET') {
+    const roomId = Number(pinCollectionMatch[1]); const context = requireRoomAccess(req, res, roomId); if (!context) return;
+    const rows = db.prepare(`SELECT messages.id, messages.room_id, messages.content, messages.created_at, messages.edited_at, messages.deleted_at,
+      users.id AS user_id, users.username, users.avatar_updated_at, room_pins.created_at AS pinned_at
+      FROM room_pins JOIN messages ON messages.id = room_pins.message_id JOIN users ON users.id = messages.user_id
+      WHERE room_pins.room_id = ? ORDER BY room_pins.created_at DESC`).all(roomId);
+    return json(res, 200, { messages: hydrateMessages(rows, context.user.id) });
+  }
+  const pinMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/pins\/(\d+)$/);
+  if (pinMatch && req.method === 'PUT') {
+    const roomId = Number(pinMatch[1]), messageId = Number(pinMatch[2]); const context = requireRoomManager(req, res, roomId); if (!context) return;
+    if (!db.prepare('SELECT 1 FROM messages WHERE id = ? AND room_id = ?').get(messageId, roomId)) return json(res, 404, { error: '消息不存在' });
+    db.prepare('INSERT OR IGNORE INTO room_pins(room_id, message_id, pinned_by) VALUES (?, ?, ?)').run(roomId, messageId, context.user.id);
+    broadcast({ type: 'pins', room_id: roomId }, roomId); return json(res, 200, { ok: true });
+  }
+  if (pinMatch && req.method === 'DELETE') {
+    const roomId = Number(pinMatch[1]), messageId = Number(pinMatch[2]); const context = requireRoomManager(req, res, roomId); if (!context) return;
+    db.prepare('DELETE FROM room_pins WHERE room_id = ? AND message_id = ?').run(roomId, messageId);
+    broadcast({ type: 'pins', room_id: roomId }, roomId); return json(res, 200, { ok: true });
+  }
+
   const messageMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/messages$/);
   if (messageMatch && req.method === 'GET') {
     const roomId = Number(messageMatch[1]);
@@ -503,7 +554,7 @@ async function api(req, res, url) {
     const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') || 100)));
     if (!db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId)) return json(res, 404, { error: '房间不存在' });
     const query = `SELECT messages.id, messages.content, messages.created_at,
-      users.id AS user_id, users.username, users.avatar_updated_at, messages.reply_to, messages.edited_at, messages.deleted_at,
+      users.id AS user_id, users.username, users.avatar_updated_at, messages.reply_to, messages.thread_root, messages.edited_at, messages.deleted_at,
       parent.content AS reply_content, parent_user.username AS reply_username, attachments.id AS attachment_id,
       attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type,
       attachments.size AS attachment_size
@@ -512,11 +563,11 @@ async function api(req, res, url) {
       LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id
       LEFT JOIN attachments ON attachments.id = messages.attachment_id`;
     if (before > 0) {
-      const rows = db.prepare(`${query} WHERE messages.room_id = ? AND messages.id < ? ORDER BY messages.id DESC LIMIT ?`).all(roomId, before, limit + 1);
+      const rows = db.prepare(`${query} WHERE messages.room_id = ? AND messages.thread_root IS NULL AND messages.id < ? ORDER BY messages.id DESC LIMIT ?`).all(roomId, before, limit + 1);
       const hasMore = rows.length > limit;
       return json(res, 200, { messages: hydrateMessages(rows.slice(0, limit).reverse(), context.user.id), has_more: hasMore });
     }
-    const rows = db.prepare(`${query} WHERE messages.room_id = ? AND messages.id > ? ORDER BY messages.id LIMIT ?`).all(roomId, after, limit + 1);
+    const rows = db.prepare(`${query} WHERE messages.room_id = ? AND messages.thread_root IS NULL AND messages.id > ? ORDER BY messages.id LIMIT ?`).all(roomId, after, limit + 1);
     const hasMore = rows.length > limit;
     return json(res, 200, { messages: hydrateMessages(rows.slice(0, limit), context.user.id), has_more: hasMore });
   }
@@ -525,7 +576,7 @@ async function api(req, res, url) {
     const roomId = Number(messageMatch[1]);
     const context = requireRoomAccess(req, res, roomId); if (!context) return;
     const user = context.user;
-    const { content = '', attachment_id = null, reply_to = null } = await readBody(req);
+    const { content = '', attachment_id = null, reply_to = null, thread_root = null } = await readBody(req);
     const text = String(content).trim();
     const attachmentId = attachment_id == null ? null : Number(attachment_id);
     if ((!text && !attachmentId) || text.length > 10_000) return json(res, 400, { error: '消息或附件不能为空，文字最多 10000 个字符' });
@@ -534,22 +585,24 @@ async function api(req, res, url) {
     }
     const replyId = reply_to == null ? null : Number(reply_to);
     if (replyId && !db.prepare('SELECT id FROM messages WHERE id = ? AND room_id = ?').get(replyId, roomId)) return json(res, 400, { error: '回复目标不存在或不在当前聊天室' });
-    const result = db.prepare('INSERT INTO messages(room_id, user_id, content, attachment_id, reply_to) VALUES (?, ?, ?, ?, ?)').run(roomId, user.id, text, attachmentId, replyId);
-    const message = db.prepare(`SELECT messages.id, messages.content, messages.created_at, messages.reply_to, messages.edited_at, messages.deleted_at,
+    const threadRoot = thread_root == null ? null : Number(thread_root);
+    if (threadRoot && !db.prepare('SELECT id FROM messages WHERE id = ? AND room_id = ? AND thread_root IS NULL').get(threadRoot, roomId)) return json(res, 400, { error: '话题根消息不存在' });
+    const result = db.prepare('INSERT INTO messages(room_id, user_id, content, attachment_id, reply_to, thread_root) VALUES (?, ?, ?, ?, ?, ?)').run(roomId, user.id, text, attachmentId, replyId, threadRoot);
+    const message = db.prepare(`SELECT messages.id, messages.content, messages.created_at, messages.reply_to, messages.thread_root, messages.edited_at, messages.deleted_at,
       users.id AS user_id, users.username, users.avatar_updated_at, parent.content AS reply_content, parent_user.username AS reply_username, attachments.id AS attachment_id,
       attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type,
       attachments.size AS attachment_size
       FROM messages JOIN users ON users.id = messages.user_id
       LEFT JOIN messages AS parent ON parent.id = messages.reply_to LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id
       LEFT JOIN attachments ON attachments.id = messages.attachment_id WHERE messages.id = ?`).get(result.lastInsertRowid);
-    broadcast({ type: 'message', room_id: roomId, message_id: Number(result.lastInsertRowid) }, roomId);
+    broadcast({ type: threadRoot ? 'thread_message' : 'message', room_id: roomId, message_id: Number(result.lastInsertRowid), thread_root: threadRoot }, roomId);
     return json(res, 201, { message: hydrateMessages([message], user.id)[0] });
   }
 
   const singleMessageMatch = url.pathname.match(/^\/api\/messages\/(\d+)$/);
   if (singleMessageMatch && req.method === 'GET') {
     const messageId = Number(singleMessageMatch[1]);
-    const row = db.prepare(`SELECT messages.id, messages.room_id, messages.content, messages.created_at, messages.reply_to, messages.edited_at, messages.deleted_at,
+    const row = db.prepare(`SELECT messages.id, messages.room_id, messages.content, messages.created_at, messages.reply_to, messages.thread_root, messages.edited_at, messages.deleted_at,
       users.id AS user_id, users.username, users.avatar_updated_at, parent.content AS reply_content, parent_user.username AS reply_username,
       attachments.id AS attachment_id, attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type, attachments.size AS attachment_size
       FROM messages JOIN users ON users.id = messages.user_id LEFT JOIN messages AS parent ON parent.id = messages.reply_to
@@ -652,8 +705,23 @@ server.on('upgrade', (req, socket, head) => {
     client.user = user;
     client.isAlive = true;
     sockets.add(client);
+    client.send(JSON.stringify({ type: 'presence_snapshot', users: onlineUsers() }));
+    broadcast({ type: 'presence', user_id: user.id, username: user.username, online: true });
     client.on('pong', () => { client.isAlive = true; });
-    client.on('close', () => sockets.delete(client));
+    client.on('message', raw => {
+      try {
+        const event = JSON.parse(String(raw));
+        if (event.type !== 'typing') return;
+        const roomId = Number(event.room_id);
+        if (!roomId || !socketCanAccess(client, roomId)) return;
+        const payload = JSON.stringify({ type: 'typing', room_id: roomId, user_id: user.id, username: user.username, typing: Boolean(event.typing) });
+        for (const peer of sockets) if (peer !== client && peer.readyState === 1 && socketCanAccess(peer, roomId)) peer.send(payload);
+      } catch { /* ignore malformed client messages */ }
+    });
+    client.on('close', () => {
+      sockets.delete(client);
+      if (![...sockets].some(peer => peer.user.id === user.id)) broadcast({ type: 'presence', user_id: user.id, username: user.username, online: false });
+    });
     client.send(JSON.stringify({ type: 'ready' }));
   });
 });
