@@ -22,10 +22,11 @@ echo "正在准备 Flet 构建依赖…"
 
 rm -rf dist/PolyChat-GUI dist/gui.build
 "$VENV_DIR/bin/flet" pack clients/gui.py \
+  --onedir \
   --name PolyChat-GUI \
   --icon assets/polychat-icon.png \
   --distpath dist \
   --yes
 
 rm -rf build PolyChat-GUI.spec
-echo "构建完成：$(pwd)/dist/PolyChat-GUI"
+echo "构建完成：$(pwd)/dist/PolyChat-GUI/PolyChat-GUI"
