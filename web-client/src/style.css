@@ -203,12 +203,32 @@ button { cursor: pointer; }
 .reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 9px; }
 .reactions button { padding: 3px 6px; border: 1px solid var(--warm-200); border-radius: 12px; color: #6b7280; background: var(--warm-100); font-size: 12px; }
 .reactions button.active { border-color: var(--blue-400); color: var(--blue-700); background: #eef4fb; }
+.bubble > header { position: relative; }
+.message-menu-trigger { margin-left: auto; min-width: 25px; padding: 2px 5px; border: 0; border-radius: 6px; color: #87909d; letter-spacing: 1px; background: transparent; }
+.message-menu-trigger:hover { color: var(--slate-900); background: var(--warm-200); }
+.message-menu { position: absolute; z-index: 3; top: 25px; right: 0; display: grid; min-width: 130px; padding: 5px; border: 1px solid var(--warm-200); border-radius: 9px; background: var(--white); box-shadow: 0 9px 22px rgba(34,45,65,.16); }
+.message-menu button { padding: 7px 9px; border: 0; border-radius: 6px; color: #536174; text-align: left; background: transparent; }
+.message-menu button:hover { background: var(--warm-100); }
+.message-menu .danger { color: #c2413a; }
+.reactions { position: relative; }
+.reaction-add { width: 27px; padding: 2px !important; color: #7d8797 !important; background: transparent !important; }
+.reaction-picker { position: absolute; z-index: 2; bottom: calc(100% + 5px); left: 0; display: flex; flex-wrap: wrap; gap: 3px; width: 230px; padding: 7px; border: 1px solid var(--warm-200); border-radius: 10px; background: var(--white); box-shadow: 0 10px 24px rgba(34,45,65,.16); }
+.reaction-picker button { width: 27px; height: 27px; padding: 0; border: 0; background: transparent; font-size: 16px; }
+.reaction-picker button:hover { background: var(--warm-200); }
 .search-form { display: flex; gap: 8px; }
 .search-form input, .edit-area { width: 100%; padding: 10px; border: 1px solid var(--warm-300); border-radius: 9px; color: #374151; background: var(--warm-100); }
 .search-results { display: grid; gap: 7px; margin-top: 14px; }
 .search-results > button { display: grid; gap: 3px; padding: 10px; border: 1px solid var(--warm-200); border-radius: 9px; color: #5f6c80; text-align: left; background: var(--warm-100); }
 .search-results span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .edit-area { min-height: 180px; margin-top: 4px; resize: vertical; font: 13px/1.5 inherit; }
+.room-modal label { display: grid; gap: 7px; margin: 13px 0; color: #596579; font-size: 12px; font-weight: 700; }
+.room-modal input:not([type="checkbox"]), .member-invite input, .member-invite select { min-width: 0; padding: 10px; border: 1px solid var(--warm-300); border-radius: 9px; color: #374151; background: var(--warm-100); font: inherit; }
+.privacy-choice { display: flex !important; grid-template-columns: auto 1fr; align-items: start; padding: 12px; border: 1px solid var(--warm-200); border-radius: 10px; cursor: pointer; }
+.privacy-choice input { width: 17px; height: 17px; margin: 1px 9px 0 0; accent-color: var(--blue-700); }
+.privacy-choice span { display: grid; gap: 3px; }
+.privacy-choice small, .members-modal .hint { color: #8490a1; font-weight: 400; line-height: 1.45; }
+.member-invite { display: grid; grid-template-columns: 1fr auto auto; gap: 7px; margin: 16px 0 10px; }
+.member-invite .primary { border: 0; border-radius: 9px; color: #fff; padding: 0 12px; background: linear-gradient(135deg, var(--blue-700), var(--violet-700)); }
 
 .modal { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; background: rgba(42, 53, 74, .62); backdrop-filter: blur(5px); z-index: 10; }
 .modal > section { position: relative; width: min(620px, 100%); max-height: 85vh; overflow: auto; }
