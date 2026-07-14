@@ -94,6 +94,18 @@ button { cursor: pointer; }
 .chat nav button > span { color: var(--blue-400); font-size: 17px; }
 .chat nav button > b { overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .chat nav button > small { color: #aebbc9; font-size: 10px; }
+.chat nav button .unread {
+  min-width: 19px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+  background: #a86676;
+  box-shadow: 0 3px 9px rgba(55, 34, 59, .24);
+}
+.chat nav button.hasUnread:not(.active) > b { color: #fff; }
 .chat > aside > footer { display: flex; align-items: center; gap: 9px; margin-top: auto; padding: 14px 5px 2px; border-top: 1px solid rgba(255,255,255,.1); }
 .profile-button { flex: none; width: 40px; height: 40px; padding: 0; border: 2px solid rgba(255,255,255,.14); border-radius: 13px; overflow: hidden; background: transparent; }
 .profile-button:hover { border-color: var(--blue-400); }
