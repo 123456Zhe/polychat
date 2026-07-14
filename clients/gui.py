@@ -295,7 +295,7 @@ class PolyChatApp:
                 bgcolor="#FFFFFF" if mine else "#FBFCFE",
                 padding=ft.Padding(14, 14, 14, 14),
                 border_radius=14,
-                border=ft.border.all(1, "#E8EBF1"),
+                border=ft.Border.all(1, "#E8EBF1"),
                 expand=True,
             ),
         ], vertical_alignment=ft.CrossAxisAlignment.START, spacing=10)
@@ -315,7 +315,7 @@ class PolyChatApp:
             content=ft.Column([
                 ft.Container(
                     bgcolor="white",
-                    border=ft.border.all(1, "#DDE2EA"),
+                    border=ft.Border.all(1, "#DDE2EA"),
                     border_radius=14,
                     padding=ft.Padding(left=6, right=10, top=4, bottom=4),
                     content=ft.Row([
