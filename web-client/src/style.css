@@ -159,13 +159,13 @@ button { cursor: pointer; }
 .markdown table { max-width: 100%; border-collapse: collapse; }
 .markdown th, .markdown td { padding: 6px 9px; border: 1px solid #d8d4d4; }
 .math-block { max-width: 100%; overflow-x: auto; padding: 5px 0; }
-.attachment-image,
-.markdown img {
+.bubble .attachment-image,
+.bubble .markdown img {
   display: block;
-  width: auto;
-  max-width: 100%;
-  height: auto;
-  max-height: 70vh;
+  width: auto !important;
+  max-width: 100% !important;
+  height: auto !important;
+  max-height: 70vh !important;
   margin-top: 10px;
   border-radius: 11px;
   object-fit: contain;
