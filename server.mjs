@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { readFileSync, mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
-import { dirname, extname, join, normalize } from 'node:path';
+import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
@@ -412,10 +412,11 @@ function staticFile(res, pathname) {
   }
   const relative = pathname === '/' ? 'index.html' : pathname.slice(1);
   const safe = normalize(relative).replace(/^(\.\.[/\\])+/, '');
-  if (!['index.html', 'app.js', 'style.css', 'icon.png'].includes(safe)) return json(res, 404, { error: '页面不存在' });
+  const file = resolve(PUBLIC, safe);
+  if (!file.startsWith(`${PUBLIC}/`) || !/^(index\.html|assets\/[A-Za-z0-9._-]+\.(?:js|css|png|woff2?|ttf))$/.test(safe)) return json(res, 404, { error: '页面不存在' });
   try {
-    const body = readFileSync(join(PUBLIC, safe));
-    const cacheControl = safe === 'index.html' ? 'no-cache' : 'public, max-age=3600';
+    const body = readFileSync(file);
+    const cacheControl = safe === 'index.html' ? 'no-cache' : 'public, max-age=31536000, immutable';
     res.writeHead(200, { 'content-type': MIME[extname(safe)] || 'application/octet-stream', 'cache-control': cacheControl });
     res.end(body);
   } catch { json(res, 404, { error: '页面不存在' }); }

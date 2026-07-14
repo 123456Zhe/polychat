@@ -6,12 +6,19 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "web:dev": "vite --config web-client/vite.config.js",
+    "web:build": "vite build --config web-client/vite.config.js"
   },
   "engines": {
     "node": ">=22.5"
   },
   "dependencies": {
-    "katex": "0.16.11"
+    "katex": "0.16.11",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "vite": "^6.0.5"
   }
 }

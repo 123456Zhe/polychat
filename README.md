@@ -27,6 +27,21 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 
 不需要 `npm install`，也不需要另行安装数据库。
 
+## Web 前端开发
+
+Web UI 已独立为 `web-client/` 中的 Vue 3 + Vite 工程。开发模式会在 `5173` 端口启动，并将 `/api` 请求代理到本机服务端：
+
+```bash
+npm install
+npm run web:dev
+```
+
+生产构建会输出到 `web/`，由 Node 服务直接托管：
+
+```bash
+npm run web:build
+```
+
 ## 快速启动
 
 在第一个终端启动服务：

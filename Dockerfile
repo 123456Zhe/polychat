@@ -3,9 +3,12 @@ FROM node:24-bookworm-slim
 WORKDIR /app
 
 COPY --chown=node:node package.json package-lock.json server.mjs ./
-COPY --chown=node:node web ./web
+COPY --chown=node:node web-client ./web-client
+COPY --chown=node:node assets ./assets
 
-RUN npm ci --omit=dev --ignore-scripts \
+RUN npm ci --ignore-scripts \
+    && npm run web:build \
+    && npm prune --omit=dev \
     && npm cache clean --force \
     && mkdir -p /app/data/uploads \
     && chown -R node:node /app/data
