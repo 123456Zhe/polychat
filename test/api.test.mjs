@@ -58,6 +58,22 @@ test('拒绝未认证访问和弱密码', async () => {
   assert.equal(weak.response.status, 400);
 });
 
+test('管理员面板只允许管理员查看和管理权限', async () => {
+  const adminLogin = await api('/api/login', { method: 'POST', body: JSON.stringify({ username: 'alice', password: 'correct-horse' }) });
+  const adminAuth = { authorization: `Bearer ${adminLogin.body.token}` };
+  const member = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'member_admin', password: 'member-password' }) });
+  const memberAuth = { authorization: `Bearer ${member.body.token}` };
+
+  const denied = await api('/api/admin/overview', { headers: memberAuth });
+  assert.equal(denied.response.status, 403);
+  const overview = await api('/api/admin/overview', { headers: adminAuth });
+  assert.equal(overview.response.status, 200);
+  assert.equal(overview.body.stats.users >= 2, true);
+
+  const promoted = await api(`/api/admin/users/${member.body.user.id}/admin`, { method: 'PUT', headers: adminAuth, body: JSON.stringify({ is_admin: true }) });
+  assert.equal(promoted.body.user.is_admin, true);
+});
+
 test('上传、发送和鉴权下载附件', async () => {
   const registered = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'file_user', password: 'file-password' }) });
   const auth = { authorization: `Bearer ${registered.body.token}` };

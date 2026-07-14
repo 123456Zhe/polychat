@@ -394,6 +394,19 @@ button {
   color: #9ca5b5;
   font-size: 11px;
 }
+.copy-markdown {
+  margin-left: auto;
+  padding: 2px 6px;
+  border: 1px solid #e0e4ec;
+  border-radius: 6px;
+  color: #778196;
+  background: #fff;
+  font-size: 10px;
+}
+.copy-markdown:hover {
+  color: var(--accent);
+  border-color: #bcb8ff;
+}
 .markdown {
   max-width: 760px;
   margin-top: 3px;
@@ -669,6 +682,46 @@ kbd {
   color: var(--accent);
   font-size: 12px;
 }
+.admin-card {
+  width: min(620px, 100%);
+  text-align: left;
+}
+.admin-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 18px 0;
+}
+.admin-stats > div {
+  padding: 11px 8px;
+  border-radius: 10px;
+  background: #f5f6fb;
+  text-align: center;
+}
+.admin-stats strong,
+.admin-stats span {
+  display: block;
+}
+.admin-stats strong { font-size: 20px; }
+.admin-stats span { color: var(--muted); font-size: 11px; }
+.admin-users-head,
+.admin-user {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.admin-users-head { margin: 14px 0 7px; }
+.admin-users-head button,
+.admin-user button {
+  padding: 6px 9px;
+  border: 1px solid #dfe3eb;
+  border-radius: 7px;
+  background: #fff;
+  font-size: 11px;
+}
+.admin-users { max-height: 300px; overflow: auto; border-top: 1px solid var(--line); }
+.admin-user { padding: 10px 2px; border-bottom: 1px solid var(--line); font-size: 13px; }
 #toast {
   position: fixed;
   right: 20px;

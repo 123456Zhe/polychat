@@ -97,7 +97,8 @@ class PolyChatApp:
             on_submit=self.send_message,
         )
         self.file_picker = ft.FilePicker()
-        self.page.services.append(self.file_picker)
+        self.clipboard = ft.Clipboard()
+        self.page.services.extend([self.file_picker, self.clipboard])
 
     async def call(self, function, *args):
         return await asyncio.to_thread(function, *args)
@@ -294,16 +295,15 @@ class PolyChatApp:
 
     def render_profile(self):
         user = self.state.user
-        self.profile = ft.Container(
-            padding=ft.Padding(top=4),
-            ink=True,
-            on_click=self.choose_avatar,
-            content=ft.Row([
-                self.avatar(user, 20),
-                ft.Column([ft.Text(user["username"], color="white", size=13, weight=ft.FontWeight.W_600), ft.Text("● 在线 · 点击更换头像", color="#4ADE80", size=9)], spacing=2, expand=True),
-                ft.Icon(ft.Icons.CHEVRON_RIGHT, color="#8390A7", size=18),
-            ], spacing=10),
-        )
+        content = ft.Row([
+            self.avatar(user, 20),
+            ft.Column([ft.Text(user["username"], color="white", size=13, weight=ft.FontWeight.W_600), ft.Text("● 在线 · 点击更换头像", color="#4ADE80", size=9)], spacing=2, expand=True),
+            ft.Icon(ft.Icons.CHEVRON_RIGHT, color="#8390A7", size=18),
+        ], spacing=10)
+        if hasattr(self, "profile"):
+            self.profile.content = content
+        else:
+            self.profile = ft.Container(padding=ft.Padding(top=4), ink=True, on_click=self.choose_avatar, content=content)
 
     async def load_rooms(self, select_first: bool = False):
         rooms = await self.call(self.state.api.rooms)
@@ -352,6 +352,8 @@ class PolyChatApp:
             ft.Row([
                 ft.Text(message["username"], size=13, weight=ft.FontWeight.W_700, color="#1B2740"),
                 ft.Text(format_server_time(message["created_at"]), size=10, color="#98A2B3"),
+                ft.Container(expand=True),
+                ft.IconButton(ft.Icons.CONTENT_COPY_OUTLINED, icon_size=15, icon_color="#7D879A", tooltip="复制 Markdown", on_click=lambda _, message=message: self.page.run_task(self.copy_markdown, message)),
             ], spacing=8),
         ]
         if message.get("content"):
@@ -387,6 +389,13 @@ class PolyChatApp:
                 expand=True,
             ),
         ], vertical_alignment=ft.CrossAxisAlignment.START, spacing=10)
+
+    async def copy_markdown(self, message: dict):
+        try:
+            await self.clipboard.set(message.get("content") or "")
+            self.show_toast("已复制完整 Markdown")
+        except Exception:
+            self.show_toast("复制失败，请检查系统剪贴板权限", error=True)
 
     def render_messages(self):
         self.room_name.value = f"# {self.state.room['name']}" if self.state.room else "# 大厅"

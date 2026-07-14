@@ -48,6 +48,7 @@
         <button id="sidebar-toggle" class="mobile-only">☰</button>
         <div><h2 id="room-name">大厅</h2><p>支持 Markdown 与 LaTeX</p></div>
         <button id="notification-toggle" class="notify-button" type="button" aria-label="开启通知" title="开启桌面通知">🔕</button>
+        <button id="admin-panel" class="notify-button hidden" type="button" aria-label="管理面板" title="管理面板">⚙</button>
         <span id="connection" class="status">● 已连接</span>
       </header>
       <div id="messages" class="messages" aria-live="polite"></div>
@@ -81,6 +82,16 @@
         <input id="avatar-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
       </div>
       <p id="avatar-status" class="account-status" role="status"></p>
+    </section>
+  </div>
+  <div id="admin-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="admin-title">
+    <section class="account-card admin-card">
+      <button id="close-admin" class="modal-close" type="button" aria-label="关闭">×</button>
+      <p class="eyebrow">ADMINISTRATION</p>
+      <h2 id="admin-title">管理面板</h2>
+      <div id="admin-stats" class="admin-stats"></div>
+      <div class="admin-users-head"><strong>用户</strong><button id="refresh-admin" type="button">刷新</button></div>
+      <div id="admin-users" class="admin-users"></div>
     </section>
   </div>
   <div id="toast" role="status"></div>

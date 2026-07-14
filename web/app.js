@@ -32,6 +32,7 @@ $('#auth-form').addEventListener('submit', async event => {
 async function enterChat() {
   $('#auth').classList.add('hidden'); $('#chat').classList.remove('hidden');
   $('#profile-name').textContent = state.user.username;
+  $('#admin-panel').classList.toggle('hidden', !state.user.is_admin);
   updateAccountAvatars();
   await loadRooms();
   clearInterval(state.roomTimer); state.roomTimer = setInterval(loadRooms, 3000);
@@ -200,7 +201,9 @@ function appendMessage(message) {
   const name = document.createElement('strong'); name.textContent = message.username;
   const time = document.createElement('time'); const date = new Date(message.created_at.replace(' ', 'T') + 'Z'); time.textContent = date.toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
   const content = document.createElement('div'); content.className = 'markdown'; content.innerHTML = markdown(message.content || '');
-  head.append(name, time); body.append(head);
+  const copy = document.createElement('button'); copy.className = 'copy-markdown'; copy.type = 'button'; copy.title = '复制完整 Markdown'; copy.textContent = '复制 Markdown';
+  copy.addEventListener('click', () => copyMarkdown(message.content || ''));
+  head.append(name, time, copy); body.append(head);
   if (message.content) body.append(content);
   if (message.attachment_id) {
     const inlineTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
@@ -222,6 +225,36 @@ function appendMessage(message) {
     }
   }
   article.append(avatar, body); $('#messages').append(article);
+}
+
+async function copyMarkdown(text) {
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+    await navigator.clipboard.writeText(text);
+    toast('已复制完整 Markdown');
+  } catch {
+    const input = document.createElement('textarea'); input.value = text; input.style.position = 'fixed'; input.style.opacity = '0';
+    document.body.append(input); input.select();
+    const copied = document.execCommand('copy'); input.remove();
+    toast(copied ? '已复制完整 Markdown' : '复制失败，请检查浏览器权限');
+  }
+}
+
+async function loadAdminPanel() {
+  try {
+    const { stats, users } = await request('/api/admin/overview');
+    const labels = [['用户', stats.users], ['聊天室', stats.rooms], ['消息', stats.messages], ['文件', stats.files]];
+    $('#admin-stats').replaceChildren(...labels.map(([label, value]) => {
+      const item = document.createElement('div'); item.innerHTML = `<strong>${value}</strong><span>${label}</span>`; return item;
+    }));
+    $('#admin-users').replaceChildren(...users.map(user => {
+      const row = document.createElement('div'); row.className = 'admin-user';
+      const detail = document.createElement('span'); detail.textContent = `${user.username} · ${user.message_count} 条消息`;
+      const toggle = document.createElement('button'); toggle.type = 'button'; toggle.textContent = user.is_admin ? '撤销管理员' : '设为管理员';
+      toggle.addEventListener('click', async () => { try { await request(`/api/admin/users/${user.id}/admin`, { method: 'PUT', body: JSON.stringify({ is_admin: !user.is_admin }) }); await loadAdminPanel(); } catch (error) { toast(error.message); } });
+      row.append(detail, toggle); return row;
+    }));
+  } catch (error) { toast(error.message); }
 }
 
 $('#composer').addEventListener('submit', async event => {
@@ -337,5 +370,8 @@ document.addEventListener('visibilitychange', markCurrentRoomRead);
 window.addEventListener('focus', markCurrentRoomRead);
 $('#logout').addEventListener('click', async () => { await request('/api/logout', { method:'POST' }); location.reload(); });
 $('#sidebar-toggle').addEventListener('click', () => $('.sidebar').classList.toggle('open'));
+$('#admin-panel').addEventListener('click', async () => { $('#admin-modal').classList.remove('hidden'); await loadAdminPanel(); });
+$('#close-admin').addEventListener('click', () => $('#admin-modal').classList.add('hidden'));
+$('#refresh-admin').addEventListener('click', loadAdminPanel);
 
 (async () => { try { const { user } = await request('/api/me'); state.user = user; await enterChat(); } catch { /* show login */ } })();

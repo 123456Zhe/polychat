@@ -29,6 +29,7 @@ db.exec(`
     id INTEGER PRIMARY KEY,
     username TEXT NOT NULL UNIQUE COLLATE NOCASE,
     password_hash TEXT NOT NULL,
+    is_admin INTEGER NOT NULL DEFAULT 0,
     avatar_name TEXT,
     avatar_mime TEXT,
     avatar_updated_at INTEGER,
@@ -69,9 +70,13 @@ if (!db.prepare('PRAGMA table_info(messages)').all().some(column => column.name 
   db.exec('ALTER TABLE messages ADD COLUMN attachment_id INTEGER REFERENCES attachments(id)');
 }
 const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map(column => column.name));
+if (!userColumns.has('is_admin')) db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
 if (!userColumns.has('avatar_name')) db.exec('ALTER TABLE users ADD COLUMN avatar_name TEXT');
 if (!userColumns.has('avatar_mime')) db.exec('ALTER TABLE users ADD COLUMN avatar_mime TEXT');
 if (!userColumns.has('avatar_updated_at')) db.exec('ALTER TABLE users ADD COLUMN avatar_updated_at INTEGER');
+if (db.prepare('SELECT COUNT(*) AS count FROM users WHERE is_admin = 1').get().count === 0) {
+  db.prepare('UPDATE users SET is_admin = 1 WHERE id = (SELECT id FROM users ORDER BY id LIMIT 1)').run();
+}
 
 function json(res, status, body, headers = {}) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers });
@@ -94,7 +99,7 @@ function currentUser(req) {
   const token = tokenOf(req);
   if (!token) return null;
   return db.prepare(`
-    SELECT users.id, users.username, users.avatar_updated_at FROM sessions
+    SELECT users.id, users.username, users.is_admin, users.avatar_updated_at FROM sessions
     JOIN users ON users.id = sessions.user_id
     WHERE sessions.token = ? AND sessions.expires_at > ?
   `).get(token, Date.now()) || null;
@@ -104,6 +109,7 @@ function publicUser(user) {
   return {
     id: user.id,
     username: user.username,
+    is_admin: Boolean(user.is_admin),
     avatar_updated_at: user.avatar_updated_at || null,
     avatar_url: user.avatar_updated_at ? `/api/users/${user.id}/avatar?v=${user.avatar_updated_at}` : null
   };
@@ -153,6 +159,13 @@ function requireUser(req, res) {
   return user;
 }
 
+function requireAdmin(req, res) {
+  const user = requireUser(req, res);
+  if (!user) return null;
+  if (!user.is_admin) { json(res, 403, { error: '需要管理员权限' }); return null; }
+  return user;
+}
+
 function cookie(token, clear = false) {
   const age = clear ? 0 : SESSION_DAYS * 86400;
   return `polychat_session=${clear ? '' : encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}`;
@@ -165,9 +178,10 @@ async function api(req, res, url) {
     if (!/^[\p{L}\p{N}_-]{2,24}$/u.test(name)) return json(res, 400, { error: '用户名需为 2–24 位字母、数字、下划线或连字符' });
     if (String(password).length < 8 || String(password).length > 128) return json(res, 400, { error: '密码需为 8–128 位' });
     try {
-      const result = db.prepare('INSERT INTO users(username, password_hash) VALUES (?, ?)').run(name, hashPassword(String(password)));
+      const firstAccount = db.prepare('SELECT COUNT(*) AS count FROM users').get().count === 0;
+      const result = db.prepare('INSERT INTO users(username, password_hash, is_admin) VALUES (?, ?, ?)').run(name, hashPassword(String(password)), firstAccount ? 1 : 0);
       const token = createSession(Number(result.lastInsertRowid));
-      return json(res, 201, { token, user: publicUser({ id: Number(result.lastInsertRowid), username: name }) }, { 'set-cookie': cookie(token) });
+      return json(res, 201, { token, user: publicUser({ id: Number(result.lastInsertRowid), username: name, is_admin: firstAccount }) }, { 'set-cookie': cookie(token) });
     } catch (error) {
       if (error.message.includes('UNIQUE')) return json(res, 409, { error: '用户名已存在' });
       throw error;
@@ -176,7 +190,7 @@ async function api(req, res, url) {
 
   if (req.method === 'POST' && url.pathname === '/api/login') {
     const { username = '', password = '' } = await readBody(req);
-    const user = db.prepare('SELECT id, username, password_hash, avatar_updated_at FROM users WHERE username = ?').get(String(username).trim());
+    const user = db.prepare('SELECT id, username, password_hash, is_admin, avatar_updated_at FROM users WHERE username = ?').get(String(username).trim());
     if (!user || !checkPassword(String(password), user.password_hash)) return json(res, 401, { error: '用户名或密码错误' });
     const token = createSession(user.id);
     return json(res, 200, { token, user: publicUser(user) }, { 'set-cookie': cookie(token) });
@@ -191,6 +205,34 @@ async function api(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/me') {
     const user = requireUser(req, res); if (!user) return;
     return json(res, 200, { user: publicUser(user) });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/overview') {
+    if (!requireAdmin(req, res)) return;
+    const stats = {
+      users: db.prepare('SELECT COUNT(*) AS count FROM users').get().count,
+      rooms: db.prepare('SELECT COUNT(*) AS count FROM rooms').get().count,
+      messages: db.prepare('SELECT COUNT(*) AS count FROM messages').get().count,
+      files: db.prepare('SELECT COUNT(*) AS count FROM attachments').get().count,
+    };
+    const users = db.prepare(`SELECT users.id, users.username, users.is_admin, users.created_at,
+      (SELECT COUNT(*) FROM messages WHERE messages.user_id = users.id) AS message_count
+      FROM users ORDER BY users.id`).all();
+    return json(res, 200, { stats, users });
+  }
+
+  const adminUserMatch = url.pathname.match(/^\/api\/admin\/users\/(\d+)\/admin$/);
+  if (adminUserMatch && req.method === 'PUT') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const targetId = Number(adminUserMatch[1]);
+    const { is_admin = false } = await readBody(req);
+    const target = db.prepare('SELECT id, username, is_admin, avatar_updated_at FROM users WHERE id = ?').get(targetId);
+    if (!target) return json(res, 404, { error: '用户不存在' });
+    if (!is_admin && target.is_admin && db.prepare('SELECT COUNT(*) AS count FROM users WHERE is_admin = 1').get().count <= 1) {
+      return json(res, 400, { error: '至少需要保留一名管理员' });
+    }
+    db.prepare('UPDATE users SET is_admin = ? WHERE id = ?').run(is_admin ? 1 : 0, targetId);
+    return json(res, 200, { user: publicUser({ ...target, is_admin: Boolean(is_admin) }) });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/me/avatar') {
