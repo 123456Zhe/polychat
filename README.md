@@ -2,7 +2,7 @@
 
 ![PolyChat icon](assets/polychat-icon.png)
 
-PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Tkinter 桌面 GUI 和 curses 终端 TUI 客户端。服务端只依赖 Node.js 内置模块，数据保存在 SQLite 中。
+PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet 桌面 GUI 和 curses 终端 TUI 客户端。服务端只依赖 Node.js 内置模块，数据保存在 SQLite 中。
 
 ## 功能
 
@@ -15,7 +15,7 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Tkin
 - 账户支持持久化头像；Web 提供账户设置与预览，GUI/TUI 也可上传头像
 - Web 端支持标题、列表、引用、代码块、链接、图片、粗体、斜体、删除线等 Markdown
 - Web 端通过 KaTeX 支持行内 `$...$` 和块级 `$$...$$` LaTeX；CDN 不可用时显示原始公式
-- GUI 对常用 Markdown 样式做原生富文本显示，LaTeX 以清晰源码显示
+- Flet GUI 原生渲染 Markdown 与 LaTeX，消息区显示每位用户的头像
 - TUI 完整保留 Markdown/LaTeX 文本，支持房间命令和定时拉取新消息
 - Web 渲染先转义用户输入，链接只接受 HTTP(S)，避免聊天内容注入脚本
 
@@ -23,7 +23,7 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Tkin
 
 - Node.js 22.5 或更高版本（使用内置 `node:sqlite`）
 - Python 3.10 或更高版本
-- GUI 需要 Python Tkinter；TUI 需要类 Unix 终端的 curses
+- GUI 需要 Python 与 Flet；TUI 需要类 Unix 终端的 curses
 
 不需要 `npm install`，也不需要另行安装数据库。
 
@@ -110,18 +110,18 @@ python3 -m py_compile clients/chat_api.py clients/gui.py clients/tui.py
 
 测试使用临时 SQLite 数据库，覆盖注册、登录、鉴权、建房、Markdown/LaTeX 消息持久化与密码非明文存储。
 
-## 打包 GUI 单文件
+## 构建 GUI
 
-Linux 下使用 Nuitka 生成包含 Python、Tk 和客户端代码的单文件程序：
+Linux 下使用 Flet 生成独立桌面程序：
 
 ```bash
 python3 -m pip install -r requirements-gui.txt
 chmod +x build-gui.sh
 ./build-gui.sh
-./dist/PolyChat-GUI --server http://127.0.0.1:3000
+./dist/PolyChat-GUI/PolyChat-GUI --server http://127.0.0.1:3000
 ```
 
-GUI 使用 Pillow 显示头像，并使用 Matplotlib MathText 在本地渲染 LaTeX 公式；附件消息可直接点击并选择保存位置。构建还需要 GCC、`patchelf` 和 Tkinter。在 Ubuntu/Pop!_OS 上可安装 `python3-tk`。生成的 Linux x86_64 文件不能直接用于 Windows 或 macOS；其他系统需在对应系统上重新构建。
+GUI 采用 Flet，头像以圆形图片显示，消息区使用 Flet Markdown 组件渲染 Markdown 与 LaTeX，附件可点击下载。Flet 会在首次构建时自动准备所需 Flutter 工具链；Linux、Windows 与 macOS 需分别在对应系统上构建。
 
 ## Docker Compose 部署
 
