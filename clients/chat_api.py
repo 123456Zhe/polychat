@@ -133,15 +133,39 @@ class ChatAPI:
     def rooms(self):
         return self.request("GET", "/api/rooms")["rooms"]
 
-    def create_room(self, name: str):
-        return self.request("POST", "/api/rooms", {"name": name})["room"]
+    def create_room(self, name: str, is_private: bool = False):
+        return self.request("POST", "/api/rooms", {"name": name, "is_private": is_private})["room"]
 
     def messages(self, room_id: int, after: int = 0):
         query = urllib.parse.urlencode({"after": after})
         return self.request("GET", f"/api/rooms/{room_id}/messages?{query}")["messages"]
 
-    def send(self, room_id: int, content: str, attachment_id: int | None = None):
-        return self.request("POST", f"/api/rooms/{room_id}/messages", {"content": content, "attachment_id": attachment_id})["message"]
+    def send(self, room_id: int, content: str, attachment_id: int | None = None, reply_to: int | None = None):
+        return self.request("POST", f"/api/rooms/{room_id}/messages", {"content": content, "attachment_id": attachment_id, "reply_to": reply_to})["message"]
+
+    def edit_message(self, message_id: int, content: str):
+        return self.request("PUT", f"/api/messages/{int(message_id)}", {"content": content})["message"]
+
+    def retract_message(self, message_id: int):
+        return self.request("DELETE", f"/api/messages/{int(message_id)}")["message"]
+
+    def react(self, message_id: int, emoji: str):
+        return self.request("POST", f"/api/messages/{int(message_id)}/reactions", {"emoji": emoji})["reactions"]
+
+    def search(self, query: str, room_id: int | None = None):
+        params = {"q": query}
+        if room_id is not None:
+            params["room_id"] = int(room_id)
+        return self.request("GET", "/api/search?" + urllib.parse.urlencode(params))["messages"]
+
+    def room_members(self, room_id: int):
+        return self.request("GET", f"/api/rooms/{int(room_id)}/members")["members"]
+
+    def invite_member(self, room_id: int, username: str, role: str = "member"):
+        return self.request("POST", f"/api/rooms/{int(room_id)}/members", {"username": username, "role": role})["member"]
+
+    def remove_member(self, room_id: int, user_id: int):
+        return self.request("DELETE", f"/api/rooms/{int(room_id)}/members/{int(user_id)}")
 
     def upload(self, path: str):
         size = os.path.getsize(path)

@@ -75,7 +75,12 @@ class TUI:
         lines = []
         for msg in self.messages:
             created_at = format_server_time(msg["created_at"], self.timezone)
-            lines.append((f"{msg['username']}  {created_at}", curses.A_BOLD))
+            suffix = " · 已编辑" if msg.get("edited_at") else ""
+            lines.append((f"{msg['id']} · {msg['username']}  {created_at}{suffix}", curses.A_BOLD))
+            if msg.get("reply_to"):
+                lines.append((f"  ↳ 回复消息 #{msg['reply_to']}：{msg.get('reply_content') or ''}", curses.A_DIM))
+            if msg.get("is_deleted"):
+                lines.append(("  [此消息已撤回]", curses.A_DIM)); lines.append(("", curses.A_NORMAL)); continue
             # Markdown/LaTeX source remains intact and readable in text terminals.
             for raw in msg["content"].splitlines() or [""]:
                 prefix = "│ " if raw.startswith("> ") else "  "
@@ -86,6 +91,8 @@ class TUI:
                 size = msg.get("attachment_size", 0)
                 readable = f"{size / 1024:.1f} KB" if size >= 1024 else f"{size} B"
                 lines.append((f"  [文件 {msg['attachment_id']}] {msg['attachment_name']} · {readable}", curses.A_UNDERLINE))
+            if msg.get("reactions"):
+                lines.append(("  " + " ".join(f"{reaction['emoji']} {reaction['count']}" for reaction in msg['reactions']), curses.A_NORMAL))
             lines.append(("", curses.A_NORMAL))
 
         self.page_size = max(1, h - 4)
@@ -119,7 +126,7 @@ class TUI:
 
     def command(self, value):
         if value == "/quit": return False
-        if value == "/help": self.status = "/rooms · /room 编号 · /avatar 路径 · /sendfile 路径 · /getfile ID 路径 · /quit"; return True
+        if value == "/help": self.status = "/rooms /room 编号 /new 名称 /newprivate 名称 /reply ID 内容 /react ID 表情 /edit ID 内容 /retract ID /search 关键词 /invite 用户 [admin] /quit"; return True
         if value == "/rooms": self.status = "  ".join(f"{i + 1}:{r['name']}" for i, r in enumerate(self.rooms)); return True
         if value.startswith("/room "):
             try:
@@ -129,6 +136,45 @@ class TUI:
         if value.startswith("/new "):
             try: self.api.create_room(value[5:].strip()); self.refresh_rooms(); self.status = "聊天室已创建"
             except ApiError as exc: self.status = str(exc)
+            return True
+        if value.startswith("/newprivate "):
+            try: self.api.create_room(value[12:].strip(), True); self.refresh_rooms(); self.status = "私有聊天室已创建"
+            except ApiError as exc: self.status = str(exc)
+            return True
+        if value.startswith("/reply "):
+            try:
+                _, message_id, reply = value.split(maxsplit=2)
+                self.api.send(self.room["id"], reply, reply_to=int(message_id)); self.fetch(); self.status = "回复已发送"
+            except (ValueError, ApiError) as exc: self.status = f"用法: /reply 消息ID 内容 · {exc}"
+            return True
+        if value.startswith("/react "):
+            try:
+                _, message_id, emoji = value.split(maxsplit=2)
+                self.api.react(int(message_id), emoji); self.messages = self.api.messages(self.room["id"], 0); self.last_id = self.messages[-1]["id"] if self.messages else 0; self.status = "表情已更新"
+            except (ValueError, ApiError) as exc: self.status = f"用法: /react 消息ID 表情 · {exc}"
+            return True
+        if value.startswith("/edit "):
+            try:
+                _, message_id, text = value.split(maxsplit=2)
+                self.api.edit_message(int(message_id), text); self.messages = self.api.messages(self.room["id"], 0); self.last_id = self.messages[-1]["id"] if self.messages else 0; self.status = "消息已编辑"
+            except (ValueError, ApiError) as exc: self.status = f"用法: /edit 消息ID 新内容 · {exc}"
+            return True
+        if value.startswith("/retract "):
+            try:
+                self.api.retract_message(int(value.split(maxsplit=1)[1])); self.messages = self.api.messages(self.room["id"], 0); self.last_id = self.messages[-1]["id"] if self.messages else 0; self.status = "消息已撤回"
+            except (ValueError, IndexError, ApiError) as exc: self.status = f"用法: /retract 消息ID · {exc}"
+            return True
+        if value.startswith("/search "):
+            try:
+                found = self.api.search(value[8:].strip(), self.room["id"])
+                self.status = " · ".join(f"#{m['id']} {m['username']}: {m['content'][:30]}" for m in found[:3]) or "未找到消息"
+            except ApiError as exc: self.status = str(exc)
+            return True
+        if value.startswith("/invite "):
+            try:
+                parts = value.split()
+                self.api.invite_member(self.room["id"], parts[1], "admin" if len(parts) > 2 and parts[2] == "admin" else "member"); self.status = "成员已添加"
+            except (IndexError, ApiError) as exc: self.status = f"用法: /invite 用户名 [admin] · {exc}"
             return True
         if value.startswith("/sendfile "):
             try: self.api.send_file(self.room["id"], value[10:].strip()); self.fetch(); self.status = "文件已发送"

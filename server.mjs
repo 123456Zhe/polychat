@@ -44,6 +44,7 @@ db.exec(`
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE COLLATE NOCASE,
     created_by INTEGER REFERENCES users(id),
+    is_private INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
   CREATE TABLE IF NOT EXISTS attachments (
@@ -61,14 +62,35 @@ db.exec(`
     user_id INTEGER NOT NULL REFERENCES users(id),
     content TEXT NOT NULL,
     attachment_id INTEGER REFERENCES attachments(id),
+    reply_to INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+    edited_at TEXT,
+    deleted_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
   CREATE INDEX IF NOT EXISTS idx_messages_room_id ON messages(room_id, id);
+  CREATE TABLE IF NOT EXISTS room_members (
+    room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('owner', 'admin', 'member')),
+    PRIMARY KEY(room_id, user_id)
+  );
+  CREATE TABLE IF NOT EXISTS message_reactions (
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    emoji TEXT NOT NULL,
+    PRIMARY KEY(message_id, user_id, emoji)
+  );
   INSERT OR IGNORE INTO rooms(id, name) VALUES (1, '大厅');
 `);
 if (!db.prepare('PRAGMA table_info(messages)').all().some(column => column.name === 'attachment_id')) {
   db.exec('ALTER TABLE messages ADD COLUMN attachment_id INTEGER REFERENCES attachments(id)');
 }
+const roomColumns = new Set(db.prepare('PRAGMA table_info(rooms)').all().map(column => column.name));
+if (!roomColumns.has('is_private')) db.exec('ALTER TABLE rooms ADD COLUMN is_private INTEGER NOT NULL DEFAULT 0');
+const messageColumns = new Set(db.prepare('PRAGMA table_info(messages)').all().map(column => column.name));
+if (!messageColumns.has('reply_to')) db.exec('ALTER TABLE messages ADD COLUMN reply_to INTEGER REFERENCES messages(id)');
+if (!messageColumns.has('edited_at')) db.exec('ALTER TABLE messages ADD COLUMN edited_at TEXT');
+if (!messageColumns.has('deleted_at')) db.exec('ALTER TABLE messages ADD COLUMN deleted_at TEXT');
 const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map(column => column.name));
 if (!userColumns.has('is_admin')) db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
 if (!userColumns.has('avatar_name')) db.exec('ALTER TABLE users ADD COLUMN avatar_name TEXT');
@@ -164,6 +186,38 @@ function requireAdmin(req, res) {
   if (!user) return null;
   if (!user.is_admin) { json(res, 403, { error: '需要管理员权限' }); return null; }
   return user;
+}
+
+function roomForUser(roomId, userId) {
+  return db.prepare(`SELECT rooms.*, room_members.role FROM rooms
+    LEFT JOIN room_members ON room_members.room_id = rooms.id AND room_members.user_id = ?
+    WHERE rooms.id = ?`).get(userId, roomId);
+}
+function requireRoomAccess(req, res, roomId) {
+  const user = requireUser(req, res); if (!user) return null;
+  const room = roomForUser(roomId, user.id);
+  if (!room) { json(res, 404, { error: '聊天室不存在' }); return null; }
+  if (room.is_private && !room.role && !user.is_admin) { json(res, 403, { error: '这是私有聊天室' }); return null; }
+  return { user, room };
+}
+function requireRoomManager(req, res, roomId) {
+  const context = requireRoomAccess(req, res, roomId); if (!context) return null;
+  if (!context.user.is_admin && !['owner', 'admin'].includes(context.room.role)) { json(res, 403, { error: '需要聊天室管理权限' }); return null; }
+  return context;
+}
+function hydrateMessages(messages, viewerId) {
+  if (!messages.length) return messages;
+  const ids = messages.map(message => message.id);
+  const placeholders = ids.map(() => '?').join(',');
+  const reactions = db.prepare(`SELECT message_id, emoji, GROUP_CONCAT(user_id) AS users
+    FROM message_reactions WHERE message_id IN (${placeholders}) GROUP BY message_id, emoji`).all(...ids);
+  const byMessage = new Map();
+  for (const reaction of reactions) {
+    if (!byMessage.has(reaction.message_id)) byMessage.set(reaction.message_id, []);
+    const userIds = reaction.users.split(',').map(Number);
+    byMessage.get(reaction.message_id).push({ emoji: reaction.emoji, count: userIds.length, reacted: userIds.includes(viewerId) });
+  }
+  return messages.map(message => ({ ...message, is_deleted: Boolean(message.deleted_at), reactions: byMessage.get(message.id) || [] }));
 }
 
 function cookie(token, clear = false) {
@@ -278,18 +332,21 @@ async function api(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/rooms') {
-    if (!requireUser(req, res)) return;
-    const rooms = db.prepare(`SELECT rooms.id, rooms.name, rooms.created_at,
+    const user = requireUser(req, res); if (!user) return;
+    const rooms = db.prepare(`SELECT rooms.id, rooms.name, rooms.created_at, rooms.is_private, room_members.role,
       (SELECT COUNT(*) FROM messages WHERE messages.room_id = rooms.id) AS message_count
-      FROM rooms ORDER BY rooms.id`).all();
+      FROM rooms LEFT JOIN room_members ON room_members.room_id = rooms.id AND room_members.user_id = ?
+      WHERE rooms.is_private = 0 OR room_members.user_id IS NOT NULL OR ? = 1 ORDER BY rooms.id`).all(user.id, user.is_admin ? 1 : 0);
     return json(res, 200, { rooms });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/events') {
-    if (!requireUser(req, res)) return;
+    const user = requireUser(req, res); if (!user) return;
     const after = Math.max(0, Number(url.searchParams.get('after') || 0));
     if (url.searchParams.get('bootstrap') === '1') {
-      const latest = db.prepare('SELECT COALESCE(MAX(id), 0) AS id FROM messages').get();
+      const latest = db.prepare(`SELECT COALESCE(MAX(messages.id), 0) AS id FROM messages JOIN rooms ON rooms.id = messages.room_id
+        LEFT JOIN room_members ON room_members.room_id = rooms.id AND room_members.user_id = ?
+        WHERE rooms.is_private = 0 OR room_members.user_id IS NOT NULL OR ? = 1`).get(user.id, user.is_admin ? 1 : 0);
       return json(res, 200, { cursor: latest.id, messages: [] });
     }
     const messages = db.prepare(`SELECT messages.id, messages.room_id, rooms.name AS room_name,
@@ -298,22 +355,49 @@ async function api(req, res, url) {
       FROM messages JOIN rooms ON rooms.id = messages.room_id
       JOIN users ON users.id = messages.user_id
       LEFT JOIN attachments ON attachments.id = messages.attachment_id
-      WHERE messages.id > ? ORDER BY messages.id LIMIT 200`).all(after);
+      LEFT JOIN room_members ON room_members.room_id = rooms.id AND room_members.user_id = ?
+      WHERE messages.id > ? AND (rooms.is_private = 0 OR room_members.user_id IS NOT NULL OR ? = 1) ORDER BY messages.id LIMIT 200`).all(user.id, after, user.is_admin ? 1 : 0);
     return json(res, 200, { cursor: messages.length ? messages.at(-1).id : after, messages });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/rooms') {
     const user = requireUser(req, res); if (!user) return;
-    const { name = '' } = await readBody(req);
+    const { name = '', is_private = false } = await readBody(req);
     const roomName = String(name).trim();
     if (roomName.length < 1 || roomName.length > 30) return json(res, 400, { error: '房间名需为 1–30 位' });
     try {
-      const result = db.prepare('INSERT INTO rooms(name, created_by) VALUES (?, ?)').run(roomName, user.id);
-      return json(res, 201, { room: { id: Number(result.lastInsertRowid), name: roomName } });
+      const result = db.prepare('INSERT INTO rooms(name, created_by, is_private) VALUES (?, ?, ?)').run(roomName, user.id, is_private ? 1 : 0);
+      const id = Number(result.lastInsertRowid);
+      db.prepare("INSERT INTO room_members(room_id, user_id, role) VALUES (?, ?, 'owner')").run(id, user.id);
+      return json(res, 201, { room: { id, name: roomName, is_private: Boolean(is_private), role: 'owner' } });
     } catch (error) {
       if (error.message.includes('UNIQUE')) return json(res, 409, { error: '房间已存在' });
       throw error;
     }
+  }
+
+  const roomMemberMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/members$/);
+  if (roomMemberMatch && req.method === 'GET') {
+    const context = requireRoomManager(req, res, Number(roomMemberMatch[1])); if (!context) return;
+    const members = db.prepare(`SELECT users.id, users.username, room_members.role FROM room_members JOIN users ON users.id = room_members.user_id WHERE room_id = ? ORDER BY role, username`).all(context.room.id);
+    return json(res, 200, { members });
+  }
+  if (roomMemberMatch && req.method === 'POST') {
+    const context = requireRoomManager(req, res, Number(roomMemberMatch[1])); if (!context) return;
+    const { username = '', role = 'member' } = await readBody(req);
+    const target = db.prepare('SELECT id, username FROM users WHERE username = ?').get(String(username).trim());
+    if (!target) return json(res, 404, { error: '用户不存在' });
+    const memberRole = role === 'admin' ? 'admin' : 'member';
+    db.prepare('INSERT INTO room_members(room_id, user_id, role) VALUES (?, ?, ?) ON CONFLICT(room_id, user_id) DO UPDATE SET role = excluded.role').run(context.room.id, target.id, memberRole);
+    return json(res, 200, { member: { ...target, role: memberRole } });
+  }
+  const roomMemberDelete = url.pathname.match(/^\/api\/rooms\/(\d+)\/members\/(\d+)$/);
+  if (roomMemberDelete && req.method === 'DELETE') {
+    const context = requireRoomManager(req, res, Number(roomMemberDelete[1])); if (!context) return;
+    const targetId = Number(roomMemberDelete[2]);
+    if (targetId === context.room.created_by) return json(res, 400, { error: '不能移除房主' });
+    db.prepare('DELETE FROM room_members WHERE room_id = ? AND user_id = ?').run(context.room.id, targetId);
+    return json(res, 200, { ok: true });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/files') {
@@ -354,49 +438,107 @@ async function api(req, res, url) {
     } catch { return json(res, 404, { error: '文件数据不存在' }); }
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/search') {
+    const user = requireUser(req, res); if (!user) return;
+    const q = String(url.searchParams.get('q') || '').trim();
+    const roomId = Number(url.searchParams.get('room_id') || 0);
+    if (q.length < 1 || q.length > 100) return json(res, 400, { error: '搜索关键词需为 1–100 个字符' });
+    if (roomId && !requireRoomAccess(req, res, roomId)) return;
+    const conditions = [`messages.deleted_at IS NULL`, `messages.content LIKE ?`, `(rooms.is_private = 0 OR room_members.user_id IS NOT NULL OR ? = 1)`];
+    const values = [`%${q.replace(/[\\%_]/g, '\\$&')}%`, user.is_admin ? 1 : 0];
+    if (roomId) { conditions.push('messages.room_id = ?'); values.push(roomId); }
+    const rows = db.prepare(`SELECT messages.id, messages.room_id, rooms.name AS room_name, messages.content, messages.created_at,
+      users.id AS user_id, users.username, users.avatar_updated_at, messages.reply_to, messages.edited_at, messages.deleted_at
+      FROM messages JOIN rooms ON rooms.id = messages.room_id JOIN users ON users.id = messages.user_id
+      LEFT JOIN room_members ON room_members.room_id = rooms.id AND room_members.user_id = ?
+      WHERE ${conditions.join(' AND ')} ORDER BY messages.id DESC LIMIT 100`).all(user.id, ...values);
+    return json(res, 200, { messages: hydrateMessages(rows, user.id) });
+  }
+
   const messageMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/messages$/);
   if (messageMatch && req.method === 'GET') {
-    if (!requireUser(req, res)) return;
     const roomId = Number(messageMatch[1]);
+    const context = requireRoomAccess(req, res, roomId); if (!context) return;
     const after = Math.max(0, Number(url.searchParams.get('after') || 0));
     const before = Math.max(0, Number(url.searchParams.get('before') || 0));
     const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') || 100)));
     if (!db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId)) return json(res, 404, { error: '房间不存在' });
     const query = `SELECT messages.id, messages.content, messages.created_at,
-      users.id AS user_id, users.username, users.avatar_updated_at, attachments.id AS attachment_id,
+      users.id AS user_id, users.username, users.avatar_updated_at, messages.reply_to, messages.edited_at, messages.deleted_at,
+      parent.content AS reply_content, parent_user.username AS reply_username, attachments.id AS attachment_id,
       attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type,
       attachments.size AS attachment_size
       FROM messages JOIN users ON users.id = messages.user_id
+      LEFT JOIN messages AS parent ON parent.id = messages.reply_to
+      LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id
       LEFT JOIN attachments ON attachments.id = messages.attachment_id`;
     if (before > 0) {
-      const rows = db.prepare(`${query} WHERE room_id = ? AND messages.id < ? ORDER BY messages.id DESC LIMIT ?`).all(roomId, before, limit + 1);
+      const rows = db.prepare(`${query} WHERE messages.room_id = ? AND messages.id < ? ORDER BY messages.id DESC LIMIT ?`).all(roomId, before, limit + 1);
       const hasMore = rows.length > limit;
-      return json(res, 200, { messages: rows.slice(0, limit).reverse(), has_more: hasMore });
+      return json(res, 200, { messages: hydrateMessages(rows.slice(0, limit).reverse(), context.user.id), has_more: hasMore });
     }
-    const rows = db.prepare(`${query} WHERE room_id = ? AND messages.id > ? ORDER BY messages.id LIMIT ?`).all(roomId, after, limit + 1);
+    const rows = db.prepare(`${query} WHERE messages.room_id = ? AND messages.id > ? ORDER BY messages.id LIMIT ?`).all(roomId, after, limit + 1);
     const hasMore = rows.length > limit;
-    return json(res, 200, { messages: rows.slice(0, limit), has_more: hasMore });
+    return json(res, 200, { messages: hydrateMessages(rows.slice(0, limit), context.user.id), has_more: hasMore });
   }
 
   if (messageMatch && req.method === 'POST') {
-    const user = requireUser(req, res); if (!user) return;
     const roomId = Number(messageMatch[1]);
-    const { content = '', attachment_id = null } = await readBody(req);
+    const context = requireRoomAccess(req, res, roomId); if (!context) return;
+    const user = context.user;
+    const { content = '', attachment_id = null, reply_to = null } = await readBody(req);
     const text = String(content).trim();
     const attachmentId = attachment_id == null ? null : Number(attachment_id);
     if ((!text && !attachmentId) || text.length > 10_000) return json(res, 400, { error: '消息或附件不能为空，文字最多 10000 个字符' });
-    if (!db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId)) return json(res, 404, { error: '房间不存在' });
     if (attachmentId && !db.prepare('SELECT id FROM attachments WHERE id = ? AND user_id = ?').get(attachmentId, user.id)) {
       return json(res, 400, { error: '附件不存在或不属于当前账号' });
     }
-    const result = db.prepare('INSERT INTO messages(room_id, user_id, content, attachment_id) VALUES (?, ?, ?, ?)').run(roomId, user.id, text, attachmentId);
-    const message = db.prepare(`SELECT messages.id, messages.content, messages.created_at,
-      users.id AS user_id, users.username, users.avatar_updated_at, attachments.id AS attachment_id,
+    const replyId = reply_to == null ? null : Number(reply_to);
+    if (replyId && !db.prepare('SELECT id FROM messages WHERE id = ? AND room_id = ?').get(replyId, roomId)) return json(res, 400, { error: '回复目标不存在或不在当前聊天室' });
+    const result = db.prepare('INSERT INTO messages(room_id, user_id, content, attachment_id, reply_to) VALUES (?, ?, ?, ?, ?)').run(roomId, user.id, text, attachmentId, replyId);
+    const message = db.prepare(`SELECT messages.id, messages.content, messages.created_at, messages.reply_to, messages.edited_at, messages.deleted_at,
+      users.id AS user_id, users.username, users.avatar_updated_at, parent.content AS reply_content, parent_user.username AS reply_username, attachments.id AS attachment_id,
       attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type,
       attachments.size AS attachment_size
       FROM messages JOIN users ON users.id = messages.user_id
+      LEFT JOIN messages AS parent ON parent.id = messages.reply_to LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id
       LEFT JOIN attachments ON attachments.id = messages.attachment_id WHERE messages.id = ?`).get(result.lastInsertRowid);
-    return json(res, 201, { message });
+    return json(res, 201, { message: hydrateMessages([message], user.id)[0] });
+  }
+
+  const singleMessageMatch = url.pathname.match(/^\/api\/messages\/(\d+)$/);
+  if (singleMessageMatch && req.method === 'PUT') {
+    const user = requireUser(req, res); if (!user) return;
+    const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(Number(singleMessageMatch[1]));
+    if (!message) return json(res, 404, { error: '消息不存在' });
+    const context = requireRoomAccess(req, res, message.room_id); if (!context) return;
+    if (message.user_id !== user.id) return json(res, 403, { error: '只能编辑自己的消息' });
+    const { content = '' } = await readBody(req); const text = String(content).trim();
+    if (!text || text.length > 10_000) return json(res, 400, { error: '消息需为 1–10000 个字符' });
+    db.prepare('UPDATE messages SET content = ?, edited_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').run(text, message.id);
+    return json(res, 200, { ok: true, message: hydrateMessages([db.prepare(`SELECT messages.id, messages.content, messages.created_at, messages.reply_to, messages.edited_at, messages.deleted_at,
+      users.id AS user_id, users.username, users.avatar_updated_at FROM messages JOIN users ON users.id = messages.user_id WHERE messages.id = ?`).get(message.id)], user.id)[0] });
+  }
+  if (singleMessageMatch && req.method === 'DELETE') {
+    const user = requireUser(req, res); if (!user) return;
+    const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(Number(singleMessageMatch[1]));
+    if (!message) return json(res, 404, { error: '消息不存在' });
+    const context = requireRoomAccess(req, res, message.room_id); if (!context) return;
+    if (message.user_id !== user.id && !user.is_admin && !['owner', 'admin'].includes(context.room.role)) return json(res, 403, { error: '没有撤回此消息的权限' });
+    db.prepare("UPDATE messages SET content = '', attachment_id = NULL, deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(message.id);
+    return json(res, 200, { ok: true });
+  }
+  const reactionMatch = url.pathname.match(/^\/api\/messages\/(\d+)\/reactions$/);
+  if (reactionMatch && req.method === 'POST') {
+    const user = requireUser(req, res); if (!user) return;
+    const message = db.prepare('SELECT room_id FROM messages WHERE id = ?').get(Number(reactionMatch[1]));
+    if (!message || !requireRoomAccess(req, res, message.room_id)) return;
+    const { emoji = '' } = await readBody(req); const value = String(emoji);
+    if (!value || value.length > 24 || !/\p{Extended_Pictographic}/u.test(value)) return json(res, 400, { error: '表情格式无效' });
+    const exists = db.prepare('SELECT 1 FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').get(Number(reactionMatch[1]), user.id, value);
+    if (exists) db.prepare('DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').run(Number(reactionMatch[1]), user.id, value);
+    else db.prepare('INSERT INTO message_reactions(message_id, user_id, emoji) VALUES (?, ?, ?)').run(Number(reactionMatch[1]), user.id, value);
+    return json(res, 200, { reactions: hydrateMessages([{ id: Number(reactionMatch[1]) }], user.id)[0].reactions });
   }
 
   return json(res, 404, { error: '接口不存在' });

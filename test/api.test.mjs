@@ -138,6 +138,35 @@ test('消息历史支持从最新批次开始并向上分页加载', async () =>
   assert.equal(older.body.has_more, true);
 });
 
+test('消息支持回复、编辑、撤回、表情、搜索与私有房间权限', async () => {
+  const owner = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'feature_owner', password: 'feature-password-owner' }) });
+  const guest = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'feature_guest', password: 'feature-password-guest' }) });
+  const ownerAuth = { authorization: `Bearer ${owner.body.token}` }, guestAuth = { authorization: `Bearer ${guest.body.token}` };
+  const privateRoom = await api('/api/rooms', { method: 'POST', headers: ownerAuth, body: JSON.stringify({ name: '私有功能测试', is_private: true }) });
+  const roomId = privateRoom.body.room.id;
+  const hidden = await api('/api/rooms', { headers: guestAuth });
+  assert.equal(hidden.body.rooms.some(room => room.id === roomId), false);
+  assert.equal((await api(`/api/rooms/${roomId}/messages`, { headers: guestAuth })).response.status, 403);
+
+  const first = await api(`/api/rooms/${roomId}/messages`, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ content: '可搜索的原消息' }) });
+  const reply = await api(`/api/rooms/${roomId}/messages`, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ content: '这是回复', reply_to: first.body.message.id }) });
+  assert.equal(reply.body.message.reply_to, first.body.message.id);
+  assert.equal(reply.body.message.reply_content, '可搜索的原消息');
+  const reaction = await api(`/api/messages/${first.body.message.id}/reactions`, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ emoji: '🔥' }) });
+  assert.deepEqual(reaction.body.reactions, [{ emoji: '🔥', count: 1, reacted: true }]);
+  const edited = await api(`/api/messages/${first.body.message.id}`, { method: 'PUT', headers: ownerAuth, body: JSON.stringify({ content: '可搜索的已编辑消息' }) });
+  assert.equal(edited.body.message.content, '可搜索的已编辑消息');
+  const found = await api('/api/search?q=已编辑', { headers: ownerAuth });
+  assert.equal(found.body.messages[0].id, first.body.message.id);
+  await api(`/api/rooms/${roomId}/members`, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ username: 'feature_guest' }) });
+  const joined = await api('/api/rooms', { headers: guestAuth });
+  assert.equal(joined.body.rooms.some(room => room.id === roomId), true);
+  const retracted = await api(`/api/messages/${first.body.message.id}`, { method: 'DELETE', headers: ownerAuth });
+  assert.equal(retracted.response.status, 200);
+  const history = await api(`/api/rooms/${roomId}/messages`, { headers: ownerAuth });
+  assert.equal(history.body.messages.find(message => message.id === first.body.message.id).is_deleted, true);
+});
+
 test('账户头像支持安全上传、展示、历史消息关联和移除', async () => {
   const registered = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'avatar_user', password: 'avatar-password' }) });
   const auth = { authorization: `Bearer ${registered.body.token}` };

@@ -74,6 +74,7 @@ class ChatState:
     image_cache: dict[int, bytes] = field(default_factory=dict)
     image_loading: set[int] = field(default_factory=set)
     image_failed: set[int] = field(default_factory=set)
+    reply_to: dict | None = None
     active: bool = True
 
 
@@ -258,6 +259,8 @@ class PolyChatApp:
             content=ft.Row([
                 ft.Column([self.room_name, ft.Text("消息自动同步 · 支持 Markdown 与 LaTeX", size=11, color=MUTED)], spacing=2),
                 ft.Container(expand=True),
+                ft.IconButton(ft.Icons.SEARCH, tooltip="搜索消息", on_click=self.open_search),
+                ft.IconButton(ft.Icons.PEOPLE_OUTLINE, tooltip="邀请私有房间成员", on_click=self.open_members),
                 ft.Container(ft.Row([ft.Icon(ft.Icons.CIRCLE, size=9, color="#22C55E"), ft.Text("已连接", size=12, color="#15803D", weight=ft.FontWeight.W_600)], spacing=6), bgcolor="#ECFDF3", padding=ft.Padding(11, 7, 11, 7), border_radius=16),
             ]),
         )
@@ -353,9 +356,16 @@ class PolyChatApp:
                 ft.Text(message["username"], size=13, weight=ft.FontWeight.W_700, color="#1B2740"),
                 ft.Text(format_server_time(message["created_at"]), size=10, color="#98A2B3"),
                 ft.Container(expand=True),
+                ft.IconButton(ft.Icons.REPLY_OUTLINED, icon_size=15, icon_color="#7D879A", tooltip="回复", on_click=lambda _, message=message: self.start_reply(message)),
                 ft.IconButton(ft.Icons.CONTENT_COPY_OUTLINED, icon_size=15, icon_color="#7D879A", tooltip="复制 Markdown", on_click=lambda _, message=message: self.page.run_task(self.copy_markdown, message)),
+                *([ft.IconButton(ft.Icons.EDIT_OUTLINED, icon_size=15, tooltip="编辑", on_click=lambda _, message=message: self.open_edit(message)), ft.IconButton(ft.Icons.UNDO_OUTLINED, icon_size=15, tooltip="撤回", on_click=lambda _, message=message: self.page.run_task(self.retract_message, message))] if mine else []),
             ], spacing=8),
         ]
+        if message.get("reply_to"):
+            card_controls.append(ft.Container(content=ft.Text(f"↳ 回复 {message.get('reply_username') or '消息'}：{message.get('reply_content') or '已撤回'}", size=11, color=MUTED, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS), bgcolor="#F1F3F8", padding=7, border_radius=7))
+        if message.get("is_deleted"):
+            card_controls.append(ft.Text("此消息已撤回", italic=True, color=MUTED))
+            return ft.Row([self.avatar(message, 19), ft.Container(content=ft.Column(card_controls, spacing=7, tight=True), bgcolor="#FFFFFF", padding=14, border_radius=14, border=ft.Border.all(1, "#E8EBF1"), expand=True)], vertical_alignment=ft.CrossAxisAlignment.START, spacing=10)
         if message.get("content"):
             card_controls.append(body)
         if message.get("attachment_id"):
@@ -378,6 +388,9 @@ class PolyChatApp:
                     padding=10,
                     content=ft.Row([ft.Icon(ft.Icons.ATTACH_FILE, color=ACCENT), ft.Column([ft.Text(message["attachment_name"], size=12, weight=ft.FontWeight.W_600), ft.Text(f"{readable} · 点击下载", size=10, color=MUTED)], spacing=1)], spacing=8),
                 ))
+        reaction_controls = [ft.TextButton(f"{item['emoji']} {item['count']}", on_click=lambda _, emoji=item['emoji'], message=message: self.page.run_task(self.react_message, message, emoji)) for item in message.get("reactions", [])]
+        reaction_controls.extend(ft.IconButton(ft.Icons.ADD_REACTION_OUTLINED, icon_size=16, tooltip="添加表情", on_click=lambda _, message=message: self.open_reaction(message)) for _ in [0])
+        card_controls.append(ft.Row(reaction_controls, spacing=2, wrap=True))
         return ft.Row([
             self.avatar(message, 19),
             ft.Container(
@@ -410,6 +423,7 @@ class PolyChatApp:
             bgcolor=PAPER,
             padding=ft.Padding(24, 10, 24, 20),
             content=ft.Column([
+                ft.Container(content=ft.Text(f"↳ 回复 {self.state.reply_to['username']}：{self.state.reply_to.get('content', '')[:70]}", size=11), bgcolor="#EEF1F7", padding=7, border_radius=7, visible=self.state.reply_to is not None),
                 ft.Container(
                     bgcolor="white",
                     border=ft.Border.all(1, "#DDE2EA"),
@@ -417,6 +431,7 @@ class PolyChatApp:
                     padding=ft.Padding(left=6, right=10, top=4, bottom=4),
                     content=ft.Row([
                         self.composer,
+                        ft.IconButton(ft.Icons.INSERT_EMOTICON_OUTLINED, tooltip="插入表情", icon_color="#5E6A80", on_click=self.open_emoji),
                         ft.IconButton(ft.Icons.ATTACH_FILE, tooltip="发送文件", icon_color="#5E6A80", on_click=self.choose_file),
                         ft.FilledButton("发送", icon=ft.Icons.ARROW_UPWARD, height=42, on_click=self.send_message),
                     ], vertical_alignment=ft.CrossAxisAlignment.END),
@@ -433,10 +448,11 @@ class PolyChatApp:
         self.status.value = "正在发送…"
         self.page.update()
         try:
-            message = await self.call(self.state.api.send, self.state.room["id"], content)
+            message = await self.call(self.state.api.send, self.state.room["id"], content, None, self.state.reply_to["id"] if self.state.reply_to else None)
             self.state.messages.append(message)
             self.state.last_id = message["id"]
             self.status.value = ""
+            self.state.reply_to = None
             self.render_messages()
             self.page.update()
         except ApiError as exc:
@@ -492,12 +508,78 @@ class PolyChatApp:
             self.status.value = ""
             self.show_toast(str(exc), error=True)
 
+    def start_reply(self, message):
+        self.state.reply_to = message
+        self.show_toast(f"正在回复 {message['username']}")
+        self.page.update()
+
+    def open_emoji(self, _=None):
+        emojis = "😀 😃 😂 😊 😍 😎 🤔 😭 😡 👍 👎 🙏 👏 🎉 ❤️ 🔥 ✅ 👀 💯 🥳 🤖 👻 🐱 🐶 🌈 🍕 ☕ 🎮 🚀 💻 📌".split()
+        self.page.show_dialog(ft.AlertDialog(title=ft.Text("EmojiAll 常用表情"), content=ft.Row([ft.TextButton(emoji, on_click=lambda _, emoji=emoji: self.insert_emoji(emoji)) for emoji in emojis], wrap=True, width=440), actions=[ft.TextButton("关闭", on_click=lambda _: self.page.pop_dialog())]))
+
+    def insert_emoji(self, emoji):
+        self.composer.value = (self.composer.value or "") + emoji
+        self.page.pop_dialog()
+        self.page.update()
+
+    def open_edit(self, message):
+        field = ft.TextField(value=message.get("content") or "", multiline=True, min_lines=4, autofocus=True)
+        async def save(_):
+            try:
+                updated = await self.call(self.state.api.edit_message, message["id"], field.value)
+                message.update(updated)
+                self.page.pop_dialog(); self.render_messages(); self.page.update()
+            except ApiError as exc:
+                field.error_text = str(exc); self.page.update()
+        self.page.show_dialog(ft.AlertDialog(title=ft.Text("编辑消息"), content=field, actions=[ft.TextButton("取消", on_click=lambda _: self.page.pop_dialog()), ft.FilledButton("保存", on_click=lambda _: self.page.run_task(save, _))]))
+
+    async def retract_message(self, message):
+        try:
+            await self.call(self.state.api.retract_message, message["id"])
+            message["content"] = ""; message["attachment_id"] = None; message["is_deleted"] = True
+            self.render_messages(); self.page.update()
+        except ApiError as exc:
+            self.show_toast(str(exc), error=True)
+
+    def open_reaction(self, message):
+        emojis = "👍 ❤️ 😂 🎉 😮 👀 🔥 ✅ 💯".split()
+        self.page.show_dialog(ft.AlertDialog(title=ft.Text("选择表情"), content=ft.Row([ft.TextButton(emoji, on_click=lambda _, emoji=emoji: self.page.run_task(self.react_message, message, emoji)) for emoji in emojis]), actions=[ft.TextButton("关闭", on_click=lambda _: self.page.pop_dialog())]))
+
+    async def react_message(self, message, emoji):
+        try:
+            message["reactions"] = await self.call(self.state.api.react, message["id"], emoji)
+            if getattr(self.page, "dialog", None): self.page.pop_dialog()
+            self.render_messages(); self.page.update()
+        except ApiError as exc:
+            self.show_toast(str(exc), error=True)
+
+    def open_search(self, _=None):
+        query, results = ft.TextField(label="关键词", autofocus=True), ft.Column(scroll=ft.ScrollMode.AUTO, height=260)
+        async def search(_):
+            try:
+                matches = await self.call(self.state.api.search, query.value)
+                results.controls = [ft.Text(f"#{item['room_name']} · {item['username']}\n{item['content']}", size=12) for item in matches] or [ft.Text("没有结果")]
+                self.page.update()
+            except ApiError as exc: self.show_toast(str(exc), error=True)
+        self.page.show_dialog(ft.AlertDialog(title=ft.Text("搜索消息"), content=ft.Column([query, results], tight=True, width=480), actions=[ft.FilledButton("搜索", on_click=lambda _: self.page.run_task(search, _)), ft.TextButton("关闭", on_click=lambda _: self.page.pop_dialog())]))
+
+    def open_members(self, _=None):
+        if not self.state.room: return
+        username = ft.TextField(label="邀请用户名", autofocus=True)
+        async def invite(_):
+            try:
+                await self.call(self.state.api.invite_member, self.state.room["id"], username.value)
+                self.page.pop_dialog(); self.show_toast("成员已邀请")
+            except ApiError as exc: username.error_text = str(exc); self.page.update()
+        self.page.show_dialog(ft.AlertDialog(title=ft.Text("私有房间成员"), content=username, actions=[ft.TextButton("取消", on_click=lambda _: self.page.pop_dialog()), ft.FilledButton("邀请", on_click=lambda _: self.page.run_task(invite, _))]))
+
     def open_new_room(self, _=None):
         name = ft.TextField(label="聊天室名称", autofocus=True)
+        private = ft.Checkbox(label="私有聊天室（仅邀请成员可见）")
 
         async def create(_):
             try:
-                room = await self.call(self.state.api.create_room, name.value.strip())
+                room = await self.call(self.state.api.create_room, name.value.strip(), private.value)
                 self.page.pop_dialog()
                 await self.load_rooms()
                 await self.select_room(room)
@@ -508,7 +590,7 @@ class PolyChatApp:
         self.page.show_dialog(ft.AlertDialog(
             modal=True,
             title=ft.Text("新建聊天室"),
-            content=name,
+            content=ft.Column([name, private], tight=True),
             actions=[ft.TextButton("取消", on_click=lambda _: self.page.pop_dialog()), ft.FilledButton("创建", on_click=lambda _: self.page.run_task(create, _))],
         ))
 
