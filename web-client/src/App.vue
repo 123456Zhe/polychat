@@ -8,9 +8,11 @@ import icon from '../../assets/polychat-icon.png';
 const user = ref(null), rooms = ref([]), room = ref(null), messages = ref([]), content = ref('');
 const mode = ref('login'), credentials = ref({ username: '', password: '' }), error = ref(''), toast = ref('');
 const file = ref(null), adminOpen = ref(false), profileOpen = ref(false), themeOpen = ref(false), admin = ref({ stats: {}, users: [] });
-const notificationOn = ref(false), notificationPermission = ref('default'), avatarInput = ref(null), fileInput = ref(null);
+const notificationOn = ref(false), notificationPermission = ref('default'), avatarInput = ref(null), fileInput = ref(null), messageList = ref(null);
 const unread = ref({});
-let messageTimer, roomTimer, eventTimer, lastId = 0, eventCursor = null;
+const hasOlderMessages = ref(false), loadingOlderMessages = ref(false);
+let messageTimer, roomTimer, eventTimer, lastId = 0, oldestId = 0, eventCursor = null;
+let roomGeneration = 0, activeMessageRequest = null, roomsLoading = false, eventsLoading = false, messagesLoading = false;
 let themeStyleElement;
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const themes = [
@@ -62,12 +64,12 @@ function markdown(source = '') {
 function time(value) { return new Date(`${value.replace(' ', 'T')}Z`).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
 function size(value = 0) { return value >= 1048576 ? `${(value / 1048576).toFixed(1)} MB` : value >= 1024 ? `${(value / 1024).toFixed(1)} KB` : `${value} B`; }
 function avatar(member) { return member?.avatar_url || (member?.avatar_updated_at ? `/api/users/${member.user_id ?? member.id}/avatar?v=${member.avatar_updated_at}` : ''); }
-function clearTimers() { clearInterval(messageTimer); clearInterval(roomTimer); clearInterval(eventTimer); }
+function clearTimers() { clearTimeout(messageTimer); clearInterval(roomTimer); clearInterval(eventTimer); activeMessageRequest?.abort(); }
 function fileData(selected) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.onerror = reject; reader.readAsDataURL(selected); }); }
 function updateTitle() { document.title = totalUnread.value ? `(${totalUnread.value}) PolyChat` : 'PolyChat'; }
 function setUnread(roomId, count) { unread.value = { ...unread.value, [roomId]: Math.max(0, count) }; updateTitle(); }
 function clearUnread(roomId) { if (roomId != null && unread.value[roomId]) setUnread(roomId, 0); }
-function handleVisibility() { if (!document.hidden) clearUnread(room.value?.id); }
+function handleVisibility() { if (!document.hidden) clearUnread(room.value?.id); startPolling(); }
 function renderThemeCss() {
   const preset = themes.find(theme => theme.id === activeTheme.value) || themes[0];
   if (!themeStyleElement) { themeStyleElement = document.createElement('style'); themeStyleElement.id = 'polychat-user-theme'; document.head.append(themeStyleElement); }
@@ -83,12 +85,87 @@ function syncNotificationState() {
   notificationOn.value = notificationPermission.value === 'granted' && localStorage.getItem('polychat.notifications') !== 'off';
 }
 async function enter() {
-  await loadRooms(); await events(); roomTimer = setInterval(loadRooms, 3000); eventTimer = setInterval(events, 2500); syncNotificationState();
+  await loadRooms(); await events(); startPolling(); syncNotificationState();
   if (navigator.permissions && notificationSupported.value) navigator.permissions.query({ name: 'notifications' }).then(status => { status.onchange = syncNotificationState; }).catch(() => {});
 }
-async function loadRooms() { try { const result = await api('/api/rooms'); rooms.value = result.rooms; if (!room.value && rooms.value.length) await choose(rooms.value[0]); } catch {} }
-async function choose(item) { room.value = item; clearUnread(item.id); messages.value = []; lastId = 0; await poll(); clearInterval(messageTimer); messageTimer = setInterval(poll, 1800); }
-async function poll() { if (!room.value) return; try { const result = await api(`/api/rooms/${room.value.id}/messages?after=${lastId}`); if (result.messages.length) { messages.value.push(...result.messages); lastId = result.messages.at(-1).id; await nextTick(); document.querySelector('.messages')?.scrollTo({ top: 1e9 }); } } catch {} }
+function startPolling() {
+  clearTimeout(messageTimer); clearInterval(roomTimer); clearInterval(eventTimer);
+  const background = document.hidden;
+  roomTimer = setInterval(loadRooms, background ? 30_000 : 10_000);
+  eventTimer = setInterval(events, background ? 15_000 : 2_500);
+  scheduleMessagePoll(background ? 12_000 : 1_500);
+}
+function scheduleMessagePoll(delay = 1_500) {
+  clearTimeout(messageTimer);
+  messageTimer = setTimeout(async () => { const hasBacklog = await pollNewMessages(); scheduleMessagePoll(hasBacklog ? 50 : (document.hidden ? 12_000 : 1_500)); }, delay);
+}
+function appendUnique(target, incoming, prepend = false) {
+  const known = new Set(target.map(message => message.id));
+  const fresh = incoming.filter(message => !known.has(message.id));
+  return prepend ? [...fresh, ...target] : [...target, ...fresh];
+}
+async function loadRooms() {
+  if (roomsLoading) return; roomsLoading = true;
+  try { const result = await api('/api/rooms'); rooms.value = result.rooms; if (!room.value && rooms.value.length) await choose(result.rooms[0]); }
+  catch { /* retry on the next timer */ }
+  finally { roomsLoading = false; }
+}
+async function choose(item) {
+  const generation = ++roomGeneration;
+  activeMessageRequest?.abort();
+  room.value = item; clearUnread(item.id); messages.value = []; lastId = 0; oldestId = 0; hasOlderMessages.value = false;
+  await loadLatestMessages(generation);
+  scheduleMessagePoll();
+}
+async function loadLatestMessages(generation = roomGeneration) {
+  if (!room.value) return;
+  messagesLoading = true;
+  const targetRoom = room.value.id;
+  const controller = new AbortController(); activeMessageRequest = controller;
+  try {
+    const result = await api(`/api/rooms/${targetRoom}/messages?before=9007199254740991&limit=60`, { signal: controller.signal });
+    if (generation !== roomGeneration || targetRoom !== room.value?.id) return;
+    messages.value = result.messages;
+    lastId = messages.value.at(-1)?.id || 0;
+    oldestId = messages.value[0]?.id || 0;
+    hasOlderMessages.value = Boolean(result.has_more);
+    await nextTick(); messageList.value?.scrollTo({ top: messageList.value.scrollHeight });
+  } catch (error) { if (error.name !== 'AbortError') notify('加载聊天记录失败，将自动重试'); }
+  finally { if (activeMessageRequest === controller) activeMessageRequest = null; messagesLoading = false; }
+}
+async function pollNewMessages() {
+  if (!room.value || messagesLoading) return false;
+  const targetRoom = room.value.id;
+  const generation = roomGeneration;
+  const nearBottom = !messageList.value || messageList.value.scrollHeight - messageList.value.scrollTop - messageList.value.clientHeight < 100;
+  messagesLoading = true;
+  try {
+    const result = await api(`/api/rooms/${targetRoom}/messages?after=${lastId}&limit=200`);
+    if (generation !== roomGeneration || targetRoom !== room.value?.id || !result.messages.length) return false;
+    messages.value = appendUnique(messages.value, result.messages);
+    lastId = messages.value.at(-1)?.id || lastId;
+    oldestId ||= messages.value[0]?.id || 0;
+    await nextTick(); if (nearBottom) messageList.value?.scrollTo({ top: messageList.value.scrollHeight, behavior: 'smooth' });
+    return Boolean(result.has_more);
+  } catch { /* retry on the next timer */ }
+  finally { messagesLoading = false; }
+  return false;
+}
+async function loadOlderMessages() {
+  if (!room.value || !oldestId || !hasOlderMessages.value || loadingOlderMessages.value) return;
+  const targetRoom = room.value.id, generation = roomGeneration, previousHeight = messageList.value?.scrollHeight || 0;
+  loadingOlderMessages.value = true;
+  try {
+    const result = await api(`/api/rooms/${targetRoom}/messages?before=${oldestId}&limit=60`);
+    if (generation !== roomGeneration || targetRoom !== room.value?.id) return;
+    messages.value = appendUnique(messages.value, result.messages, true);
+    oldestId = messages.value[0]?.id || oldestId;
+    hasOlderMessages.value = Boolean(result.has_more);
+    await nextTick(); if (messageList.value) messageList.value.scrollTop += messageList.value.scrollHeight - previousHeight;
+  } catch { notify('加载更早消息失败'); }
+  finally { loadingOlderMessages.value = false; }
+}
+function maybeLoadOlderMessages(event) { if (event.target.scrollTop < 80) loadOlderMessages(); }
 async function showDesktopNotification(message) {
   const title = `${message.username} · #${message.room_name}`;
   const options = { body: message.content || (message.attachment_name ? `发送了 ${message.attachment_name}` : '发送了附件'), icon, tag: `polychat-${message.id}`, data: { roomId: message.room_id } };
@@ -100,6 +177,7 @@ async function showDesktopNotification(message) {
   } catch { try { new Notification(title, options); } catch { /* browser rejected notifications */ } }
 }
 async function events() {
+  if (eventsLoading) return; eventsLoading = true;
   try {
     const result = await api(`/api/events${eventCursor == null ? '?bootstrap=1' : `?after=${eventCursor}`}`);
     eventCursor = result.cursor;
@@ -110,6 +188,7 @@ async function events() {
       if (notificationOn.value && (!currentlyReading || document.hidden)) await showDesktopNotification(message);
     }
   } catch { /* retry on the next interval */ }
+  finally { eventsLoading = false; }
 }
 async function toggleNotifications() {
   if (!notificationSupported.value) return notify('当前浏览器不支持桌面通知');
@@ -135,7 +214,7 @@ async function setAvatar(selected) {
 async function removeAvatar() { try { user.value = (await api('/api/me/avatar', { method: 'DELETE' })).user; notify('已恢复默认头像'); } catch (e) { notify(e.message); } }
 function selectFile(event) { file.value = event.target.files?.[0] || null; }
 function paste(event) { const image = [...(event.clipboardData?.items || [])].find(item => item.type.startsWith('image/')); if (image) { event.preventDefault(); file.value = image.getAsFile(); notify('已添加剪贴板图片'); } }
-async function send() { if (!room.value || (!content.value.trim() && !file.value)) return; try { let attachmentId = null; if (file.value) { const uploaded = await api('/api/files', { method: 'POST', body: JSON.stringify({ name: file.value.name, type: file.value.type || 'application/octet-stream', data: await fileData(file.value) }) }); attachmentId = uploaded.file.id; } const result = await api(`/api/rooms/${room.value.id}/messages`, { method: 'POST', body: JSON.stringify({ content: content.value, attachment_id: attachmentId }) }); messages.value.push(result.message); lastId = result.message.id; content.value = ''; file.value = null; if (fileInput.value) fileInput.value.value = ''; await nextTick(); document.querySelector('.messages')?.scrollTo({ top: 1e9, behavior: 'smooth' }); } catch (e) { notify(e.message); } }
+async function send() { if (!room.value || (!content.value.trim() && !file.value)) return; try { let attachmentId = null; if (file.value) { const uploaded = await api('/api/files', { method: 'POST', body: JSON.stringify({ name: file.value.name, type: file.value.type || 'application/octet-stream', data: await fileData(file.value) }) }); attachmentId = uploaded.file.id; } const result = await api(`/api/rooms/${room.value.id}/messages`, { method: 'POST', body: JSON.stringify({ content: content.value, attachment_id: attachmentId }) }); messages.value = appendUnique(messages.value, [result.message]); lastId = result.message.id; oldestId ||= result.message.id; content.value = ''; file.value = null; if (fileInput.value) fileInput.value.value = ''; await nextTick(); messageList.value?.scrollTo({ top: messageList.value.scrollHeight, behavior: 'smooth' }); } catch (e) { notify(e.message); } }
 async function copy(message) { try { await navigator.clipboard.writeText(message.content || ''); notify('已复制完整 Markdown'); } catch { notify('复制失败'); } }
 async function newRoom() { const name = prompt('聊天室名称'); if (!name) return; try { await api('/api/rooms', { method: 'POST', body: JSON.stringify({ name }) }); await loadRooms(); } catch (e) { notify(e.message); } }
 async function loadAdmin() { try { admin.value = await api('/api/admin/overview'); } catch (e) { notify(e.message); } }
@@ -148,7 +227,7 @@ onBeforeUnmount(() => { clearTimers(); document.removeEventListener('visibilityc
 <template>
   <main v-if="!user" class="auth"><section><img :src="icon"><p>MARKDOWN · LATEX · EVERYWHERE</p><h1>欢迎来到 PolyChat</h1><div class="tabs"><button :class="{active: mode === 'login'}" @click="mode = 'login'">登录</button><button :class="{active: mode === 'register'}" @click="mode = 'register'">注册</button></div><form @submit.prevent="authenticate"><input v-model="credentials.username" placeholder="用户名" required><input v-model="credentials.password" type="password" placeholder="密码" required><small>{{ error }}</small><button> {{ mode === 'login' ? '登录' : '创建账号' }} </button></form></section></main>
   <main v-else class="chat"><aside><header class="brand"><img :src="icon"><span>PolyChat<small>让交流保持简单</small></span></header><button class="new" @click="newRoom"><span>＋</span> 新建聊天室</button><p class="nav-label">聊天室</p><nav><button v-for="item in rooms" :key="item.id" :class="{active: room?.id === item.id, hasUnread: unread[item.id]}" @click="choose(item)"><span>#</span><b>{{ item.name }}</b><small v-if="unread[item.id]" class="unread">{{ unread[item.id] > 99 ? '99+' : unread[item.id] }}</small></button></nav><footer><button class="profile-button" title="更换头像" @click="profileOpen = true"><img v-if="avatar(user)" :src="avatar(user)"><b v-else>{{ user.username[0] }}</b></button><span>{{ user.username }}<small>{{ isAdmin ? '管理员 · 在线' : '在线' }}</small></span><button class="logout" title="退出登录" @click="logout">↪</button></footer></aside>
-    <section class="conversation"><header class="topbar"><div><h2><span>#</span> {{ room?.name || '大厅' }}</h2><small>支持 Markdown、LaTeX 与图片粘贴</small></div><button class="toolbar-button" title="主题与自定义 CSS" @click="themeOpen = true"><span>◐</span><em>主题</em></button><button v-if="isAdmin" class="toolbar-button" @click="adminOpen = true; loadAdmin()">管理面板</button><button class="toolbar-button notification" :class="{on: notificationOn, blocked: notificationPermission === 'denied'}" :title="notificationLabel" @click="toggleNotifications"><span>{{ notificationOn ? '🔔' : '🔕' }}</span><em>{{ notificationButtonText }}</em></button></header><div class="messages"><div v-if="!messages.length" class="empty"><img :src="icon"><h3>开始一段新对话</h3><p>发送 Markdown、公式、图片或文件。</p></div><article v-for="message in messages" :key="message.id"><div class="avatar"><img v-if="avatar(message)" :src="avatar(message)"><b v-else>{{ message.username[0] }}</b></div><div class="bubble"><header><strong>{{ message.username }}</strong><small>{{ time(message.created_at) }}</small><button title="复制原始 Markdown" @click="copy(message)">复制</button></header><div v-if="message.content" class="markdown" v-html="markdown(message.content)"></div><template v-if="message.attachment_id"><img v-if="imageTypes.has(message.attachment_type)" class="attachment-image" :src="`/api/files/${message.attachment_id}?inline=1`" :alt="message.attachment_name"><a v-else class="attachment-file" :href="`/api/files/${message.attachment_id}`"><span>↓</span><div><b>{{ message.attachment_name }}</b><small>{{ size(message.attachment_size) }}</small></div></a></template></div></article></div><form class="composer" @submit.prevent="send"><div v-if="file" class="file-chip"><span>{{ imageTypes.has(file.type) ? '图片' : '文件' }}</span>{{ file.name }}<button type="button" @click="file = null">×</button></div><div class="compose-row"><label class="attach" title="添加文件">＋<input ref="fileInput" type="file" @change="selectFile"></label><textarea v-model="content" rows="1" placeholder="输入消息，粘贴图片或使用 Markdown…" @paste="paste" @keydown.enter.exact.prevent="send"></textarea><button class="send" title="发送消息">发送</button></div><small>Enter 发送 · Shift + Enter 换行</small></form></section></main>
+    <section class="conversation"><header class="topbar"><div><h2><span>#</span> {{ room?.name || '大厅' }}</h2><small>支持 Markdown、LaTeX 与图片粘贴</small></div><button class="toolbar-button" title="主题与自定义 CSS" @click="themeOpen = true"><span>◐</span><em>主题</em></button><button v-if="isAdmin" class="toolbar-button" @click="adminOpen = true; loadAdmin()">管理面板</button><button class="toolbar-button notification" :class="{on: notificationOn, blocked: notificationPermission === 'denied'}" :title="notificationLabel" @click="toggleNotifications"><span>{{ notificationOn ? '🔔' : '🔕' }}</span><em>{{ notificationButtonText }}</em></button></header><div ref="messageList" class="messages" @scroll.passive="maybeLoadOlderMessages"><p v-if="loadingOlderMessages" class="history-loading">正在加载更早消息…</p><p v-else-if="hasOlderMessages" class="history-hint">向上滚动加载更早消息</p><div v-if="!messages.length" class="empty"><img :src="icon"><h3>开始一段新对话</h3><p>发送 Markdown、公式、图片或文件。</p></div><article v-for="message in messages" :key="message.id"><div class="avatar"><img v-if="avatar(message)" :src="avatar(message)"><b v-else>{{ message.username[0] }}</b></div><div class="bubble"><header><strong>{{ message.username }}</strong><small>{{ time(message.created_at) }}</small><button title="复制原始 Markdown" @click="copy(message)">复制</button></header><div v-if="message.content" class="markdown" v-html="markdown(message.content)"></div><template v-if="message.attachment_id"><img v-if="imageTypes.has(message.attachment_type)" class="attachment-image" :src="`/api/files/${message.attachment_id}?inline=1`" :alt="message.attachment_name"><a v-else class="attachment-file" :href="`/api/files/${message.attachment_id}`"><span>↓</span><div><b>{{ message.attachment_name }}</b><small>{{ size(message.attachment_size) }}</small></div></a></template></div></article></div><form class="composer" @submit.prevent="send"><div v-if="file" class="file-chip"><span>{{ imageTypes.has(file.type) ? '图片' : '文件' }}</span>{{ file.name }}<button type="button" @click="file = null">×</button></div><div class="compose-row"><label class="attach" title="添加文件">＋<input ref="fileInput" type="file" @change="selectFile"></label><textarea v-model="content" rows="1" placeholder="输入消息，粘贴图片或使用 Markdown…" @paste="paste" @keydown.enter.exact.prevent="send"></textarea><button class="send" title="发送消息">发送</button></div><small>Enter 发送 · Shift + Enter 换行</small></form></section></main>
   <div v-if="profileOpen" class="modal"><section class="profile-modal"><button class="close" @click="profileOpen = false">×</button><p>YOUR PROFILE</p><h2>个人资料</h2><div class="avatar-preview"><img v-if="avatar(user)" :src="avatar(user)"><b v-else>{{ user.username[0] }}</b></div><h3>{{ user.username }}</h3><p class="hint">支持 PNG、JPEG、WebP、GIF，最大 2 MB</p><input ref="avatarInput" class="hidden-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" @change="setAvatar($event.target.files[0])"><div class="profile-actions"><button class="primary" @click="avatarInput.click()">选择新头像</button><button v-if="avatar(user)" @click="removeAvatar">移除头像</button></div></section></div>
   <div v-if="themeOpen" class="modal"><section class="theme-modal"><button class="close" @click="themeOpen = false">×</button><p>THEMES · LOCAL ONLY</p><h2>主题与自定义 CSS</h2><p class="hint">预设可一键切换；自定义 CSS 只保存在当前浏览器。</p><div class="theme-grid"><button v-for="theme in themes" :key="theme.id" :class="{selected: activeTheme === theme.id}" @click="chooseTheme(theme.id)"><span class="swatches"><i v-for="color in theme.colors" :key="color" :style="{background: color}"></i></span><b>{{ theme.name }}</b><small>{{ theme.note }}</small></button></div><label class="css-label">自定义 CSS <textarea v-model="customCss" spellcheck="false" placeholder="例如：\n.chat > aside { background: #0f172a; }" @input="updateCustomCss"></textarea></label><div class="theme-actions"><button class="primary" @click="updateCustomCss(); notify('自定义 CSS 已保存')">保存 CSS</button><button @click="resetCustomCss">清除自定义 CSS</button></div></section></div>
   <div v-if="adminOpen" class="modal"><section><button class="close" @click="adminOpen = false">×</button><p>ADMINISTRATION</p><h2>管理面板</h2><div class="stats"><span v-for="(value, key) in admin.stats" :key="key"><b>{{ value }}</b>{{ {users:'用户', rooms:'聊天室', messages:'消息', files:'文件'}[key] }}</span></div><h3>用户 <button @click="loadAdmin">刷新</button></h3><div v-for="member in admin.users" :key="member.id" class="member"><span>{{ member.username }} · {{ member.message_count }} 条消息</span><button @click="toggleAdmin(member)">{{ member.is_admin ? '撤销管理员' : '设为管理员' }}</button></div></section></div>

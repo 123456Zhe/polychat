@@ -359,16 +359,23 @@ async function api(req, res, url) {
     if (!requireUser(req, res)) return;
     const roomId = Number(messageMatch[1]);
     const after = Math.max(0, Number(url.searchParams.get('after') || 0));
+    const before = Math.max(0, Number(url.searchParams.get('before') || 0));
     const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') || 100)));
     if (!db.prepare('SELECT id FROM rooms WHERE id = ?').get(roomId)) return json(res, 404, { error: '房间不存在' });
-    const messages = db.prepare(`SELECT messages.id, messages.content, messages.created_at,
+    const query = `SELECT messages.id, messages.content, messages.created_at,
       users.id AS user_id, users.username, users.avatar_updated_at, attachments.id AS attachment_id,
       attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type,
       attachments.size AS attachment_size
       FROM messages JOIN users ON users.id = messages.user_id
-      LEFT JOIN attachments ON attachments.id = messages.attachment_id
-      WHERE room_id = ? AND messages.id > ? ORDER BY messages.id LIMIT ?`).all(roomId, after, limit);
-    return json(res, 200, { messages });
+      LEFT JOIN attachments ON attachments.id = messages.attachment_id`;
+    if (before > 0) {
+      const rows = db.prepare(`${query} WHERE room_id = ? AND messages.id < ? ORDER BY messages.id DESC LIMIT ?`).all(roomId, before, limit + 1);
+      const hasMore = rows.length > limit;
+      return json(res, 200, { messages: rows.slice(0, limit).reverse(), has_more: hasMore });
+    }
+    const rows = db.prepare(`${query} WHERE room_id = ? AND messages.id > ? ORDER BY messages.id LIMIT ?`).all(roomId, after, limit + 1);
+    const hasMore = rows.length > limit;
+    return json(res, 200, { messages: rows.slice(0, limit), has_more: hasMore });
   }
 
   if (messageMatch && req.method === 'POST') {

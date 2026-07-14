@@ -118,6 +118,26 @@ test('全局消息事件支持增量通知且不回放旧消息', async () => {
   assert.equal(events.body.messages[0].room_name, '大厅');
 });
 
+test('消息历史支持从最新批次开始并向上分页加载', async () => {
+  const registered = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'history_user', password: 'history-password' }) });
+  const auth = { authorization: `Bearer ${registered.body.token}` };
+  const created = await api('/api/rooms', { method: 'POST', headers: auth, body: JSON.stringify({ name: '历史加载测试' }) });
+  const roomId = created.body.room.id;
+  const ids = [];
+  for (const content of ['第一条', '第二条', '第三条', '第四条', '第五条']) {
+    const sent = await api(`/api/rooms/${roomId}/messages`, { method: 'POST', headers: auth, body: JSON.stringify({ content }) });
+    ids.push(sent.body.message.id);
+  }
+
+  const latest = await api(`/api/rooms/${roomId}/messages?before=9007199254740991&limit=2`, { headers: auth });
+  assert.deepEqual(latest.body.messages.map(message => message.id), ids.slice(-2));
+  assert.equal(latest.body.has_more, true);
+
+  const older = await api(`/api/rooms/${roomId}/messages?before=${latest.body.messages[0].id}&limit=2`, { headers: auth });
+  assert.deepEqual(older.body.messages.map(message => message.id), ids.slice(1, 3));
+  assert.equal(older.body.has_more, true);
+});
+
 test('账户头像支持安全上传、展示、历史消息关联和移除', async () => {
   const registered = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'avatar_user', password: 'avatar-password' }) });
   const auth = { authorization: `Bearer ${registered.body.token}` };
