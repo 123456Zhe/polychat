@@ -7,6 +7,7 @@ import asyncio
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
+import re
 
 import flet as ft
 
@@ -18,6 +19,35 @@ NAVY_2 = "#182236"
 PAPER = "#F6F7FB"
 ACCENT = "#635BFF"
 MUTED = "#7D879A"
+
+
+def flet_markdown(source: str) -> str:
+    """Normalize common dollar-delimited LaTeX before Flet renders Markdown.
+
+    ``flutter_markdown_plus_latex`` registers both ``$`` and ``$$`` as inline
+    delimiters.  Its parser can choose the single-dollar rule for a ``$$...$$``
+    expression, leaving a dollar sign in the TeX passed to ``Math.tex``.  The
+    latter then reports ``Can't use function '$' in math mode``.  Its escaped
+    delimiters (``\\(...)`` and ``\\[...\\]``) do not have that ambiguity.
+    Keep fenced and inline code untouched so examples are displayed literally.
+    """
+    code_parts = re.split(r"(```[\s\S]*?```|`[^`\n]*`)", source)
+
+    def normalize(part: str) -> str:
+        # Handle double dollars first; otherwise the single-dollar expression
+        # would consume one dollar at each end of a display formula.
+        part = re.sub(
+            r"(?<!\\)\$\$([\s\S]+?)(?<!\\)\$\$",
+            lambda match: "\\[\n" + match.group(1).strip() + "\n\\]",
+            part,
+        )
+        return re.sub(
+            r"(?<!\\)\$([^$\n]+?)(?<!\\)\$",
+            lambda match: "\\(" + match.group(1).strip() + "\\)",
+            part,
+        )
+
+    return "".join(part if index % 2 else normalize(part) for index, part in enumerate(code_parts))
 
 
 @dataclass
@@ -263,7 +293,7 @@ class PolyChatApp:
     def message_card(self, message):
         mine = message["user_id"] == self.state.user["id"]
         body = ft.Markdown(
-            message.get("content") or "",
+            flet_markdown(message.get("content") or ""),
             extension_set=ft.MarkdownExtensionSet.GITHUB_FLAVORED,
             auto_follow_links=True,
             latex_scale_factor=1.1,
