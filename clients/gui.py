@@ -261,6 +261,7 @@ class PolyChatApp:
                 ft.Container(expand=True),
                 ft.IconButton(ft.Icons.SEARCH, tooltip="搜索消息", on_click=self.open_search),
                 ft.IconButton(ft.Icons.PEOPLE_OUTLINE, tooltip="邀请私有房间成员", on_click=self.open_members),
+                ft.IconButton(ft.Icons.SETTINGS_OUTLINED, tooltip="房间设置", on_click=self.open_room_settings),
                 ft.Container(ft.Row([ft.Icon(ft.Icons.CIRCLE, size=9, color="#22C55E"), ft.Text("已连接", size=12, color="#15803D", weight=ft.FontWeight.W_600)], spacing=6), bgcolor="#ECFDF3", padding=ft.Padding(11, 7, 11, 7), border_radius=16),
             ]),
         )
@@ -572,6 +573,22 @@ class PolyChatApp:
                 self.page.pop_dialog(); self.show_toast("成员已邀请")
             except ApiError as exc: username.error_text = str(exc); self.page.update()
         self.page.show_dialog(ft.AlertDialog(title=ft.Text("私有房间成员"), content=username, actions=[ft.TextButton("取消", on_click=lambda _: self.page.pop_dialog()), ft.FilledButton("邀请", on_click=lambda _: self.page.run_task(invite, _))]))
+
+    def open_room_settings(self, _=None):
+        if not self.state.room:
+            return
+        name = ft.TextField(label="聊天室名称", value=self.state.room["name"], autofocus=True)
+        async def save(_):
+            try:
+                updated = await self.call(self.state.api.update_room, self.state.room["id"], name.value)
+                self.state.room = updated; await self.load_rooms(); self.page.pop_dialog(); self.render_sidebar(); self.render_messages(); self.page.update()
+            except ApiError as exc: name.error_text = str(exc); self.page.update()
+        async def delete(_):
+            try:
+                await self.call(self.state.api.delete_room, self.state.room["id"])
+                self.page.pop_dialog(); await self.load_rooms(select_first=True); self.render_sidebar(); self.render_messages(); self.page.update()
+            except ApiError as exc: name.error_text = str(exc); self.page.update()
+        self.page.show_dialog(ft.AlertDialog(title=ft.Text("房间设置"), content=name, actions=[ft.TextButton("取消", on_click=lambda _: self.page.pop_dialog()), ft.TextButton("删除房间", on_click=lambda _: self.page.run_task(delete, _)), ft.FilledButton("保存", on_click=lambda _: self.page.run_task(save, _))]))
 
     def open_new_room(self, _=None):
         name = ft.TextField(label="聊天室名称", autofocus=True)

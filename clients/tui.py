@@ -126,7 +126,7 @@ class TUI:
 
     def command(self, value):
         if value == "/quit": return False
-        if value == "/help": self.status = "/rooms /room 编号 /new 名称 /newprivate 名称 /reply ID 内容 /react ID 表情 /edit ID 内容 /retract ID /search 关键词 /invite 用户 [admin] /quit"; return True
+        if value == "/help": self.status = "/rooms /room 编号 /newprivate 名称 /rename 名称 /delete-room /invite 用户 [admin] /kick 用户名 /reply /react /edit /retract /search /quit"; return True
         if value == "/rooms": self.status = "  ".join(f"{i + 1}:{r['name']}" for i, r in enumerate(self.rooms)); return True
         if value.startswith("/room "):
             try:
@@ -175,6 +175,20 @@ class TUI:
                 parts = value.split()
                 self.api.invite_member(self.room["id"], parts[1], "admin" if len(parts) > 2 and parts[2] == "admin" else "member"); self.status = "成员已添加"
             except (IndexError, ApiError) as exc: self.status = f"用法: /invite 用户名 [admin] · {exc}"
+            return True
+        if value.startswith("/rename "):
+            try: self.room = self.api.update_room(self.room["id"], value[8:].strip()); self.refresh_rooms(); self.status = "房间已改名"
+            except ApiError as exc: self.status = str(exc)
+            return True
+        if value == "/delete-room":
+            try: self.api.delete_room(self.room["id"]); self.refresh_rooms(); self.messages = []; self.last_id = 0; self.status = "房间已删除"
+            except ApiError as exc: self.status = str(exc)
+            return True
+        if value.startswith("/kick "):
+            try:
+                target = next(member for member in self.api.room_members(self.room["id"]) if member["username"] == value[6:].strip())
+                self.api.remove_member(self.room["id"], target["id"]); self.status = "成员已移除"
+            except (ApiError, StopIteration) as exc: self.status = f"成员不存在或无权限：{exc}"
             return True
         if value.startswith("/sendfile "):
             try: self.api.send_file(self.room["id"], value[10:].strip()); self.fetch(); self.status = "文件已发送"

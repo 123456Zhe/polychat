@@ -363,6 +363,7 @@ async function api(req, res, url) {
   if (req.method === 'POST' && url.pathname === '/api/rooms') {
     const user = requireUser(req, res); if (!user) return;
     const { name = '', is_private = false } = await readBody(req);
+    if (!is_private && !user.is_admin) return json(res, 403, { error: '只有管理员可以创建公共聊天室；请创建私有聊天室或联系管理员' });
     const roomName = String(name).trim();
     if (roomName.length < 1 || roomName.length > 30) return json(res, 400, { error: '房间名需为 1–30 位' });
     try {
@@ -374,6 +375,26 @@ async function api(req, res, url) {
       if (error.message.includes('UNIQUE')) return json(res, 409, { error: '房间已存在' });
       throw error;
     }
+  }
+
+  const roomManageMatch = url.pathname.match(/^\/api\/rooms\/(\d+)$/);
+  if (roomManageMatch && req.method === 'PUT') {
+    const roomId = Number(roomManageMatch[1]);
+    const context = requireRoomManager(req, res, roomId); if (!context) return;
+    if (!context.room.is_private && !context.user.is_admin) return json(res, 403, { error: '只有管理员可以管理公共聊天室' });
+    const { name = '' } = await readBody(req); const roomName = String(name).trim();
+    if (!roomName || roomName.length > 30) return json(res, 400, { error: '房间名需为 1–30 位' });
+    try { db.prepare('UPDATE rooms SET name = ? WHERE id = ?').run(roomName, roomId); }
+    catch (error) { if (error.message.includes('UNIQUE')) return json(res, 409, { error: '房间名已存在' }); throw error; }
+    return json(res, 200, { room: { ...context.room, name: roomName, is_private: Boolean(context.room.is_private) } });
+  }
+  if (roomManageMatch && req.method === 'DELETE') {
+    const roomId = Number(roomManageMatch[1]);
+    if (roomId === 1) return json(res, 400, { error: '大厅不能删除' });
+    const context = requireRoomManager(req, res, roomId); if (!context) return;
+    if (!context.room.is_private && !context.user.is_admin) return json(res, 403, { error: '只有管理员可以删除公共聊天室' });
+    db.prepare('DELETE FROM rooms WHERE id = ?').run(roomId);
+    return json(res, 200, { ok: true });
   }
 
   const roomMemberMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/members$/);

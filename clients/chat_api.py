@@ -167,6 +167,12 @@ class ChatAPI:
     def remove_member(self, room_id: int, user_id: int):
         return self.request("DELETE", f"/api/rooms/{int(room_id)}/members/{int(user_id)}")
 
+    def update_room(self, room_id: int, name: str):
+        return self.request("PUT", f"/api/rooms/{int(room_id)}", {"name": name})["room"]
+
+    def delete_room(self, room_id: int):
+        return self.request("DELETE", f"/api/rooms/{int(room_id)}")
+
     def upload(self, path: str):
         size = os.path.getsize(path)
         if not 0 < size <= 10 * 1024 * 1024:
