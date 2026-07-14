@@ -159,7 +159,8 @@ button { cursor: pointer; }
 .markdown table { max-width: 100%; border-collapse: collapse; }
 .markdown th, .markdown td { padding: 6px 9px; border: 1px solid #d8d4d4; }
 .math-block { max-width: 100%; overflow-x: auto; padding: 5px 0; }
-.attachment-image {
+.attachment-image,
+.markdown img {
   display: block;
   width: auto;
   max-width: 100%;
