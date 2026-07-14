@@ -115,13 +115,12 @@ python3 -m py_compile clients/chat_api.py clients/gui.py clients/tui.py
 Linux 下使用 Flet 生成独立桌面程序：
 
 ```bash
-python3 -m pip install -r requirements-gui.txt
 chmod +x build-gui.sh
 ./build-gui.sh
-./dist/PolyChat-GUI/PolyChat-GUI --server http://127.0.0.1:3000
+./dist/PolyChat-GUI --server http://127.0.0.1:3000
 ```
 
-GUI 采用 Flet，头像以圆形图片显示，消息区使用 Flet Markdown 组件渲染 Markdown 与 LaTeX，附件可点击下载。Flet 会在首次构建时自动准备所需 Flutter 工具链；Linux、Windows 与 macOS 需分别在对应系统上构建。
+GUI 采用 Flet，头像以圆形图片显示，消息区使用 Flet Markdown 组件渲染 Markdown 与 LaTeX，附件可点击下载。`build-gui.sh` 会自动创建项目内的 `.venv-gui` 虚拟环境并安装 Flet，因此不需要向系统 Python 安装任何包。Linux 下构建产物是单个 `dist/PolyChat-GUI` 可执行文件；Linux、Windows 与 macOS 需分别在对应系统上构建。
 
 ## Docker Compose 部署
 
