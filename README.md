@@ -42,6 +42,35 @@ npm run web:dev
 npm run web:build
 ```
 
+### Web 主题与自定义 CSS
+
+登录后点击聊天页顶部的“主题”按钮，可以一键应用内置主题：雾蓝、午夜靛蓝、青绿浅色和 Catppuccin Mocha。选择结果和自定义 CSS 都保存在**当前浏览器的 Local Storage**，不会同步到服务器、数据库或其他用户设备。
+
+在主题面板的“自定义 CSS”框中输入 CSS 会立即预览；点击“保存 CSS”后在刷新页面后仍会保留。“清除自定义 CSS”只移除自己的覆盖规则，保留当前选中的预设主题。
+
+下面是几个可直接粘贴的示例：
+
+```css
+/* 更改侧边栏与强调色 */
+.chat > aside { background: #0f172a; }
+.send, .profile-actions .primary { background: #0ea5e9; }
+```
+
+```css
+/* 紧凑消息布局 */
+.messages { padding: 14px 24px; }
+.messages article { margin-bottom: 9px; }
+.bubble { border-radius: 3px 12px 12px; }
+```
+
+```css
+/* 高对比阅读模式 */
+.markdown { font-size: 16px; line-height: 1.85; color: #111827; }
+.bubble { border-color: #64748b; background: #ffffff; }
+```
+
+自定义 CSS 可以覆盖页面任何选择器；请只粘贴自己信任的规则。若界面不可读，可在主题面板点击“清除自定义 CSS”，或在浏览器开发者工具中删除 Local Storage 里的 `polychat.custom-css`。
+
 ## 快速启动
 
 在第一个终端启动服务：
