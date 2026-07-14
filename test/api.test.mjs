@@ -118,6 +118,33 @@ test('全局消息事件支持增量通知且不回放旧消息', async () => {
   assert.equal(events.body.messages[0].room_name, '大厅');
 });
 
+test('WebSocket 实时推送消息和消息更新事件', async () => {
+  const registered = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'socket_user', password: 'socket-password' }) });
+  const auth = { authorization: `Bearer ${registered.body.token}` };
+  const socket = new WebSocket(`${base.replace('http:', 'ws:')}/ws?token=${encodeURIComponent(registered.body.token)}`);
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('WebSocket 连接超时')), 2000);
+    socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
+    socket.addEventListener('error', reject, { once: true });
+  });
+  const nextEvent = type => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`未收到 ${type} 事件`)), 2000);
+    const listener = event => {
+      const payload = JSON.parse(event.data);
+      if (payload.type !== type) return;
+      clearTimeout(timer); socket.removeEventListener('message', listener); resolve(payload);
+    };
+    socket.addEventListener('message', listener);
+  });
+  const pushed = nextEvent('message');
+  const sent = await api('/api/rooms/1/messages', { method: 'POST', headers: auth, body: JSON.stringify({ content: '实时消息' }) });
+  assert.equal((await pushed).message_id, sent.body.message.id);
+  const updated = nextEvent('message_update');
+  await api(`/api/messages/${sent.body.message.id}`, { method: 'PUT', headers: auth, body: JSON.stringify({ content: '实时编辑' }) });
+  assert.equal((await updated).message_id, sent.body.message.id);
+  socket.close();
+});
+
 test('消息历史支持从最新批次开始并向上分页加载', async () => {
   const registered = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'history_user', password: 'history-password' }) });
   const auth = { authorization: `Bearer ${registered.body.token}` };

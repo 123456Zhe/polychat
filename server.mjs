@@ -4,6 +4,7 @@ import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { WebSocketServer } from 'ws';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC = join(ROOT, 'web');
@@ -220,6 +221,18 @@ function hydrateMessages(messages, viewerId) {
   return messages.map(message => ({ ...message, is_deleted: Boolean(message.deleted_at), reactions: byMessage.get(message.id) || [] }));
 }
 
+const sockets = new Set();
+function socketCanAccess(socket, roomId) {
+  const room = roomForUser(roomId, socket.user.id);
+  return room && (!room.is_private || room.role || socket.user.is_admin);
+}
+function broadcast(event, roomId = null) {
+  const payload = JSON.stringify(event);
+  for (const socket of sockets) {
+    if (socket.readyState === 1 && (roomId == null || socketCanAccess(socket, roomId))) socket.send(payload);
+  }
+}
+
 function cookie(token, clear = false) {
   const age = clear ? 0 : SESSION_DAYS * 86400;
   return `polychat_session=${clear ? '' : encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}`;
@@ -370,6 +383,7 @@ async function api(req, res, url) {
       const result = db.prepare('INSERT INTO rooms(name, created_by, is_private) VALUES (?, ?, ?)').run(roomName, user.id, is_private ? 1 : 0);
       const id = Number(result.lastInsertRowid);
       db.prepare("INSERT INTO room_members(room_id, user_id, role) VALUES (?, ?, 'owner')").run(id, user.id);
+      broadcast({ type: 'rooms' });
       return json(res, 201, { room: { id, name: roomName, is_private: Boolean(is_private), role: 'owner' } });
     } catch (error) {
       if (error.message.includes('UNIQUE')) return json(res, 409, { error: '房间已存在' });
@@ -386,6 +400,7 @@ async function api(req, res, url) {
     if (!roomName || roomName.length > 30) return json(res, 400, { error: '房间名需为 1–30 位' });
     try { db.prepare('UPDATE rooms SET name = ? WHERE id = ?').run(roomName, roomId); }
     catch (error) { if (error.message.includes('UNIQUE')) return json(res, 409, { error: '房间名已存在' }); throw error; }
+    broadcast({ type: 'rooms' });
     return json(res, 200, { room: { ...context.room, name: roomName, is_private: Boolean(context.room.is_private) } });
   }
   if (roomManageMatch && req.method === 'DELETE') {
@@ -394,6 +409,7 @@ async function api(req, res, url) {
     const context = requireRoomManager(req, res, roomId); if (!context) return;
     if (!context.room.is_private && !context.user.is_admin) return json(res, 403, { error: '只有管理员可以删除公共聊天室' });
     db.prepare('DELETE FROM rooms WHERE id = ?').run(roomId);
+    broadcast({ type: 'rooms' });
     return json(res, 200, { ok: true });
   }
 
@@ -410,6 +426,7 @@ async function api(req, res, url) {
     if (!target) return json(res, 404, { error: '用户不存在' });
     const memberRole = role === 'admin' ? 'admin' : 'member';
     db.prepare('INSERT INTO room_members(room_id, user_id, role) VALUES (?, ?, ?) ON CONFLICT(room_id, user_id) DO UPDATE SET role = excluded.role').run(context.room.id, target.id, memberRole);
+    broadcast({ type: 'rooms' });
     return json(res, 200, { member: { ...target, role: memberRole } });
   }
   const roomMemberDelete = url.pathname.match(/^\/api\/rooms\/(\d+)\/members\/(\d+)$/);
@@ -418,6 +435,7 @@ async function api(req, res, url) {
     const targetId = Number(roomMemberDelete[2]);
     if (targetId === context.room.created_by) return json(res, 400, { error: '不能移除房主' });
     db.prepare('DELETE FROM room_members WHERE room_id = ? AND user_id = ?').run(context.room.id, targetId);
+    broadcast({ type: 'rooms' });
     return json(res, 200, { ok: true });
   }
 
@@ -524,10 +542,22 @@ async function api(req, res, url) {
       FROM messages JOIN users ON users.id = messages.user_id
       LEFT JOIN messages AS parent ON parent.id = messages.reply_to LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id
       LEFT JOIN attachments ON attachments.id = messages.attachment_id WHERE messages.id = ?`).get(result.lastInsertRowid);
+    broadcast({ type: 'message', room_id: roomId, message_id: Number(result.lastInsertRowid) }, roomId);
     return json(res, 201, { message: hydrateMessages([message], user.id)[0] });
   }
 
   const singleMessageMatch = url.pathname.match(/^\/api\/messages\/(\d+)$/);
+  if (singleMessageMatch && req.method === 'GET') {
+    const messageId = Number(singleMessageMatch[1]);
+    const row = db.prepare(`SELECT messages.id, messages.room_id, messages.content, messages.created_at, messages.reply_to, messages.edited_at, messages.deleted_at,
+      users.id AS user_id, users.username, users.avatar_updated_at, parent.content AS reply_content, parent_user.username AS reply_username,
+      attachments.id AS attachment_id, attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type, attachments.size AS attachment_size
+      FROM messages JOIN users ON users.id = messages.user_id LEFT JOIN messages AS parent ON parent.id = messages.reply_to
+      LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id LEFT JOIN attachments ON attachments.id = messages.attachment_id WHERE messages.id = ?`).get(messageId);
+    if (!row) return json(res, 404, { error: '消息不存在' });
+    const context = requireRoomAccess(req, res, row.room_id); if (!context) return;
+    return json(res, 200, { message: hydrateMessages([row], context.user.id)[0] });
+  }
   if (singleMessageMatch && req.method === 'PUT') {
     const user = requireUser(req, res); if (!user) return;
     const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(Number(singleMessageMatch[1]));
@@ -537,6 +567,7 @@ async function api(req, res, url) {
     const { content = '' } = await readBody(req); const text = String(content).trim();
     if (!text || text.length > 10_000) return json(res, 400, { error: '消息需为 1–10000 个字符' });
     db.prepare('UPDATE messages SET content = ?, edited_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').run(text, message.id);
+    broadcast({ type: 'message_update', room_id: message.room_id, message_id: message.id }, message.room_id);
     return json(res, 200, { ok: true, message: hydrateMessages([db.prepare(`SELECT messages.id, messages.content, messages.created_at, messages.reply_to, messages.edited_at, messages.deleted_at,
       users.id AS user_id, users.username, users.avatar_updated_at FROM messages JOIN users ON users.id = messages.user_id WHERE messages.id = ?`).get(message.id)], user.id)[0] });
   }
@@ -547,6 +578,7 @@ async function api(req, res, url) {
     const context = requireRoomAccess(req, res, message.room_id); if (!context) return;
     if (message.user_id !== user.id && !user.is_admin && !['owner', 'admin'].includes(context.room.role)) return json(res, 403, { error: '没有撤回此消息的权限' });
     db.prepare("UPDATE messages SET content = '', attachment_id = NULL, deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(message.id);
+    broadcast({ type: 'message_update', room_id: message.room_id, message_id: message.id }, message.room_id);
     return json(res, 200, { ok: true });
   }
   const reactionMatch = url.pathname.match(/^\/api\/messages\/(\d+)\/reactions$/);
@@ -559,6 +591,7 @@ async function api(req, res, url) {
     const exists = db.prepare('SELECT 1 FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').get(Number(reactionMatch[1]), user.id, value);
     if (exists) db.prepare('DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').run(Number(reactionMatch[1]), user.id, value);
     else db.prepare('INSERT INTO message_reactions(message_id, user_id, emoji) VALUES (?, ?, ?)').run(Number(reactionMatch[1]), user.id, value);
+    broadcast({ type: 'message_update', room_id: message.room_id, message_id: Number(reactionMatch[1]) }, message.room_id);
     return json(res, 200, { reactions: hydrateMessages([{ id: Number(reactionMatch[1]) }], user.id)[0].reactions });
   }
 
@@ -603,6 +636,35 @@ export const server = http.createServer(async (req, res) => {
     if (!res.headersSent) json(res, error.status || 500, { error: error.status ? error.message : '服务器内部错误' });
   }
 });
+
+const webSocketServer = new WebSocketServer({ noServer: true });
+server.on('upgrade', (req, socket, head) => {
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  if (url.pathname !== '/ws') return socket.destroy();
+  const token = url.searchParams.get('token');
+  if (token && !req.headers.authorization) req.headers.authorization = `Bearer ${token}`;
+  const user = currentUser(req);
+  if (!user) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+    return socket.destroy();
+  }
+  webSocketServer.handleUpgrade(req, socket, head, client => {
+    client.user = user;
+    client.isAlive = true;
+    sockets.add(client);
+    client.on('pong', () => { client.isAlive = true; });
+    client.on('close', () => sockets.delete(client));
+    client.send(JSON.stringify({ type: 'ready' }));
+  });
+});
+const heartbeat = setInterval(() => {
+  for (const socket of sockets) {
+    if (!socket.isAlive) { socket.terminate(); sockets.delete(socket); continue; }
+    socket.isAlive = false;
+    socket.ping();
+  }
+}, 30_000);
+heartbeat.unref();
 
 if (process.env.NODE_ENV !== 'test') {
   db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(Date.now());

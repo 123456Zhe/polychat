@@ -18,6 +18,7 @@ const unread = ref({});
 const hasOlderMessages = ref(false), loadingOlderMessages = ref(false);
 let messageTimer, roomTimer, eventTimer, lastId = 0, oldestId = 0, eventCursor = null;
 let roomGeneration = 0, activeMessageRequest = null, roomsLoading = false, eventsLoading = false, messagesLoading = false;
+let socket = null, reconnectTimer = null, socketBackoff = 1000;
 let themeStyleElement;
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 // Unicode emoji grouped using the same official categories exposed by EmojiAll.
@@ -82,6 +83,7 @@ function size(value = 0) { return value >= 1048576 ? `${(value / 1048576).toFixe
 function avatar(member) { return member?.avatar_url || (member?.avatar_updated_at ? `/api/users/${member.user_id ?? member.id}/avatar?v=${member.avatar_updated_at}` : ''); }
 function clearTimers() { clearTimeout(messageTimer); clearInterval(roomTimer); clearInterval(eventTimer); activeMessageRequest?.abort(); }
 function fileData(selected) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.onerror = reject; reader.readAsDataURL(selected); }); }
+function shutdownRealtime() { clearTimers(); clearTimeout(reconnectTimer); if (socket) { socket.onclose = null; socket.close(); socket = null; } }
 function updateTitle() { document.title = totalUnread.value ? `(${totalUnread.value}) PolyChat` : 'PolyChat'; }
 function setUnread(roomId, count) { unread.value = { ...unread.value, [roomId]: Math.max(0, count) }; updateTitle(); }
 function clearUnread(roomId) { if (roomId != null && unread.value[roomId]) setUnread(roomId, 0); }
@@ -101,19 +103,52 @@ function syncNotificationState() {
   notificationOn.value = notificationPermission.value === 'granted' && localStorage.getItem('polychat.notifications') !== 'off';
 }
 async function enter() {
-  await loadRooms(); await events(); startPolling(); syncNotificationState();
+  await loadRooms(); await events(); connectSocket(); startPolling(); syncNotificationState();
   if (navigator.permissions && notificationSupported.value) navigator.permissions.query({ name: 'notifications' }).then(status => { status.onchange = syncNotificationState; }).catch(() => {});
 }
 function startPolling() {
   clearTimeout(messageTimer); clearInterval(roomTimer); clearInterval(eventTimer);
   const background = document.hidden;
-  roomTimer = setInterval(loadRooms, background ? 30_000 : 10_000);
-  eventTimer = setInterval(events, background ? 15_000 : 2_500);
-  scheduleMessagePoll(background ? 12_000 : 1_500);
+  roomTimer = setInterval(loadRooms, socket?.readyState === WebSocket.OPEN ? 120_000 : 15_000);
+  if (socket?.readyState !== WebSocket.OPEN) eventTimer = setInterval(events, background ? 15_000 : 3_000);
+  scheduleMessagePoll(socket?.readyState === WebSocket.OPEN ? 60_000 : (background ? 12_000 : 1_500));
 }
 function scheduleMessagePoll(delay = 1_500) {
   clearTimeout(messageTimer);
-  messageTimer = setTimeout(async () => { const hasBacklog = await pollNewMessages(); scheduleMessagePoll(hasBacklog ? 50 : (document.hidden ? 12_000 : 1_500)); }, delay);
+  messageTimer = setTimeout(async () => { const hasBacklog = await pollNewMessages(); const idle = socket?.readyState === WebSocket.OPEN ? 60_000 : (document.hidden ? 12_000 : 1_500); scheduleMessagePoll(hasBacklog ? 50 : idle); }, delay);
+}
+async function refreshMessage(messageId) {
+  try {
+    const updated = (await api(`/api/messages/${messageId}`)).message;
+    const index = messages.value.findIndex(message => message.id === messageId);
+    if (index >= 0) messages.value.splice(index, 1, updated);
+  } catch { /* message may belong to another room or have become inaccessible */ }
+}
+async function handleSocketEvent(event) {
+  if (event.type === 'rooms') return loadRooms();
+  if (event.type === 'message_update') {
+    if (room.value?.id === event.room_id) await refreshMessage(event.message_id);
+    return;
+  }
+  if (event.type !== 'message') return;
+  if (room.value?.id === event.room_id) await pollNewMessages();
+  else {
+    setUnread(event.room_id, (unread.value[event.room_id] || 0) + 1);
+    try {
+      const message = (await api(`/api/messages/${event.message_id}`)).message;
+      const targetRoom = rooms.value.find(item => item.id === event.room_id);
+      if (notificationOn.value && message.user_id !== user.value.id) await showDesktopNotification({ ...message, room_name: targetRoom?.name || '聊天室' });
+    } catch { /* room may have become inaccessible */ }
+  }
+}
+function connectSocket() {
+  if (!user.value || socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return;
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  socket = new WebSocket(`${protocol}//${location.host}/ws`);
+  socket.onopen = async () => { socketBackoff = 1000; await loadRooms(); await pollNewMessages(); startPolling(); };
+  socket.onmessage = message => { try { handleSocketEvent(JSON.parse(message.data)); } catch { /* ignore malformed frames */ } };
+  socket.onclose = () => { socket = null; startPolling(); clearTimeout(reconnectTimer); reconnectTimer = setTimeout(connectSocket, socketBackoff); socketBackoff = Math.min(socketBackoff * 2, 30_000); };
+  socket.onerror = () => socket?.close();
 }
 function appendUnique(target, incoming, prepend = false) {
   const known = new Set(target.map(message => message.id));
@@ -253,9 +288,9 @@ function openRoomManage() { roomNameDraft.value = room.value?.name || ''; roomMa
 async function saveRoom() { if (!room.value || !roomNameDraft.value.trim()) return; try { const result = await api(`/api/rooms/${room.value.id}`, { method: 'PUT', body: JSON.stringify({ name: roomNameDraft.value }) }); room.value = { ...room.value, ...result.room }; rooms.value = rooms.value.map(item => item.id === room.value.id ? room.value : item); roomManageOpen.value = false; notify('房间已更新'); } catch (e) { notify(e.message); } }
 async function deleteRoom() { if (!room.value || !confirm(`删除 #${room.value.name} 及全部消息？此操作不可恢复。`)) return; try { await api(`/api/rooms/${room.value.id}`, { method: 'DELETE' }); roomManageOpen.value = false; room.value = null; await loadRooms(); notify('房间已删除'); } catch (e) { notify(e.message); } }
 async function toggleAdmin(member) { try { await api(`/api/admin/users/${member.id}/admin`, { method: 'PUT', body: JSON.stringify({ is_admin: !member.is_admin }) }); await loadAdmin(); } catch (e) { notify(e.message); } }
-async function logout() { await api('/api/logout', { method: 'POST' }); clearTimers(); location.reload(); }
+async function logout() { await api('/api/logout', { method: 'POST' }); shutdownRealtime(); location.reload(); }
 onMounted(async () => { renderThemeCss(); document.addEventListener('visibilitychange', handleVisibility); try { user.value = (await api('/api/me')).user; await enter(); } catch {} });
-onBeforeUnmount(() => { clearTimers(); document.removeEventListener('visibilitychange', handleVisibility); });
+onBeforeUnmount(() => { shutdownRealtime(); document.removeEventListener('visibilitychange', handleVisibility); });
 </script>
 
 <template>
