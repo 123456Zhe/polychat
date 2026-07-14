@@ -254,3 +254,16 @@ test('账户头像支持安全上传、展示、历史消息关联和移除', as
   const missing = await fetch(base + uploaded.body.user.avatar_url, { headers: auth });
   assert.equal(missing.status, 404);
 });
+
+test('Web Push VAPID 公钥和订阅可持久化及注销', async () => {
+  const registered = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'push_user', password: 'push-user-password' }) });
+  const auth = { authorization: `Bearer ${registered.body.token}` };
+  const key = await api('/api/push/vapid-public-key', { headers: auth });
+  assert.equal(key.response.status, 200);
+  assert.match(key.body.publicKey, /^[A-Za-z0-9_-]{80,100}$/);
+  const subscription = { endpoint: 'https://push.example.test/subscription-1', keys: { p256dh: 'test-p256dh', auth: 'test-auth' } };
+  assert.equal((await api('/api/push/subscriptions', { method: 'POST', headers: auth, body: JSON.stringify(subscription) })).response.status, 200);
+  assert.equal(db.prepare('SELECT user_id FROM push_subscriptions WHERE endpoint = ?').get(subscription.endpoint).user_id, registered.body.user.id);
+  assert.equal((await api('/api/push/subscriptions', { method: 'DELETE', headers: auth, body: JSON.stringify({ endpoint: subscription.endpoint }) })).response.status, 200);
+  assert.equal(db.prepare('SELECT 1 FROM push_subscriptions WHERE endpoint = ?').get(subscription.endpoint), undefined);
+});

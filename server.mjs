@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer } from 'ws';
+import webpush from 'web-push';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC = join(ROOT, 'web');
@@ -89,6 +90,18 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY(room_id, message_id)
   );
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS push_subscriptions (
+    endpoint TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
   INSERT OR IGNORE INTO rooms(id, name) VALUES (1, '大厅');
 `);
 if (!db.prepare('PRAGMA table_info(messages)').all().some(column => column.name === 'attachment_id')) {
@@ -109,6 +122,16 @@ if (!userColumns.has('avatar_updated_at')) db.exec('ALTER TABLE users ADD COLUMN
 if (db.prepare('SELECT COUNT(*) AS count FROM users WHERE is_admin = 1').get().count === 0) {
   db.prepare('UPDATE users SET is_admin = 1 WHERE id = (SELECT id FROM users ORDER BY id LIMIT 1)').run();
 }
+
+let vapidPublicKey = process.env.VAPID_PUBLIC_KEY || db.prepare("SELECT value FROM app_settings WHERE key = 'vapid_public_key'").get()?.value;
+let vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || db.prepare("SELECT value FROM app_settings WHERE key = 'vapid_private_key'").get()?.value;
+if (!vapidPublicKey || !vapidPrivateKey) {
+  const generated = webpush.generateVAPIDKeys();
+  vapidPublicKey = generated.publicKey; vapidPrivateKey = generated.privateKey;
+  db.prepare("INSERT OR REPLACE INTO app_settings(key, value) VALUES ('vapid_public_key', ?)").run(vapidPublicKey);
+  db.prepare("INSERT OR REPLACE INTO app_settings(key, value) VALUES ('vapid_private_key', ?)").run(vapidPrivateKey);
+}
+webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'mailto:polychat@example.com', vapidPublicKey, vapidPrivateKey);
 
 function json(res, status, body, headers = {}) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers });
@@ -246,6 +269,27 @@ function onlineUsers() {
   for (const socket of sockets) users.set(socket.user.id, { id: socket.user.id, username: socket.user.username });
   return [...users.values()];
 }
+async function pushMessage(roomId, senderId, message) {
+  const room = db.prepare('SELECT name, is_private FROM rooms WHERE id = ?').get(roomId);
+  if (!room) return;
+  const subscriptions = db.prepare(`SELECT push_subscriptions.endpoint, push_subscriptions.p256dh, push_subscriptions.auth
+    FROM push_subscriptions JOIN users ON users.id = push_subscriptions.user_id
+    LEFT JOIN room_members ON room_members.room_id = ? AND room_members.user_id = users.id
+    WHERE users.id != ? AND (? = 0 OR room_members.user_id IS NOT NULL OR users.is_admin = 1)`).all(roomId, senderId, room.is_private);
+  const payload = JSON.stringify({
+    title: `${message.username} · #${room.name}`,
+    body: message.content || (message.attachment_name ? `发送了 ${message.attachment_name}` : '发送了附件'),
+    roomId, messageId: message.id, url: `/?room=${roomId}&message=${message.id}`
+  });
+  await Promise.allSettled(subscriptions.map(async subscription => {
+    try {
+      await webpush.sendNotification({ endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, payload, { TTL: 3600, urgency: 'high' });
+    } catch (error) {
+      if ([404, 410].includes(error.statusCode)) db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').run(subscription.endpoint);
+      else throw error;
+    }
+  }));
+}
 
 function cookie(token, clear = false) {
   const age = clear ? 0 : SESSION_DAYS * 86400;
@@ -356,6 +400,26 @@ async function api(req, res, url) {
         'cache-control': 'private, max-age=31536000, immutable', 'x-content-type-options': 'nosniff' });
       return res.end(bytes);
     } catch { return json(res, 404, { error: '头像文件不存在' }); }
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/push/vapid-public-key') {
+    if (!requireUser(req, res)) return;
+    return json(res, 200, { publicKey: vapidPublicKey });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/push/subscriptions') {
+    const user = requireUser(req, res); if (!user) return;
+    const { endpoint = '', keys = {} } = await readBody(req, 10_000);
+    const target = String(endpoint), p256dh = String(keys.p256dh || ''), auth = String(keys.auth || '');
+    if (!/^https:\/\//.test(target) || target.length > 2000 || !p256dh || p256dh.length > 500 || !auth || auth.length > 500) return json(res, 400, { error: '推送订阅格式无效' });
+    db.prepare(`INSERT INTO push_subscriptions(endpoint, user_id, p256dh, auth) VALUES (?, ?, ?, ?)
+      ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth, updated_at = CURRENT_TIMESTAMP`).run(target, user.id, p256dh, auth);
+    return json(res, 200, { ok: true });
+  }
+  if (req.method === 'DELETE' && url.pathname === '/api/push/subscriptions') {
+    const user = requireUser(req, res); if (!user) return;
+    const { endpoint = '' } = await readBody(req, 4_000);
+    db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?').run(String(endpoint), user.id);
+    return json(res, 200, { ok: true });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/rooms') {
@@ -596,6 +660,7 @@ async function api(req, res, url) {
       LEFT JOIN messages AS parent ON parent.id = messages.reply_to LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id
       LEFT JOIN attachments ON attachments.id = messages.attachment_id WHERE messages.id = ?`).get(result.lastInsertRowid);
     broadcast({ type: threadRoot ? 'thread_message' : 'message', room_id: roomId, message_id: Number(result.lastInsertRowid), thread_root: threadRoot }, roomId);
+    void pushMessage(roomId, user.id, message).catch(error => console.error('Web Push failed:', error.message));
     return json(res, 201, { message: hydrateMessages([message], user.id)[0] });
   }
 

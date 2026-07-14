@@ -45,7 +45,6 @@ const activeTheme = ref(localStorage.getItem('polychat.theme') || 'mist');
 const customCss = ref(localStorage.getItem('polychat.custom-css') || '');
 const isAdmin = computed(() => user.value?.is_admin);
 const totalUnread = computed(() => Object.values(unread.value).reduce((total, count) => total + count, 0));
-const notificationSupported = computed(() => 'Notification' in window);
 const onlineIds = computed(() => new Set(onlineUsers.value.map(member => member.id)));
 const typingText = computed(() => {
   const names = Object.values(typingByRoom.value[room.value?.id] || {});
@@ -53,6 +52,7 @@ const typingText = computed(() => {
   return names.length > 2 ? `${names.slice(0, 2).join('、')} 等 ${names.length} 人正在输入…` : `${names.join('、')}正在输入…`;
 });
 const notificationLabel = computed(() => {
+const notificationSupported = computed(() => 'Notification' in window);
   if (!notificationSupported.value) return '浏览器不支持通知';
   if (!window.isSecureContext) return '通知需要 HTTPS';
   if (notificationPermission.value === 'denied') return '通知已被浏览器阻止';
@@ -92,7 +92,6 @@ function size(value = 0) { return value >= 1048576 ? `${(value / 1048576).toFixe
 function avatar(member) { return member?.avatar_url || (member?.avatar_updated_at ? `/api/users/${member.user_id ?? member.id}/avatar?v=${member.avatar_updated_at}` : ''); }
 function clearTimers() { clearTimeout(messageTimer); clearInterval(roomTimer); clearInterval(eventTimer); activeMessageRequest?.abort(); }
 function shutdownRealtime() { clearTimers(); clearTimeout(reconnectTimer); if (socket) { socket.onclose = null; socket.close(); socket = null; } }
-function updateTitle() { document.title = totalUnread.value ? `(${totalUnread.value}) PolyChat` : 'PolyChat'; }
 function sendSocket(event) { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event)); }
 function stopTyping() { clearTimeout(typingTimer); if (typingRoomId) sendSocket({ type: 'typing', room_id: typingRoomId, typing: false }); typingRoomId = null; }
 function sendTyping() {
@@ -102,6 +101,7 @@ function sendTyping() {
 }
 function fileData(selected) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.onerror = reject; reader.readAsDataURL(selected); }); }
 function setUnread(roomId, count) { unread.value = { ...unread.value, [roomId]: Math.max(0, count) }; updateTitle(); }
+function updateTitle() { document.title = totalUnread.value ? `(${totalUnread.value}) PolyChat` : 'PolyChat'; }
 function clearUnread(roomId) { if (roomId != null && unread.value[roomId]) setUnread(roomId, 0); }
 function handleVisibility() { if (!document.hidden) clearUnread(room.value?.id); startPolling(); }
 function renderThemeCss() {
@@ -119,8 +119,29 @@ function syncNotificationState() {
   notificationOn.value = notificationPermission.value === 'granted' && localStorage.getItem('polychat.notifications') !== 'off';
 }
 async function enter() {
+function base64UrlBytes(value) {
+  const normalized = `${value}${'='.repeat((4 - value.length % 4) % 4)}`.replace(/-/g, '+').replace(/_/g, '/');
+  return Uint8Array.from(atob(normalized), character => character.charCodeAt(0));
+}
+async function ensurePushSubscription() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return false;
+  const registration = await navigator.serviceWorker.register('/sw.js');
+  const publicKey = (await api('/api/push/vapid-public-key')).publicKey;
+  const subscription = await registration.pushManager.getSubscription() || await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64UrlBytes(publicKey) });
+  await api('/api/push/subscriptions', { method: 'POST', body: JSON.stringify(subscription.toJSON()) });
+  return true;
+}
+async function removePushSubscription() {
+  if (!('serviceWorker' in navigator)) return;
+  const registration = await navigator.serviceWorker.getRegistration('/sw.js');
+  const subscription = await registration?.pushManager.getSubscription();
+  if (!subscription) return;
+  await api('/api/push/subscriptions', { method: 'DELETE', body: JSON.stringify({ endpoint: subscription.endpoint }) }).catch(() => {});
+  await subscription.unsubscribe();
+}
   await loadRooms(); await events(); connectSocket(); startPolling(); syncNotificationState();
   if (navigator.permissions && notificationSupported.value) navigator.permissions.query({ name: 'notifications' }).then(status => { status.onchange = syncNotificationState; }).catch(() => {});
+  if (notificationOn.value) ensurePushSubscription().catch(() => {});
 }
 function startPolling() {
   clearTimeout(messageTimer); clearInterval(roomTimer); clearInterval(eventTimer);
@@ -141,7 +162,6 @@ async function refreshMessage(messageId) {
   } catch { /* message may belong to another room or have become inaccessible */ }
 }
 async function handleSocketEvent(event) {
-  if (event.type === 'rooms') return loadRooms();
   if (event.type === 'presence_snapshot') { onlineUsers.value = event.users || []; return; }
   if (event.type === 'presence') {
     onlineUsers.value = event.online ? [...onlineUsers.value.filter(member => member.id !== event.user_id), { id: event.user_id, username: event.username }] : onlineUsers.value.filter(member => member.id !== event.user_id);
@@ -157,6 +177,7 @@ async function handleSocketEvent(event) {
   if (event.type === 'pins') { if (pinsOpen.value && room.value?.id === event.room_id) await loadPins(); return; }
   if (event.type === 'thread_message') { if (threadRoot.value?.id === event.thread_root) await openThread(threadRoot.value); return; }
   if (event.type === 'message_update') {
+  if (event.type === 'rooms') return loadRooms();
     if (room.value?.id === event.room_id) await refreshMessage(event.message_id);
     return;
   }
@@ -275,14 +296,14 @@ async function events() {
 async function toggleNotifications() {
   if (!notificationSupported.value) return notify('当前浏览器不支持桌面通知');
   if (!window.isSecureContext) return notify('请通过 HTTPS 访问后开启通知');
-  if (notificationOn.value) { localStorage.setItem('polychat.notifications', 'off'); notificationOn.value = false; return notify('桌面通知已关闭'); }
+  if (notificationOn.value) { localStorage.setItem('polychat.notifications', 'off'); notificationOn.value = false; await removePushSubscription(); return notify('桌面与离线通知已关闭'); }
   if (Notification.permission === 'denied') return notify('请在浏览器的网站设置中允许通知');
   const permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
   notificationPermission.value = permission;
   if (permission === 'granted') {
     localStorage.setItem('polychat.notifications', 'on'); notificationOn.value = true;
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
-    notify('桌面通知已开启');
+    try { await ensurePushSubscription(); notify('桌面与离线通知已开启'); }
+    catch { notify('桌面通知已开启，但离线推送订阅失败'); }
   }
   else notify('未获得通知权限，可在浏览器网站设置中修改');
 }
@@ -299,9 +320,9 @@ function paste(event) { const image = [...(event.clipboardData?.items || [])].fi
 function insertEmoji(emoji) { content.value += emoji; emojiOpen.value = false; }
 function previewImage(src) { imagePreview.value = src; }
 function previewMarkdownImage(event) { if (event.target?.tagName === 'IMG') previewImage(event.target.currentSrc || event.target.src); }
-function cancelReply() { replyTarget.value = null; }
 function startReply(message) { replyTarget.value = message; }
 async function send() { if (!room.value || (!content.value.trim() && !file.value)) return; stopTyping(); try { let attachmentId = null; if (file.value) { const uploaded = await api('/api/files', { method: 'POST', body: JSON.stringify({ name: file.value.name, type: file.value.type || 'application/octet-stream', data: await fileData(file.value) }) }); attachmentId = uploaded.file.id; } const result = await api(`/api/rooms/${room.value.id}/messages`, { method: 'POST', body: JSON.stringify({ content: content.value, attachment_id: attachmentId, reply_to: replyTarget.value?.id || null }) }); messages.value = appendUnique(messages.value, [result.message]); lastId = result.message.id; oldestId ||= result.message.id; content.value = ''; file.value = null; replyTarget.value = null; if (fileInput.value) fileInput.value.value = ''; await nextTick(); messageList.value?.scrollTo({ top: messageList.value.scrollHeight, behavior: 'smooth' }); } catch (e) { notify(e.message); } }
+function cancelReply() { replyTarget.value = null; }
 async function openThread(message) { try { threadRoot.value = message; threadMessages.value = (await api(`/api/messages/${message.id}/thread`)).messages; } catch (e) { notify(e.message); } }
 async function sendThread() { if (!threadRoot.value || !threadContent.value.trim()) return; try { const result = await api(`/api/rooms/${room.value.id}/messages`, { method: 'POST', body: JSON.stringify({ content: threadContent.value, thread_root: threadRoot.value.id }) }); threadMessages.value = appendUnique(threadMessages.value, [result.message]); threadContent.value = ''; } catch (e) { notify(e.message); } }
 async function loadPins() { if (!room.value) return; try { pinnedMessages.value = (await api(`/api/rooms/${room.value.id}/pins`)).messages; pinsOpen.value = true; } catch (e) { notify(e.message); } }
@@ -321,9 +342,9 @@ async function createRoom() { if (!roomDraft.value.name.trim()) return; try { co
 function openRoomManage() { roomNameDraft.value = room.value?.name || ''; roomManageOpen.value = true; }
 async function saveRoom() { if (!room.value || !roomNameDraft.value.trim()) return; try { const result = await api(`/api/rooms/${room.value.id}`, { method: 'PUT', body: JSON.stringify({ name: roomNameDraft.value }) }); room.value = { ...room.value, ...result.room }; rooms.value = rooms.value.map(item => item.id === room.value.id ? room.value : item); roomManageOpen.value = false; notify('房间已更新'); } catch (e) { notify(e.message); } }
 async function deleteRoom() { if (!room.value || !confirm(`删除 #${room.value.name} 及全部消息？此操作不可恢复。`)) return; try { await api(`/api/rooms/${room.value.id}`, { method: 'DELETE' }); roomManageOpen.value = false; room.value = null; await loadRooms(); notify('房间已删除'); } catch (e) { notify(e.message); } }
-async function toggleAdmin(member) { try { await api(`/api/admin/users/${member.id}/admin`, { method: 'PUT', body: JSON.stringify({ is_admin: !member.is_admin }) }); await loadAdmin(); } catch (e) { notify(e.message); } }
 async function loadAdmin() { try { admin.value = await api('/api/admin/overview'); } catch (e) { notify(e.message); } }
 async function logout() { await api('/api/logout', { method: 'POST' }); shutdownRealtime(); location.reload(); }
+async function toggleAdmin(member) { try { await api(`/api/admin/users/${member.id}/admin`, { method: 'PUT', body: JSON.stringify({ is_admin: !member.is_admin }) }); await loadAdmin(); } catch (e) { notify(e.message); } }
 onMounted(async () => { renderThemeCss(); document.addEventListener('visibilitychange', handleVisibility); try { user.value = (await api('/api/me')).user; await enter(); } catch {} });
 onBeforeUnmount(() => { shutdownRealtime(); document.removeEventListener('visibilitychange', handleVisibility); });
 </script>
@@ -347,7 +368,7 @@ onBeforeUnmount(() => { shutdownRealtime(); document.removeEventListener('visibi
   <div v-if="membersOpen" class="modal"><section class="members-modal"><button class="close" @click="membersOpen = false">×</button><p>ROOM ACCESS</p><h2>管理成员</h2><p class="hint">私有房间只对以下成员可见。</p><form class="member-invite" @submit.prevent="inviteMember"><input v-model="memberName" placeholder="输入用户名"><select v-model="memberRole"><option value="member">成员</option><option value="admin">房间管理员</option></select><button class="primary">邀请</button></form><div class="member" v-for="member in roomMembers" :key="member.id"><span>{{ member.username }}</span><small>{{ member.role === 'owner' ? '房主' : member.role === 'admin' ? '管理员' : '成员' }}</small><button v-if="member.role !== 'owner'" @click="removeMember(member)">移除</button></div></section></div>
   <div v-if="roomManageOpen" class="modal"><section class="room-modal"><button class="close" @click="roomManageOpen = false">×</button><p>ROOM SETTINGS</p><h2>房间设置</h2><label>名称<input v-model="roomNameDraft" maxlength="30"></label><div class="theme-actions"><button class="primary" @click="saveRoom">保存更改</button><button class="danger-button" @click="deleteRoom">删除房间</button></div></section></div>
   <div v-if="imagePreview" class="image-lightbox" @click.self="imagePreview = ''"><button class="close" @click="imagePreview = ''">×</button><img :src="imagePreview" alt="图片预览"></div>
-</template>
   <div v-if="pinsOpen" class="modal"><section class="pins-modal"><button class="close" @click="pinsOpen = false">×</button><p>PINNED</p><h2>置顶消息</h2><div v-if="!pinnedMessages.length" class="modal-empty">暂无置顶消息</div><article v-for="message in pinnedMessages" :key="message.id" class="pin-card"><b>{{ message.username }}</b><small>{{ time(message.pinned_at || message.created_at) }}</small><div class="markdown" v-html="markdown(message.content)"></div><button v-if="isAdmin || room?.role === 'owner' || room?.role === 'admin'" @click="unpinMessage(message)">取消置顶</button></article></section></div>
   <div v-if="threadRoot" class="thread-panel"><header><div><small>话题</small><h2>{{ threadRoot.username }} 的消息</h2></div><button @click="threadRoot = null">×</button></header><div class="thread-list"><article v-for="message in threadMessages" :key="message.id"><b>{{ message.username }}<i v-if="onlineIds.has(message.user_id)" class="online-dot"></i></b><small>{{ time(message.created_at) }}</small><div class="markdown" v-html="markdown(message.content)"></div></article></div><form @submit.prevent="sendThread"><textarea v-model="threadContent" rows="2" placeholder="回复这个话题…"></textarea><button class="send">发送</button></form></div>
   <div v-if="toast" class="toast">{{ toast }}</div>
+</template>
