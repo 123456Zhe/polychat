@@ -25,6 +25,7 @@ rm -rf dist/PolyChat-GUI dist/gui.build
   --onedir \
   --name PolyChat-GUI \
   --icon assets/polychat-icon.png \
+  --add-data assets:assets \
   --distpath dist \
   --yes
 

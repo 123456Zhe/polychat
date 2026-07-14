@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 import os
 from pathlib import Path
 import re
+import sys
 
 import flet as ft
 
@@ -20,6 +21,15 @@ PAPER = "#F6F7FB"
 ACCENT = "#635BFF"
 MUTED = "#7D879A"
 INLINE_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+
+
+def bundled_path(relative_path: str) -> str:
+    """Locate an asset in source runs and in the PyInstaller bundle."""
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+    return str(base / relative_path)
+
+
+APP_ICON = bundled_path("assets/polychat-icon.png")
 
 
 def flet_markdown(source: str) -> str:
@@ -158,6 +168,7 @@ class PolyChatApp:
 
     def configure_page(self):
         self.page.title = "PolyChat"
+        self.page.window.icon = APP_ICON
         self.page.theme_mode = ft.ThemeMode.LIGHT
         self.page.bgcolor = PAPER
         self.page.padding = 0
@@ -189,7 +200,7 @@ class PolyChatApp:
             content=ft.Column(
                 tight=True,
                 controls=[
-                    ft.Row([ft.Container(ft.Text("P", color="white", weight=ft.FontWeight.W_700, size=22), bgcolor=ACCENT, border_radius=12, width=48, height=48, alignment=ft.Alignment.CENTER), ft.Column([ft.Text("PolyChat", size=24, weight=ft.FontWeight.W_700), ft.Text("连接你的聊天室", color=MUTED, size=12)], spacing=1)], spacing=12),
+                    ft.Row([ft.Image(src=APP_ICON, width=48, height=48, border_radius=12), ft.Column([ft.Text("PolyChat", size=24, weight=ft.FontWeight.W_700), ft.Text("连接你的聊天室", color=MUTED, size=12)], spacing=1)], spacing=12),
                     ft.Divider(height=26, color=ft.Colors.TRANSPARENT),
                     server,
                     username,
