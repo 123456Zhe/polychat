@@ -192,9 +192,10 @@ button { cursor: pointer; }
 .file-chip button { margin-left: auto; border: 0; color: #7f8794; background: transparent; }
 .emoji-trigger { font-size: 19px; }
 .emoji-picker { width: min(900px, 100%); margin: 7px auto 0; padding: 8px; border: 1px solid var(--warm-200); border-radius: 12px; background: var(--white); box-shadow: var(--shadow); }
-.emoji-picker nav { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 7px; }
-.emoji-picker nav button { flex: none; padding: 4px 7px; border: 0; border-radius: 7px; color: #687386; background: transparent; font-size: 11px; }
-.emoji-picker nav button.active { color: #fff; background: var(--blue-700); }
+.emoji-picker nav { display: flex; flex-wrap: wrap; gap: 4px; overflow: hidden; padding: 0 0 7px; scrollbar-width: none; }
+.emoji-picker nav::-webkit-scrollbar { display: none; }
+.emoji-picker nav button { display: inline-flex; grid-template-columns: none; width: auto; flex: none; align-items: center; padding: 4px 7px; border: 0; border-radius: 7px; color: #687386; font-size: 11px; text-align: center; background: transparent; box-shadow: none; }
+.emoji-picker nav button.active { color: #fff; background: var(--blue-700); box-shadow: none; }
 .emoji-picker > div { display: flex; flex-wrap: wrap; gap: 3px; max-height: 128px; overflow: auto; }
 .emoji-picker > div button { width: 32px; height: 32px; border: 0; border-radius: 7px; background: transparent; font-size: 20px; }
 .emoji-picker > div button:hover { background: var(--warm-200); }
