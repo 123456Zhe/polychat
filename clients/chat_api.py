@@ -110,6 +110,21 @@ class ChatAPI:
         except urllib.error.URLError as exc:
             raise ApiError(f"无法连接服务器：{exc.reason}") from exc
 
+    def request_bytes(self, path: str, timeout: int = 30) -> bytes:
+        headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
+        req = urllib.request.Request(self.base_url + path, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return response.read()
+        except urllib.error.HTTPError as exc:
+            try:
+                message = json.loads(exc.read()).get("error", str(exc))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                message = str(exc)
+            raise ApiError(message) from exc
+        except urllib.error.URLError as exc:
+            raise ApiError(f"无法连接服务器：{exc.reason}") from exc
+
     def login(self, username: str, password: str, register: bool = False):
         result = self.request("POST", "/api/register" if register else "/api/login", {"username": username, "password": password})
         self.token = result["token"]
@@ -143,7 +158,17 @@ class ChatAPI:
 
     def upload_avatar(self, path: str):
         size = os.path.getsize(path)
-        mime_type = mimetypes.guess_type(path)[0] or ""
+        with open(path, "rb") as source:
+            header = source.read(16)
+        signatures = (
+            (b"\x89PNG\r\n\x1a\n", "image/png"),
+            (b"\xff\xd8\xff", "image/jpeg"),
+            (b"GIF87a", "image/gif"),
+            (b"GIF89a", "image/gif"),
+        )
+        mime_type = next((mime for signature, mime in signatures if header.startswith(signature)), "")
+        if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+            mime_type = "image/webp"
         if mime_type not in ("image/png", "image/jpeg", "image/webp", "image/gif"):
             raise ApiError("只支持 PNG、JPEG、WebP 或 GIF 图片")
         if not 0 < size <= 2 * 1024 * 1024:
@@ -152,12 +177,20 @@ class ChatAPI:
             encoded = base64.b64encode(source.read()).decode("ascii")
         return self.request("POST", "/api/me/avatar", {"type": mime_type, "data": encoded}, timeout=30)["user"]
 
+    def avatar(self, user_id: int, version=None):
+        query = urllib.parse.urlencode({"v": version}) if version is not None else ""
+        return self.request_bytes(f"/api/users/{int(user_id)}/avatar" + (f"?{query}" if query else ""))
+
     def download(self, attachment_id: int, destination: str):
-        headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
-        req = urllib.request.Request(f"{self.base_url}/api/files/{attachment_id}", headers=headers)
+        target = Path(destination)
+        partial = target.with_name(target.name + ".part")
         try:
-            with urllib.request.urlopen(req, timeout=60) as response, open(destination, "wb") as target:
-                target.write(response.read())
-        except (urllib.error.HTTPError, urllib.error.URLError, OSError) as exc:
+            partial.write_bytes(self.request_bytes(f"/api/files/{int(attachment_id)}", timeout=60))
+            partial.replace(target)
+        except (ApiError, OSError, ValueError) as exc:
+            try:
+                partial.unlink(missing_ok=True)
+            except OSError:
+                pass
             raise ApiError(f"下载失败：{exc}") from exc
-        return destination
+        return str(target)

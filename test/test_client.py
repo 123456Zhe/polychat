@@ -1,7 +1,10 @@
 import unittest
 from datetime import timedelta, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import Mock
 
-from clients.chat_api import ApiError, DEFAULT_TIMEZONE, format_server_time, local_timezone, normalize_server
+from clients.chat_api import ApiError, ChatAPI, DEFAULT_TIMEZONE, format_server_time, local_timezone, normalize_server
 
 
 class ServerAddressTests(unittest.TestCase):
@@ -36,6 +39,41 @@ class TimezoneTests(unittest.TestCase):
     def test_local_timezone_is_detected_and_default_is_utc_plus_eight(self):
         self.assertIsNotNone(local_timezone())
         self.assertEqual(DEFAULT_TIMEZONE.utcoffset(None), timedelta(hours=8))
+
+
+class FileAndAvatarTests(unittest.TestCase):
+    def test_avatar_type_is_detected_from_content_not_filename(self):
+        with TemporaryDirectory() as directory:
+            avatar = Path(directory) / "avatar.unknown"
+            avatar.write_bytes(b"\x89PNG\r\n\x1a\n" + b"test image data")
+            api = ChatAPI()
+            api.request = Mock(return_value={"user": {"id": 1, "username": "tester"}})
+
+            api.upload_avatar(str(avatar))
+
+            payload = api.request.call_args.args[2]
+            self.assertEqual(payload["type"], "image/png")
+
+    def test_download_is_committed_atomically(self):
+        with TemporaryDirectory() as directory:
+            target = Path(directory) / "report.txt"
+            api = ChatAPI()
+            api.request_bytes = Mock(return_value=b"complete file")
+
+            self.assertEqual(api.download(7, str(target)), str(target))
+            self.assertEqual(target.read_bytes(), b"complete file")
+            self.assertFalse(Path(str(target) + ".part").exists())
+
+    def test_failed_download_removes_partial_file(self):
+        with TemporaryDirectory() as directory:
+            target = Path(directory) / "report.txt"
+            api = ChatAPI()
+            api.request_bytes = Mock(side_effect=ApiError("network error"))
+
+            with self.assertRaises(ApiError):
+                api.download(7, str(target))
+            self.assertFalse(target.exists())
+            self.assertFalse(Path(str(target) + ".part").exists())
 
 
 if __name__ == "__main__":

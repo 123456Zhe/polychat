@@ -115,12 +115,13 @@ python3 -m py_compile clients/chat_api.py clients/gui.py clients/tui.py
 Linux 下使用 Nuitka 生成包含 Python、Tk 和客户端代码的单文件程序：
 
 ```bash
+python3 -m pip install -r requirements-gui.txt
 chmod +x build-gui.sh
 ./build-gui.sh
 ./dist/PolyChat-GUI --server http://127.0.0.1:3000
 ```
 
-构建需要 Nuitka、GCC、`patchelf` 和 Tkinter。在 Ubuntu/Pop!_OS 上可安装 `python3-tk`。生成的 Linux x86_64 文件不能直接用于 Windows 或 macOS；其他系统需在对应系统上重新构建。
+GUI 使用 Pillow 显示头像，并使用 Matplotlib MathText 在本地渲染 LaTeX 公式；附件消息可直接点击并选择保存位置。构建还需要 GCC、`patchelf` 和 Tkinter。在 Ubuntu/Pop!_OS 上可安装 `python3-tk`。生成的 Linux x86_64 文件不能直接用于 Windows 或 macOS；其他系统需在对应系统上重新构建。
 
 ## Docker Compose 部署
 
