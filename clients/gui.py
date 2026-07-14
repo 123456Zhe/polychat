@@ -19,6 +19,7 @@ NAVY_2 = "#182236"
 PAPER = "#F6F7FB"
 ACCENT = "#635BFF"
 MUTED = "#7D879A"
+INLINE_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
 
 
 def flet_markdown(source: str) -> str:
@@ -60,6 +61,9 @@ class ChatState:
     last_id: int = 0
     avatar_cache: dict[tuple[int, int], bytes] = field(default_factory=dict)
     avatar_loading: set[tuple[int, int]] = field(default_factory=set)
+    image_cache: dict[int, bytes] = field(default_factory=dict)
+    image_loading: set[int] = field(default_factory=set)
+    image_failed: set[int] = field(default_factory=set)
     active: bool = True
 
 
@@ -114,6 +118,40 @@ class PolyChatApp:
             pass
         finally:
             self.state.avatar_loading.discard(key)
+
+    def message_image(self, message: dict) -> ft.Control:
+        """Return an inline image, loading it with the chat authorization token."""
+        attachment_id = message["attachment_id"]
+        if attachment_id in self.state.image_cache:
+            return ft.Container(
+                content=ft.Row(
+                    [ft.Image(src=self.state.image_cache[attachment_id], fit=ft.BoxFit.NONE, border_radius=10)],
+                    scroll=ft.ScrollMode.AUTO,
+                ),
+                border=ft.Border.all(1, "#E1E4EC"),
+                border_radius=11,
+                clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+            )
+        if attachment_id in self.state.image_failed:
+            return ft.Text("图片加载失败", size=12, color="#B42318")
+        if attachment_id not in self.state.image_loading:
+            self.state.image_loading.add(attachment_id)
+            self.page.run_task(self.load_message_image, attachment_id)
+        return ft.Row([ft.ProgressRing(width=16, height=16, stroke_width=2), ft.Text("正在加载图片…", size=12, color=MUTED)], spacing=8)
+
+    async def load_message_image(self, attachment_id: int):
+        try:
+            self.state.image_cache[attachment_id] = await self.call(
+                self.state.api.request_bytes, f"/api/files/{attachment_id}?inline=1", 60
+            )
+            self.render_messages()
+            self.page.update()
+        except ApiError:
+            self.state.image_failed.add(attachment_id)
+            self.render_messages()
+            self.page.update()
+        finally:
+            self.state.image_loading.discard(attachment_id)
 
     def show_toast(self, text: str, error: bool = False):
         self.page.show_dialog(ft.SnackBar(content=ft.Text(text), bgcolor="#B42318" if error else "#172033", duration=3000))
@@ -310,14 +348,23 @@ class PolyChatApp:
         if message.get("attachment_id"):
             size = message.get("attachment_size", 0)
             readable = f"{size / 1024 / 1024:.1f} MB" if size >= 1024 * 1024 else (f"{size / 1024:.1f} KB" if size >= 1024 else f"{size} B")
-            card_controls.append(ft.Container(
-                ink=True,
-                on_click=lambda _, message=message: self.page.run_task(self.download_file, message),
-                bgcolor="#EEEDFF",
-                border_radius=10,
-                padding=10,
-                content=ft.Row([ft.Icon(ft.Icons.ATTACH_FILE, color=ACCENT), ft.Column([ft.Text(message["attachment_name"], size=12, weight=ft.FontWeight.W_600), ft.Text(f"{readable} · 点击下载", size=10, color=MUTED)], spacing=1)], spacing=8),
-            ))
+            if message.get("attachment_type") in INLINE_IMAGE_TYPES:
+                card_controls.extend([
+                    self.message_image(message),
+                    ft.Row([
+                        ft.Text(f"{message['attachment_name']} · {readable}", size=10, color=MUTED, expand=True),
+                        ft.TextButton("下载原图", on_click=lambda _, message=message: self.page.run_task(self.download_file, message)),
+                    ], spacing=4),
+                ])
+            else:
+                card_controls.append(ft.Container(
+                    ink=True,
+                    on_click=lambda _, message=message: self.page.run_task(self.download_file, message),
+                    bgcolor="#EEEDFF",
+                    border_radius=10,
+                    padding=10,
+                    content=ft.Row([ft.Icon(ft.Icons.ATTACH_FILE, color=ACCENT), ft.Column([ft.Text(message["attachment_name"], size=12, weight=ft.FontWeight.W_600), ft.Text(f"{readable} · 点击下载", size=10, color=MUTED)], spacing=1)], spacing=8),
+                ))
         return ft.Row([
             self.avatar(message, 19),
             ft.Container(
