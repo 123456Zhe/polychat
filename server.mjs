@@ -146,6 +146,13 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
   INSERT OR IGNORE INTO rooms(id, name) VALUES (1, '大厅');
+  CREATE TABLE IF NOT EXISTS banned_ips (
+    ip_address TEXT PRIMARY KEY,
+    banned_until INTEGER,
+    reason TEXT,
+    created_by INTEGER REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 if (!db.prepare('PRAGMA table_info(messages)').all().some(column => column.name === 'attachment_id')) {
   db.exec('ALTER TABLE messages ADD COLUMN attachment_id INTEGER REFERENCES attachments(id)');
@@ -167,6 +174,7 @@ if (!userColumns.has('avatar_mime')) db.exec('ALTER TABLE users ADD COLUMN avata
 if (!userColumns.has('avatar_updated_at')) db.exec('ALTER TABLE users ADD COLUMN avatar_updated_at INTEGER');
 if (!userColumns.has('banned_until')) db.exec('ALTER TABLE users ADD COLUMN banned_until INTEGER');
 if (!userColumns.has('muted_until')) db.exec('ALTER TABLE users ADD COLUMN muted_until INTEGER');
+if (!userColumns.has('last_ip')) db.exec('ALTER TABLE users ADD COLUMN last_ip TEXT');
 if (db.prepare('SELECT COUNT(*) AS count FROM users WHERE is_admin = 1').get().count === 0) {
   db.prepare('UPDATE users SET is_admin = 1 WHERE id = (SELECT id FROM users ORDER BY id LIMIT 1)').run();
 }
@@ -310,6 +318,20 @@ function logAudit(adminId, action, targetUserId = null, details = null) {
   db.prepare('INSERT INTO audit_logs(admin_id, action, target_user_id, details) VALUES (?, ?, ?, ?)').run(adminId, action, targetUserId, details);
 }
 
+function getClientIp(req) {
+  return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+}
+
+function isIpBanned(ip) {
+  const record = db.prepare('SELECT banned_until FROM banned_ips WHERE ip_address = ?').get(ip);
+  if (!record) return false;
+  if (record.banned_until && record.banned_until <= Date.now()) {
+    db.prepare('DELETE FROM banned_ips WHERE ip_address = ?').run(ip);
+    return false;
+  }
+  return true;
+}
+
 async function readBody(req, maxLength = 70_000) {
   let raw = '';
   for await (const chunk of req) {
@@ -425,6 +447,8 @@ async function api(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/register') {
+    const ip = getClientIp(req);
+    if (isIpBanned(ip)) return json(res, 403, { error: '你的 IP 已被封禁' });
     const { username = '', password = '' } = await readBody(req);
     const name = String(username).trim();
     if (!/^[\p{L}\p{N}_-]{2,24}$/u.test(name)) return json(res, 400, { error: '用户名需为 2–24 位字母、数字、下划线或连字符' });
@@ -441,9 +465,10 @@ async function api(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/login') {
-    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+    const ip = getClientIp(req);
     const attempts = getLoginAttempts(ip);
     if (attempts >= LOGIN_RATE_LIMIT_MAX) return json(res, 429, { error: `登录尝试过多，请 ${LOGIN_RATE_LIMIT_WINDOW / 60000} 分钟后再试` });
+    if (isIpBanned(ip)) return json(res, 403, { error: '你的 IP 已被封禁' });
     const { username = '', password = '' } = await readBody(req);
     const user = db.prepare('SELECT id, username, password_hash, is_admin, avatar_updated_at, banned_until FROM users WHERE username = ?').get(String(username).trim());
     if (!user || !checkPassword(String(password), user.password_hash)) {
@@ -452,6 +477,7 @@ async function api(req, res, url) {
     }
     if (isUserBanned(user)) return json(res, 403, { error: '账号已被封禁', banned_until: user.banned_until });
     recordLoginAttempt(ip, String(username).trim(), true);
+    db.prepare('UPDATE users SET last_ip = ? WHERE id = ?').run(ip, user.id);
     const token = createSession(user.id);
     return json(res, 200, { token, user: publicUser(user) }, { 'set-cookie': cookie(token) });
   }
@@ -526,7 +552,7 @@ async function api(req, res, url) {
       messages: db.prepare('SELECT COUNT(*) AS count FROM messages').get().count,
       files: db.prepare('SELECT COUNT(*) AS count FROM attachments').get().count,
     };
-    const users = db.prepare(`SELECT users.id, users.username, users.is_admin, users.created_at, users.banned_until, users.muted_until,
+    const users = db.prepare(`SELECT users.id, users.username, users.is_admin, users.created_at, users.banned_until, users.muted_until, users.last_ip,
       (SELECT COUNT(*) FROM messages WHERE messages.user_id = users.id) AS message_count
       FROM users ORDER BY users.id`).all();
     return json(res, 200, { stats, users });
@@ -607,6 +633,33 @@ async function api(req, res, url) {
       ORDER BY audit_logs.id DESC LIMIT 100
     `).all();
     return json(res, 200, { logs });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/banned-ips') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const ips = db.prepare(`SELECT banned_ips.*, admins.username AS admin_name
+      FROM banned_ips LEFT JOIN users AS admins ON admins.id = banned_ips.created_by
+      ORDER BY banned_ips.created_at DESC`).all();
+    return json(res, 200, { ips });
+  }
+
+  if (req.method === 'PUT' && url.pathname === '/api/admin/banned-ips/ban') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const { ip, duration_hours, reason } = await readBody(req);
+    if (!ip || typeof ip !== 'string') return json(res, 400, { error: '需要指定 IP 地址' });
+    const bannedUntil = duration_hours ? Date.now() + Number(duration_hours) * 3600_000 : null;
+    db.prepare('INSERT OR REPLACE INTO banned_ips(ip_address, banned_until, reason, created_by) VALUES (?, ?, ?, ?)').run(ip, bannedUntil, reason || null, admin.id);
+    logAudit(admin.id, 'ban_ip', null, `IP ${ip}${duration_hours ? ` 封禁 ${duration_hours} 小时` : ' 永久封禁'}${reason ? `：${reason}` : ''}`);
+    return json(res, 200, { ok: true });
+  }
+
+  if (req.method === 'PUT' && url.pathname === '/api/admin/banned-ips/unban') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const { ip } = await readBody(req);
+    if (!ip || typeof ip !== 'string') return json(res, 400, { error: '需要指定 IP 地址' });
+    db.prepare('DELETE FROM banned_ips WHERE ip_address = ?').run(ip);
+    logAudit(admin.id, 'unban_ip', null, `IP ${ip} 已解封`);
+    return json(res, 200, { ok: true });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/me/avatar') {
@@ -1137,6 +1190,11 @@ server.on('upgrade', (req, socket, head) => {
     return socket.destroy();
   }
   if (isUserBanned(user)) {
+    socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+    return socket.destroy();
+  }
+  const wsIp = getClientIp(req);
+  if (isIpBanned(wsIp)) {
     socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
     return socket.destroy();
   }

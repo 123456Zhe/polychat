@@ -344,6 +344,16 @@ button { cursor: pointer; }
 }
 .toast { position: fixed; right: 20px; bottom: 20px; max-width: min(380px, calc(100% - 40px)); padding: 11px 15px; border: 1px solid rgba(255,255,255,.15); border-radius: 11px; color: #fff; background: var(--slate-950); box-shadow: var(--shadow); z-index: 20; }
 
+.ip-badge { color: #8b94a2; font-size: 10px; font-family: monospace; }
+.ban-ip-form { display: flex; gap: 8px; margin: 10px 0; }
+.ban-ip-form .modal-input { flex: 1; }
+.ban-ip-form select { padding: 7px 10px; border: 1px solid var(--warm-300); border-radius: 8px; color: #586477; background: var(--white); font: inherit; font-size: 12px; }
+.ban-ip-form .primary { border: 0; border-radius: 9px; color: #fff; padding: 0 14px; background: linear-gradient(135deg, var(--blue-700), var(--violet-700)); box-shadow: 0 6px 16px rgba(73,83,119,.18); }
+.banned-ip { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--warm-200); font-size: 12px; }
+.banned-ip .code-value { font-family: monospace; font-weight: 600; color: var(--blue-700); }
+.banned-ip small { color: #8b94a2; }
+.banned-ip button { margin-left: auto; padding: 3px 8px; border: 1px solid var(--warm-300); border-radius: 6px; color: #c2413a; font-size: 10px; background: var(--white); }
+
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 8px; background: #aab1ba; background-clip: padding-box; }
 
