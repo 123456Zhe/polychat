@@ -38,13 +38,18 @@ jobs:
         run: |
           npm install
           npm install -D typescript
-          npx cap add android || true
+          npx cap add android
           npx cap sync android
+
+      - name: Generate Gradle Wrapper
+        working-directory: android-app/android
+        run: |
+          gradle wrapper --gradle-version 8.4
+          chmod +x gradlew
 
       - name: Build APK
         working-directory: android-app/android
         run: |
-          chmod +x gradlew
           ./gradlew assembleDebug
 
       - name: Upload APK artifact

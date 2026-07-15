@@ -44,8 +44,14 @@ jobs:
         run: |
           npm install
           npm install -D typescript
-          npx cap add android || true
+          npx cap add android
           npx cap sync android
+
+      - name: Generate Gradle Wrapper
+        working-directory: android-app/android
+        run: |
+          gradle wrapper --gradle-version 8.4
+          chmod +x gradlew
 
       - name: Update version
         working-directory: android-app/android
@@ -56,7 +62,6 @@ jobs:
       - name: Build Signed APK
         working-directory: android-app/android
         run: |
-          chmod +x gradlew
           ./gradlew assembleRelease \
             -Pandroid.injected.signing.store.file=polychat.keystore \
             -Pandroid.injected.signing.store.password=${{ secrets.ANDROID_KEYSTORE_PASSWORD }} \
