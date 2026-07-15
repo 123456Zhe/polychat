@@ -43,6 +43,7 @@ jobs:
         working-directory: android-app
         run: |
           npm install
+          npm install -D typescript
           npx cap add android || true
           npx cap sync android
 
