@@ -115,7 +115,7 @@ button { cursor: pointer; }
 .chat > aside > footer small { margin-top: 2px; color: #a9d2be; font-size: 10px; font-weight: 500; }
 .logout { padding: 7px; border: 0; color: #bdc9d5; font-size: 18px; background: transparent; }
 
-.conversation { min-width: 0; min-height: 0; height: 100dvh; display: grid; grid-template-rows: 72px minmax(0, 1fr) auto; overflow: hidden; }
+.conversation { min-width: 0; min-height: 0; height: 100dvh; display: grid; grid-template-rows: 72px auto minmax(0, 1fr) auto; overflow: hidden; }
 .topbar { display: flex; align-items: center; gap: 9px; padding: 0 23px; border-bottom: 1px solid var(--warm-200); background: rgba(255,255,255,.85); backdrop-filter: blur(16px); z-index: 1; }
 .topbar > div { min-width: 0; margin-right: auto; }
 .topbar h2 { margin: 0; overflow: hidden; font-size: 19px; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
@@ -128,23 +128,24 @@ button { cursor: pointer; }
 .notification.blocked { color: #985d64; background: #f5ebeb; }
 .notification em { font-size: 11px; font-style: normal; }
 
-.announcement-banner { position: sticky; top: 0; z-index: 3; margin: 0 clamp(18px, 4vw, 58px); padding: 14px 16px; border-radius: 12px; background: linear-gradient(135deg, #fef3c7, #fffbeb); border: 1px solid #fde68a; }
-.announcement-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; color: #92400e; }
-.announcement-icon { font-size: 16px; }
-.announcement-header small { color: #b45309; margin-left: 4px; }
-.announcement-actions { margin-left: auto; display: flex; gap: 6px; }
-.announcement-actions button { padding: 3px 8px; border: 1px solid #d97706; border-radius: 6px; color: #92400e; font-size: 10px; background: #fffbeb; }
-.announcement-content { color: #451a03; font-size: 13px; line-height: 1.6; }
-.pinned-sticky { position: sticky; top: 0; z-index: 2; margin: 0 clamp(18px, 4vw, 58px); max-height: 40vh; overflow-y: auto; border-bottom: 1px solid var(--warm-200); background: var(--warm-100); border-radius: 12px; }
-.pinned-sticky-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; cursor: pointer; font-size: 12px; color: #586477; user-select: none; }
-.pinned-sticky-header:hover { background: var(--warm-200); }
+.pinned-area { overflow: hidden; border-bottom: 1px solid var(--warm-200); background: var(--warm-100); }
+.announcement-bar { margin: 0 clamp(18px, 4vw, 58px); border-bottom: 1px solid #fde68a; }
+.announcement-bar-header, .pinned-bar-header { display: flex; align-items: center; gap: 8px; padding: 9px 14px; cursor: pointer; font-size: 12px; color: #586477; user-select: none; }
+.announcement-bar-header { color: #92400e; background: linear-gradient(135deg, #fef3c7, #fffbeb); }
+.announcement-bar-header:hover { background: #fef3c7; }
+.announcement-bar-header small { color: #b45309; }
+.announcement-bar-actions { margin-left: auto; display: flex; gap: 6px; }
+.announcement-bar-actions button { padding: 2px 7px; border: 1px solid #d97706; border-radius: 5px; color: #92400e; font-size: 10px; background: #fffbeb; }
+.announcement-bar-content { padding: 0 14px 10px; color: #451a03; font-size: 13px; line-height: 1.6; background: linear-gradient(135deg, #fef3c7, #fffbeb); }
+.pinned-bar { margin: 0 clamp(18px, 4vw, 58px); }
+.pinned-bar-header:hover { background: var(--warm-200); }
 .pinned-icon { font-size: 14px; }
 .pinned-toggle { margin-left: auto; font-size: 11px; color: #8b94a2; }
-.pinned-sticky-list { padding: 0 14px 10px; }
-.pinned-sticky-item { padding: 8px 0; border-top: 1px solid var(--warm-200); }
-.pinned-sticky-meta { display: flex; align-items: center; gap: 8px; font-size: 11px; }
-.pinned-sticky-meta strong { color: var(--slate-900); }
-.pinned-sticky-meta small { color: #8b94a2; }
+.pinned-bar-list { padding: 0 14px 10px; }
+.pinned-bar-item { padding: 8px 0; border-top: 1px solid var(--warm-200); }
+.pinned-bar-meta { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.pinned-bar-meta strong { color: var(--slate-900); }
+.pinned-bar-meta small { color: #8b94a2; }
 .pinned-unpin { margin-left: auto; padding: 2px 8px; border: 1px solid var(--warm-300); border-radius: 6px; color: #697589; font-size: 10px; background: var(--white); }
 .messages-scroll { min-width: 0; min-height: 0; overflow: auto; padding: 25px clamp(18px, 4vw, 58px); scroll-behavior: smooth; }
 .history-hint, .history-loading { width: min(900px, 100%); margin: 0 auto 12px; color: #8b93a0; font-size: 11px; text-align: center; }
