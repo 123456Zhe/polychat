@@ -145,6 +145,11 @@ db.exec(`
     expires_at INTEGER,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS registration_attempts (
+    id INTEGER PRIMARY KEY,
+    ip_address TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
   INSERT OR IGNORE INTO rooms(id, name) VALUES (1, '大厅');
   CREATE TABLE IF NOT EXISTS banned_ips (
     ip_address TEXT PRIMARY KEY,
@@ -286,6 +291,8 @@ function createSession(userId) {
 
 const LOGIN_RATE_LIMIT_WINDOW = 15 * 60 * 1000;
 const LOGIN_RATE_LIMIT_MAX = 5;
+const REGISTER_RATE_WINDOW = 60 * 60 * 1000; // 1 小时
+const REGISTER_RATE_MAX = 5; // 每小时最多注册 5 个账号
 
 function getLoginAttempts(ip) {
   const since = new Date(Date.now() - LOGIN_RATE_LIMIT_WINDOW).toISOString();
@@ -346,6 +353,7 @@ function requireUser(req, res) {
   const user = currentUser(req);
   if (!user) { json(res, 401, { error: '请先登录' }); return null; }
   if (isUserBanned(user)) { json(res, 403, { error: '账号已被封禁', banned_until: user.banned_until }); return null; }
+  if (!user.is_admin && isIpBanned(getClientIp(req))) { json(res, 403, { error: '你的 IP 已被封禁' }); return null; }
   return user;
 }
 
@@ -453,9 +461,17 @@ async function api(req, res, url) {
     const name = String(username).trim();
     if (!/^[\p{L}\p{N}_-]{2,24}$/u.test(name)) return json(res, 400, { error: '用户名需为 2–24 位字母、数字、下划线或连字符' });
     if (String(password).length < 8 || String(password).length > 128) return json(res, 400, { error: '密码需为 8–128 位' });
+    const regSince = new Date(Date.now() - REGISTER_RATE_WINDOW).toISOString();
+    const recentRegs = db.prepare('SELECT COUNT(*) AS count FROM registration_attempts WHERE ip_address = ? AND created_at > ?').get(ip, regSince).count;
+    if (recentRegs >= REGISTER_RATE_MAX) {
+      db.prepare('INSERT OR REPLACE INTO banned_ips(ip_address, banned_until, reason) VALUES (?, NULL, ?)').run(ip, '自动封禁：注册频率过高');
+      logAudit(0, 'auto_ban_ip', null, `IP ${ip} 因 ${REGISTER_RATE_WINDOW / 60000} 分钟内注册 ${recentRegs + 1} 个账号被自动封禁`);
+      return json(res, 429, { error: '注册过于频繁，该 IP 已被封禁' });
+    }
     try {
       const firstAccount = db.prepare('SELECT COUNT(*) AS count FROM users').get().count === 0;
       const result = db.prepare('INSERT INTO users(username, password_hash, is_admin, last_ip) VALUES (?, ?, ?, ?)').run(name, hashPassword(String(password)), firstAccount ? 1 : 0, ip);
+      db.prepare('INSERT INTO registration_attempts(ip_address) VALUES (?)').run(ip);
       const token = createSession(Number(result.lastInsertRowid));
       return json(res, 201, { token, user: publicUser({ id: Number(result.lastInsertRowid), username: name, is_admin: firstAccount }) }, { 'set-cookie': cookie(token) });
     } catch (error) {
@@ -468,14 +484,13 @@ async function api(req, res, url) {
     const ip = getClientIp(req);
     const attempts = getLoginAttempts(ip);
     if (attempts >= LOGIN_RATE_LIMIT_MAX) return json(res, 429, { error: `登录尝试过多，请 ${LOGIN_RATE_LIMIT_WINDOW / 60000} 分钟后再试` });
-    if (isIpBanned(ip)) return json(res, 403, { error: '你的 IP 已被封禁' });
     const { username = '', password = '' } = await readBody(req);
     const user = db.prepare('SELECT id, username, password_hash, is_admin, avatar_updated_at, banned_until FROM users WHERE username = ?').get(String(username).trim());
     if (!user || !checkPassword(String(password), user.password_hash)) {
       recordLoginAttempt(ip, String(username).trim(), false);
       return json(res, 401, { error: '用户名或密码错误' });
     }
-    if (isUserBanned(user)) return json(res, 403, { error: '账号已被封禁', banned_until: user.banned_until });
+    if (!user.is_admin && isIpBanned(ip)) return json(res, 403, { error: '你的 IP 已被封禁' });
     recordLoginAttempt(ip, String(username).trim(), true);
     db.prepare('UPDATE users SET last_ip = ? WHERE id = ?').run(ip, user.id);
     const token = createSession(user.id);
@@ -1194,7 +1209,7 @@ server.on('upgrade', (req, socket, head) => {
     return socket.destroy();
   }
   const wsIp = getClientIp(req);
-  if (isIpBanned(wsIp)) {
+  if (!user.is_admin && isIpBanned(wsIp)) {
     socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
     return socket.destroy();
   }
