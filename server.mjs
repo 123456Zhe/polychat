@@ -455,7 +455,7 @@ async function api(req, res, url) {
     if (String(password).length < 8 || String(password).length > 128) return json(res, 400, { error: '密码需为 8–128 位' });
     try {
       const firstAccount = db.prepare('SELECT COUNT(*) AS count FROM users').get().count === 0;
-      const result = db.prepare('INSERT INTO users(username, password_hash, is_admin) VALUES (?, ?, ?)').run(name, hashPassword(String(password)), firstAccount ? 1 : 0);
+      const result = db.prepare('INSERT INTO users(username, password_hash, is_admin, last_ip) VALUES (?, ?, ?, ?)').run(name, hashPassword(String(password)), firstAccount ? 1 : 0, ip);
       const token = createSession(Number(result.lastInsertRowid));
       return json(res, 201, { token, user: publicUser({ id: Number(result.lastInsertRowid), username: name, is_admin: firstAccount }) }, { 'set-cookie': cookie(token) });
     } catch (error) {
