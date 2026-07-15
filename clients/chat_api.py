@@ -239,3 +239,23 @@ class ChatAPI:
 
     def health(self):
         return self.request("GET", "/api/health")
+
+    def announcement(self, room_id: int, content: str = None):
+        if content is None:
+            return self.request("DELETE", f"/api/rooms/{int(room_id)}/announcement")
+        return self.request("PUT", f"/api/rooms/{int(room_id)}/announcement", {"content": content})
+
+    def invite_codes(self, room_id: int):
+        return self.request("GET", f"/api/rooms/{int(room_id)}/invite-codes")["codes"]
+
+    def create_invite_code(self, room_id: int, max_uses=None, duration_hours=None):
+        return self.request("POST", f"/api/rooms/{int(room_id)}/invite-codes", {"max_uses": max_uses, "duration_hours": duration_hours})["code"]
+
+    def delete_invite_code(self, room_id: int, code_id: int):
+        return self.request("DELETE", f"/api/rooms/{int(room_id)}/invite-codes/{int(code_id)}")
+
+    def join_by_code(self, code: str):
+        return self.request("POST", f"/api/invite/{code}")
+
+    def search_users(self, query: str):
+        return self.request("GET", "/api/users/search?" + urllib.parse.urlencode({"q": query}))["users"]

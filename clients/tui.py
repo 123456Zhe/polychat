@@ -126,7 +126,7 @@ class TUI:
 
     def command(self, value):
         if value == "/quit": return False
-        if value == "/help": self.status = "/rooms /room 编号 /newprivate 名称 /rename 名称 /delete-room /invite 用户 [admin] /kick 用户名 /reply /react /edit /retract /search /sendfile /getfile /avatar /export /delete-account /quit"; return True
+        if value == "/help": self.status = "/rooms /room 编号 /newprivate 名称 /rename 名称 /delete-room /invite 用户 [admin] /kick 用户名 /reply /react /edit /retract /search /sendfile /getfile /avatar /announcement /invite-code /export /delete-account /quit"; return True
         if value == "/rooms": self.status = "  ".join(f"{i + 1}:{r['name']}" for i, r in enumerate(self.rooms)); return True
         if value.startswith("/room "):
             try:
@@ -218,6 +218,30 @@ class TUI:
                 self.draw()
                 time.sleep(2)
                 return False
+            except ApiError as exc: self.status = str(exc)
+            return True
+        if value.startswith("/announcement"):
+            parts = value.split(maxsplit=1)
+            if len(parts) < 2:
+                try: self.api.announcement(self.room["id"], None); self.status = "公告已删除"
+                except ApiError as exc: self.status = str(exc)
+            else:
+                try: self.api.announcement(self.room["id"], parts[1].strip()); self.status = "公告已更新"
+                except ApiError as exc: self.status = str(exc)
+            return True
+        if value == "/invite-code":
+            try:
+                codes = self.api.invite_codes(self.room["id"])
+                if codes:
+                    self.status = "  ".join(f"{c['code']}({c['use_count']}次)" for c in codes)
+                else:
+                    self.status = "暂无邀请码"
+            except ApiError as exc: self.status = str(exc)
+            return True
+        if value.startswith("/invite-code "):
+            try:
+                code = self.api.create_invite_code(self.room["id"])
+                self.status = f"邀请码: {code['code']}"
             except ApiError as exc: self.status = str(exc)
             return True
         if value == "/clear": self.messages = []; self.scroll = 0; self.status = "屏幕已清空"; return True

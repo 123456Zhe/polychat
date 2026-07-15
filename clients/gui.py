@@ -260,7 +260,7 @@ class PolyChatApp:
                 ft.Column([self.room_name, ft.Text("消息自动同步 · 支持 Markdown 与 LaTeX", size=11, color=MUTED)], spacing=2),
                 ft.Container(expand=True),
                 ft.IconButton(ft.Icons.SEARCH, tooltip="搜索消息", on_click=self.open_search),
-                ft.IconButton(ft.Icons.PEOPLE_OUTLINE, tooltip="邀请私有房间成员", on_click=self.open_members),
+                ft.IconButton(ft.Icons.PEOPLE_OUTLINE, tooltip="邀请私有房间成员", on_click=lambda _: self.page.run_task(self.open_members, _)),
                 ft.IconButton(ft.Icons.SETTINGS_OUTLINED, tooltip="房间设置", on_click=self.open_room_settings),
                 ft.Container(ft.Row([ft.Icon(ft.Icons.CIRCLE, size=9, color="#22C55E"), ft.Text("已连接", size=12, color="#15803D", weight=ft.FontWeight.W_600)], spacing=6), bgcolor="#ECFDF3", padding=ft.Padding(11, 7, 11, 7), border_radius=16),
             ]),
@@ -414,6 +414,17 @@ class PolyChatApp:
     def render_messages(self):
         self.room_name.value = f"# {self.state.room['name']}" if self.state.room else "# 大厅"
         self.messages_view.controls.clear()
+        if self.state.room and self.state.room.get("announcement"):
+            announcement = self.state.room["announcement"]
+            announcer = self.state.room.get("announcement_username", "管理员")
+            self.messages_view.controls.append(ft.Container(
+                bgcolor="#FEF3C7", border=ft.Border.all(1, "#FDE68A"), border_radius=10,
+                padding=12, margin=ft.Margin(0, 0, 0, 12),
+                content=ft.Column([
+                    ft.Row([ft.Icon(ft.Icons.CAMPAIGN_OUTLINED, color="#92400E", size=16), ft.Text("公告", size=12, weight=ft.FontWeight.W_700, color="#92400E"), ft.Text(f"by {announcer}", size=10, color="#B45309")], spacing=6),
+                    ft.Markdown(flet_markdown(announcement), extension_set=ft.MarkdownExtensionSet.GITHUB_FLAVORED, selectable=True),
+                ], spacing=6, tight=True)
+            ))
         if not self.state.messages:
             self.messages_view.controls.append(ft.Container(ft.Column([ft.Icon(ft.Icons.FORUM_OUTLINED, size=42, color="#AAB2C2"), ft.Text("这里还没有消息", size=18, weight=ft.FontWeight.W_600), ft.Text("用 Markdown 或 LaTeX 开启话题吧。", color=MUTED)], horizontal_alignment=ft.CrossAxisAlignment.CENTER), alignment=ft.Alignment.CENTER, expand=True))
         else:
@@ -625,15 +636,66 @@ class PolyChatApp:
             except ApiError as exc: self.show_toast(str(exc), error=True)
         self.page.show_dialog(ft.AlertDialog(title=ft.Text("搜索消息"), content=ft.Column([query, results], tight=True, width=480), actions=[ft.FilledButton("搜索", on_click=lambda _: self.page.run_task(search, _)), ft.TextButton("关闭", on_click=lambda _: self.page.pop_dialog())]))
 
-    def open_members(self, _=None):
+    async def open_members(self, _=None):
         if not self.state.room: return
         username = ft.TextField(label="邀请用户名", autofocus=True)
+        codes_list = ft.Column(spacing=4)
+
+        async def load_codes():
+            try:
+                codes = await self.call(self.state.api.invite_codes, self.state.room["id"])
+                codes_list.controls.clear()
+                if codes:
+                    for c in codes:
+                        code_text = f"{c['code']} · {c['use_count']}次使用"
+                        if c.get("expires_at"):
+                            code_text += f" · 过期 {c['expires_at']}"
+                        codes_list.controls.append(ft.Row([
+                            ft.Text(code_text, size=11, expand=True),
+                            ft.TextButton("复制", on_click=lambda _, code=c["code"]: self.page.run_task(self.copy_invite, code)),
+                            ft.TextButton("删除", on_click=lambda _, cid=c["id"]: self.page.run_task(self.delete_invite_code, cid)),
+                        ], spacing=4))
+                else:
+                    codes_list.controls.append(ft.Text("暂无邀请码", size=11, color=MUTED))
+            except ApiError:
+                pass
+
         async def invite(_):
             try:
                 await self.call(self.state.api.invite_member, self.state.room["id"], username.value)
-                self.page.pop_dialog(); self.show_toast("成员已邀请")
+                username.value = ""; self.page.update(); self.show_toast("成员已邀请")
             except ApiError as exc: username.error_text = str(exc); self.page.update()
-        self.page.show_dialog(ft.AlertDialog(title=ft.Text("私有房间成员"), content=username, actions=[ft.TextButton("取消", on_click=lambda _: self.page.pop_dialog()), ft.FilledButton("邀请", on_click=lambda _: self.page.run_task(invite, _))]))
+
+        async def create_code(_):
+            try:
+                await self.call(self.state.api.create_invite_code, self.state.room["id"])
+                self.show_toast("邀请码已创建"); await load_codes(); self.page.update()
+            except ApiError as exc: self.show_toast(str(exc), error=True)
+
+        await load_codes()
+        content = ft.Column([
+            username,
+            ft.Row([ft.TextButton("取消", on_click=lambda _: self.page.pop_dialog()), ft.FilledButton("邀请", on_click=lambda _: self.page.run_task(invite, _))]),
+            ft.Divider(),
+            ft.Row([ft.Text("邀请码", size=12, weight=ft.FontWeight.W_700), ft.Container(expand=True), ft.OutlinedButton("创建邀请码", on_click=lambda _: self.page.run_task(create_code, _))]),
+            codes_list,
+        ], tight=True, scroll=ft.ScrollMode.AUTO)
+        self.page.show_dialog(ft.AlertDialog(title=ft.Text("私有房间成员"), content=content, actions=[ft.TextButton("关闭", on_click=lambda _: self.page.pop_dialog())]))
+
+    async def copy_invite(self, code):
+        try:
+            link = f"{self.state.api.base_url}/#/invite/{code}"
+            await self.clipboard.set(link)
+            self.show_toast("邀请链接已复制")
+        except Exception:
+            self.show_toast("复制失败", error=True)
+
+    async def delete_invite_code(self, code_id):
+        try:
+            await self.call(self.state.api.delete_invite_code, self.state.room["id"], code_id)
+            self.show_toast("邀请码已删除")
+        except ApiError as exc:
+            self.show_toast(str(exc), error=True)
 
     def open_room_settings(self, _=None):
         if not self.state.room:
