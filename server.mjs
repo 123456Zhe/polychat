@@ -158,6 +158,13 @@ db.exec(`
     created_by INTEGER REFERENCES users(id),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS banned_fingerprints (
+    fingerprint TEXT PRIMARY KEY,
+    banned_until INTEGER,
+    reason TEXT,
+    created_by INTEGER REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 if (!db.prepare('PRAGMA table_info(messages)').all().some(column => column.name === 'attachment_id')) {
   db.exec('ALTER TABLE messages ADD COLUMN attachment_id INTEGER REFERENCES attachments(id)');
@@ -180,6 +187,7 @@ if (!userColumns.has('avatar_updated_at')) db.exec('ALTER TABLE users ADD COLUMN
 if (!userColumns.has('banned_until')) db.exec('ALTER TABLE users ADD COLUMN banned_until INTEGER');
 if (!userColumns.has('muted_until')) db.exec('ALTER TABLE users ADD COLUMN muted_until INTEGER');
 if (!userColumns.has('last_ip')) db.exec('ALTER TABLE users ADD COLUMN last_ip TEXT');
+if (!userColumns.has('device_fingerprint')) db.exec('ALTER TABLE users ADD COLUMN device_fingerprint TEXT');
 if (db.prepare('SELECT COUNT(*) AS count FROM users WHERE is_admin = 1').get().count === 0) {
   db.prepare('UPDATE users SET is_admin = 1 WHERE id = (SELECT id FROM users ORDER BY id LIMIT 1)').run();
 }
@@ -243,7 +251,7 @@ function currentUser(req) {
   const token = tokenOf(req);
   if (!token) return null;
   return db.prepare(`
-    SELECT users.id, users.username, users.is_admin, users.avatar_updated_at, users.banned_until, users.muted_until FROM sessions
+    SELECT users.id, users.username, users.is_admin, users.avatar_updated_at, users.banned_until, users.muted_until, users.device_fingerprint FROM sessions
     JOIN users ON users.id = sessions.user_id
     WHERE sessions.token = ? AND sessions.expires_at > ?
   `).get(token, Date.now()) || null;
@@ -339,6 +347,17 @@ function isIpBanned(ip) {
   return true;
 }
 
+function isFingerprintBanned(fingerprint) {
+  if (!fingerprint) return false;
+  const record = db.prepare('SELECT banned_until FROM banned_fingerprints WHERE fingerprint = ?').get(fingerprint);
+  if (!record) return false;
+  if (record.banned_until && record.banned_until <= Date.now()) {
+    db.prepare('DELETE FROM banned_fingerprints WHERE fingerprint = ?').run(fingerprint);
+    return false;
+  }
+  return true;
+}
+
 async function readBody(req, maxLength = 70_000) {
   let raw = '';
   for await (const chunk of req) {
@@ -353,7 +372,11 @@ function requireUser(req, res) {
   const user = currentUser(req);
   if (!user) { json(res, 401, { error: '请先登录' }); return null; }
   if (isUserBanned(user)) { json(res, 403, { error: '账号已被封禁', banned_until: user.banned_until }); return null; }
-  if (!user.is_admin && isIpBanned(getClientIp(req))) { json(res, 403, { error: '你的 IP 已被封禁' }); return null; }
+  if (!user.is_admin) {
+    const ip = getClientIp(req);
+    if (isIpBanned(ip)) { json(res, 403, { error: '你的 IP 已被封禁' }); return null; }
+    if (user.device_fingerprint && isFingerprintBanned(user.device_fingerprint)) { json(res, 403, { error: '该设备已被封禁' }); return null; }
+  }
   return user;
 }
 
@@ -457,7 +480,9 @@ async function api(req, res, url) {
   if (req.method === 'POST' && url.pathname === '/api/register') {
     const ip = getClientIp(req);
     if (isIpBanned(ip)) return json(res, 403, { error: '你的 IP 已被封禁' });
-    const { username = '', password = '' } = await readBody(req);
+    const { username = '', password = '', fingerprint } = await readBody(req);
+    const fp = typeof fingerprint === 'string' && fingerprint.length <= 128 ? fingerprint : null;
+    if (fp && isFingerprintBanned(fp)) return json(res, 403, { error: '该设备已被封禁' });
     const name = String(username).trim();
     if (!/^[\p{L}\p{N}_-]{2,24}$/u.test(name)) return json(res, 400, { error: '用户名需为 2–24 位字母、数字、下划线或连字符' });
     if (String(password).length < 8 || String(password).length > 128) return json(res, 400, { error: '密码需为 8–128 位' });
@@ -470,7 +495,7 @@ async function api(req, res, url) {
     }
     try {
       const firstAccount = db.prepare('SELECT COUNT(*) AS count FROM users').get().count === 0;
-      const result = db.prepare('INSERT INTO users(username, password_hash, is_admin, last_ip) VALUES (?, ?, ?, ?)').run(name, hashPassword(String(password)), firstAccount ? 1 : 0, ip);
+      const result = db.prepare('INSERT INTO users(username, password_hash, is_admin, last_ip, device_fingerprint) VALUES (?, ?, ?, ?, ?)').run(name, hashPassword(String(password)), firstAccount ? 1 : 0, ip, fp);
       db.prepare('INSERT INTO registration_attempts(ip_address) VALUES (?)').run(ip);
       const token = createSession(Number(result.lastInsertRowid));
       return json(res, 201, { token, user: publicUser({ id: Number(result.lastInsertRowid), username: name, is_admin: firstAccount }) }, { 'set-cookie': cookie(token) });
@@ -484,15 +509,20 @@ async function api(req, res, url) {
     const ip = getClientIp(req);
     const attempts = getLoginAttempts(ip);
     if (attempts >= LOGIN_RATE_LIMIT_MAX) return json(res, 429, { error: `登录尝试过多，请 ${LOGIN_RATE_LIMIT_WINDOW / 60000} 分钟后再试` });
-    const { username = '', password = '' } = await readBody(req);
-    const user = db.prepare('SELECT id, username, password_hash, is_admin, avatar_updated_at, banned_until FROM users WHERE username = ?').get(String(username).trim());
+    const { username = '', password = '', fingerprint } = await readBody(req);
+    const fp = typeof fingerprint === 'string' && fingerprint.length <= 128 ? fingerprint : null;
+    const user = db.prepare('SELECT id, username, password_hash, is_admin, avatar_updated_at, banned_until, device_fingerprint FROM users WHERE username = ?').get(String(username).trim());
     if (!user || !checkPassword(String(password), user.password_hash)) {
       recordLoginAttempt(ip, String(username).trim(), false);
       return json(res, 401, { error: '用户名或密码错误' });
     }
-    if (!user.is_admin && isIpBanned(ip)) return json(res, 403, { error: '你的 IP 已被封禁' });
+    if (!user.is_admin) {
+      if (isIpBanned(ip)) return json(res, 403, { error: '你的 IP 已被封禁' });
+      const checkFp = fp || user.device_fingerprint;
+      if (checkFp && isFingerprintBanned(checkFp)) return json(res, 403, { error: '该设备已被封禁' });
+    }
     recordLoginAttempt(ip, String(username).trim(), true);
-    db.prepare('UPDATE users SET last_ip = ? WHERE id = ?').run(ip, user.id);
+    db.prepare('UPDATE users SET last_ip = ?, device_fingerprint = COALESCE(?, device_fingerprint) WHERE id = ?').run(ip, fp, user.id);
     const token = createSession(user.id);
     return json(res, 200, { token, user: publicUser(user) }, { 'set-cookie': cookie(token) });
   }
@@ -567,7 +597,7 @@ async function api(req, res, url) {
       messages: db.prepare('SELECT COUNT(*) AS count FROM messages').get().count,
       files: db.prepare('SELECT COUNT(*) AS count FROM attachments').get().count,
     };
-    const users = db.prepare(`SELECT users.id, users.username, users.is_admin, users.created_at, users.banned_until, users.muted_until, users.last_ip,
+    const users = db.prepare(`SELECT users.id, users.username, users.is_admin, users.created_at, users.banned_until, users.muted_until, users.last_ip, users.device_fingerprint,
       (SELECT COUNT(*) FROM messages WHERE messages.user_id = users.id) AS message_count
       FROM users ORDER BY users.id`).all();
     return json(res, 200, { stats, users });
@@ -674,6 +704,33 @@ async function api(req, res, url) {
     if (!ip || typeof ip !== 'string') return json(res, 400, { error: '需要指定 IP 地址' });
     db.prepare('DELETE FROM banned_ips WHERE ip_address = ?').run(ip);
     logAudit(admin.id, 'unban_ip', null, `IP ${ip} 已解封`);
+    return json(res, 200, { ok: true });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/banned-fingerprints') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const fps = db.prepare(`SELECT banned_fingerprints.*, admins.username AS admin_name
+      FROM banned_fingerprints LEFT JOIN users AS admins ON admins.id = banned_fingerprints.created_by
+      ORDER BY banned_fingerprints.created_at DESC`).all();
+    return json(res, 200, { fingerprints: fps });
+  }
+
+  if (req.method === 'PUT' && url.pathname === '/api/admin/banned-fingerprints/ban') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const { fingerprint, duration_hours, reason } = await readBody(req);
+    if (!fingerprint || typeof fingerprint !== 'string') return json(res, 400, { error: '需要指定设备指纹' });
+    const bannedUntil = duration_hours ? Date.now() + Number(duration_hours) * 3600_000 : null;
+    db.prepare('INSERT OR REPLACE INTO banned_fingerprints(fingerprint, banned_until, reason, created_by) VALUES (?, ?, ?, ?)').run(fingerprint, bannedUntil, reason || null, admin.id);
+    logAudit(admin.id, 'ban_fingerprint', null, `设备 ${fingerprint.slice(0, 8)}...${bannedUntil ? ` 封禁 ${duration_hours} 小时` : ' 永久封禁'}${reason ? `：${reason}` : ''}`);
+    return json(res, 200, { ok: true });
+  }
+
+  if (req.method === 'PUT' && url.pathname === '/api/admin/banned-fingerprints/unban') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const { fingerprint } = await readBody(req);
+    if (!fingerprint || typeof fingerprint !== 'string') return json(res, 400, { error: '需要指定设备指纹' });
+    db.prepare('DELETE FROM banned_fingerprints WHERE fingerprint = ?').run(fingerprint);
+    logAudit(admin.id, 'unban_fingerprint', null, `设备 ${fingerprint.slice(0, 8)}... 已解封`);
     return json(res, 200, { ok: true });
   }
 
@@ -1209,7 +1266,7 @@ server.on('upgrade', (req, socket, head) => {
     return socket.destroy();
   }
   const wsIp = getClientIp(req);
-  if (!user.is_admin && isIpBanned(wsIp)) {
+  if (!user.is_admin && (isIpBanned(wsIp) || (user.device_fingerprint && isFingerprintBanned(user.device_fingerprint)))) {
     socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
     return socket.destroy();
   }
