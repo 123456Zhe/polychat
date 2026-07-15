@@ -128,6 +128,13 @@ button { cursor: pointer; }
 .notification.blocked { color: #985d64; background: #f5ebeb; }
 .notification em { font-size: 11px; font-style: normal; }
 
+.announcement-banner { margin: 0 clamp(18px, 4vw, 58px) 12px; padding: 14px 16px; border-radius: 12px; background: linear-gradient(135deg, #fef3c7, #fffbeb); border: 1px solid #fde68a; }
+.announcement-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; color: #92400e; }
+.announcement-icon { font-size: 16px; }
+.announcement-header small { color: #b45309; margin-left: 4px; }
+.announcement-actions { margin-left: auto; display: flex; gap: 6px; }
+.announcement-actions button { padding: 3px 8px; border: 1px solid #d97706; border-radius: 6px; color: #92400e; font-size: 10px; background: #fffbeb; }
+.announcement-content { color: #451a03; font-size: 13px; line-height: 1.6; }
 .pinned-sticky { position: sticky; top: 0; z-index: 2; margin: 0 clamp(18px, 4vw, 58px); max-height: 40vh; overflow-y: auto; border-bottom: 1px solid var(--warm-200); background: var(--warm-100); border-radius: 0 0 12px 12px; }
 .pinned-sticky-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; cursor: pointer; font-size: 12px; color: #586477; user-select: none; }
 .pinned-sticky-header:hover { background: var(--warm-200); }

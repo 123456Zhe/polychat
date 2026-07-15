@@ -142,6 +142,9 @@ if (!db.prepare('PRAGMA table_info(messages)').all().some(column => column.name 
 }
 const roomColumns = new Set(db.prepare('PRAGMA table_info(rooms)').all().map(column => column.name));
 if (!roomColumns.has('is_private')) db.exec('ALTER TABLE rooms ADD COLUMN is_private INTEGER NOT NULL DEFAULT 0');
+if (!roomColumns.has('announcement')) db.exec('ALTER TABLE rooms ADD COLUMN announcement TEXT');
+if (!roomColumns.has('announcement_by')) db.exec('ALTER TABLE rooms ADD COLUMN announcement_by INTEGER REFERENCES users(id)');
+if (!roomColumns.has('announcement_updated_at')) db.exec('ALTER TABLE rooms ADD COLUMN announcement_updated_at TEXT');
 const messageColumns = new Set(db.prepare('PRAGMA table_info(messages)').all().map(column => column.name));
 if (!messageColumns.has('reply_to')) db.exec('ALTER TABLE messages ADD COLUMN reply_to INTEGER REFERENCES messages(id)');
 if (!messageColumns.has('edited_at')) db.exec('ALTER TABLE messages ADD COLUMN edited_at TEXT');
@@ -661,8 +664,11 @@ async function api(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/rooms') {
     const user = requireUser(req, res); if (!user) return;
     const rooms = db.prepare(`SELECT rooms.id, rooms.name, rooms.created_at, rooms.is_private, room_members.role,
+      rooms.announcement, rooms.announcement_by, rooms.announcement_updated_at,
+      announcers.username AS announcement_username,
       (SELECT COUNT(*) FROM messages WHERE messages.room_id = rooms.id) AS message_count
       FROM rooms LEFT JOIN room_members ON room_members.room_id = rooms.id AND room_members.user_id = ?
+      LEFT JOIN users AS announcers ON announcers.id = rooms.announcement_by
       WHERE rooms.is_private = 0 OR room_members.user_id IS NOT NULL OR ? = 1 ORDER BY rooms.id`).all(user.id, user.is_admin ? 1 : 0);
     return json(res, 200, { rooms });
   }
@@ -724,6 +730,25 @@ async function api(req, res, url) {
     if (!context.room.is_private && !context.user.is_admin) return json(res, 403, { error: '只有管理员可以删除公共聊天室' });
     db.prepare('DELETE FROM rooms WHERE id = ?').run(roomId);
     broadcast({ type: 'rooms' });
+    return json(res, 200, { ok: true });
+  }
+
+  const announcementMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/announcement$/);
+  if (announcementMatch && req.method === 'PUT') {
+    const roomId = Number(announcementMatch[1]);
+    const context = requireRoomManager(req, res, roomId); if (!context) return;
+    const { content = '' } = await readBody(req);
+    const text = String(content).trim();
+    if (!text || text.length > 2000) return json(res, 400, { error: '公告内容需为 1–2000 位' });
+    db.prepare('UPDATE rooms SET announcement = ?, announcement_by = ?, announcement_updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(text, context.user.id, roomId);
+    broadcast({ type: 'announcement', room_id: roomId });
+    return json(res, 200, { ok: true });
+  }
+  if (announcementMatch && req.method === 'DELETE') {
+    const roomId = Number(announcementMatch[1]);
+    const context = requireRoomManager(req, res, roomId); if (!context) return;
+    db.prepare('UPDATE rooms SET announcement = NULL, announcement_by = NULL, announcement_updated_at = NULL WHERE id = ?').run(roomId);
+    broadcast({ type: 'announcement', room_id: roomId });
     return json(res, 200, { ok: true });
   }
 
