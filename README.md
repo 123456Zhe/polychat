@@ -6,15 +6,37 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 
 ## 功能
 
+### 核心功能
 - 注册、登录、30 天持久会话，密码使用带随机盐的 scrypt 哈希保存
 - SQLite 持久化账号、房间和聊天历史，启用 WAL 模式
 - 多聊天室，可由任意已登录用户创建
-- 登录用户可传输文件；附件持久化保存、鉴权下载，单文件上限 10 MB
-- Web 消息框支持直接粘贴截图或剪贴板图片，发送前显示缩略图，发送后按消息气泡大小等比例展示
-- Web 端支持跨房间未读角标、页面标题未读数和可选的浏览器桌面通知
-- 账户支持持久化头像；Web 提供账户设置与预览，GUI/TUI 也可上传头像
 - Web 端支持标题、列表、引用、代码块、链接、图片、粗体、斜体、删除线等 Markdown
 - Web 端通过 KaTeX 支持行内 `$...$` 和块级 `$$...$$` LaTeX；CDN 不可用时显示原始公式
+
+### 文件与媒体
+- 登录用户可传输文件；附件持久化保存、鉴权下载，单文件上限 100 MB（可通过 `MAX_FILE_SIZE` 配置）
+- 支持大文件分片上传（1 MB 分片）
+- Web 端支持多文件选择、拖拽上传和粘贴图片
+- 发送前显示图片缩略图预览
+- Web 消息框支持直接粘贴截图或剪贴板图片
+
+### 用户与管理
+- 账户支持持久化头像；Web 提供账户设置与预览，GUI/TUI 也可上传头像
+- Web 端支持跨房间未读角标、页面标题未读数和可选的浏览器桌面通知
+- 管理员可封禁/禁言用户（支持设置时长）
+- 登录限速保护（5 次/15 分钟）
+- 审计日志记录管理员操作
+
+### 数据管理
+- 用户可导出聊天记录为 JSON 文件
+- 用户可删除账号及所有个人数据（需密码确认）
+- 自动 SQLite 备份（可选，通过 `BACKUP_ENABLED` 启用）
+
+### 运行监控
+- `/api/health` 健康检查端点
+- 可选自动备份 SQLite 数据库
+
+### 客户端
 - Flet GUI 原生渲染 Markdown 与 LaTeX，消息区显示每位用户的头像
 - TUI 完整保留 Markdown/LaTeX 文本，支持房间命令和定时拉取新消息
 - Web 渲染先转义用户输入，链接只接受 HTTP(S)，避免聊天内容注入脚本
@@ -26,6 +48,21 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 - GUI 需要 Python 与 Flet；TUI 需要类 Unix 终端的 curses
 
 不需要 `npm install`，也不需要另行安装数据库。
+
+## 环境变量
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `PORT` | `3000` | 服务端口 |
+| `HOST` | `127.0.0.1` | 监听地址 |
+| `DB_PATH` | `data/polychat.db` | SQLite 数据库路径 |
+| `UPLOAD_DIR` | `data/uploads` | 文件上传目录 |
+| `AVATAR_DIR` | `data/avatars` | 头像存储目录 |
+| `MAX_FILE_SIZE` | `104857600` (100 MB) | 最大文件大小（字节） |
+| `BACKUP_ENABLED` | `true` | 启用自动备份 |
+| `BACKUP_DIR` | `data/backups` | 备份目录 |
+| `BACKUP_INTERVAL_HOURS` | `24` | 备份间隔（小时） |
+| `MAX_BACKUPS` | `7` | 保留备份数量 |
 
 ## Web 前端开发
 
@@ -44,9 +81,9 @@ npm run web:build
 
 ### Web 主题与自定义 CSS
 
-登录后点击聊天页顶部的“主题”按钮，可以一键应用内置主题：雾蓝、午夜靛蓝、青绿浅色和 Catppuccin Mocha。选择结果和自定义 CSS 都保存在**当前浏览器的 Local Storage**，不会同步到服务器、数据库或其他用户设备。
+登录后点击聊天页顶部的"主题"按钮，可以一键应用内置主题：雾蓝、午夜靛蓝、青绿浅色、Catppuccin Mocha 和琥珀玫瑰。选择结果和自定义 CSS 都保存在**当前浏览器的 Local Storage**，不会同步到服务器、数据库或其他用户设备。
 
-在主题面板的“自定义 CSS”框中输入 CSS 会立即预览；点击“保存 CSS”后在刷新页面后仍会保留。“清除自定义 CSS”只移除自己的覆盖规则，保留当前选中的预设主题。变量、所有 PolyChat 选择器、状态类和示例请阅读[自定义 CSS 完整指南](docs/CUSTOM_CSS.md)。
+在主题面板的"自定义 CSS"框中输入 CSS 会立即预览；点击"保存 CSS"后在刷新页面后仍会保留。"清除自定义 CSS"只移除自己的覆盖规则，保留当前选中的预设主题。变量、所有 PolyChat 选择器、状态类和示例请阅读[自定义 CSS 完整指南](docs/CUSTOM_CSS.md)。
 
 下面是几个可直接粘贴的示例：
 
@@ -69,7 +106,7 @@ npm run web:build
 .bubble { border-color: #64748b; background: #ffffff; }
 ```
 
-自定义 CSS 可以覆盖页面任何选择器；请只粘贴自己信任的规则。若界面不可读，可在主题面板点击“清除自定义 CSS”，或在浏览器开发者工具中删除 Local Storage 里的 `polychat.custom-css`。
+自定义 CSS 可以覆盖页面任何选择器；请只粘贴自己信任的规则。若界面不可读，可在主题面板点击"清除自定义 CSS"，或在浏览器开发者工具中删除 Local Storage 里的 `polychat.custom-css`。
 
 ## 快速启动
 
@@ -136,10 +173,22 @@ $$
 - `Home` / `End`：跳到历史开头/最新消息；右侧滚动条显示当前位置
 - `/rooms`：列出聊天室及编号
 - `/room 2`：进入编号为 2 的聊天室
+- `/new 房间名`：新建聊天室
+- `/newprivate 房间名`：新建私有聊天室
+- `/rename 新名称`：重命名当前聊天室
+- `/delete-room`：删除当前聊天室
+- `/invite 用户名 [admin]`：邀请成员
+- `/kick 用户名`：移除成员
+- `/reply 消息ID 内容`：回复消息
+- `/react 消息ID 表情`：添加表情反应
+- `/edit 消息ID 新内容`：编辑消息
+- `/retract 消息ID`：撤回消息
+- `/search 关键词`：搜索消息
 - `/sendfile ./报告.pdf`：发送文件
 - `/getfile 12 ./报告.pdf`：按消息中显示的文件 ID 下载
 - `/avatar ./头像.png`：上传当前账号头像
-- `/new 房间名`：新建聊天室
+- `/export [文件名]`：导出聊天记录
+- `/delete-account`：删除账号
 - `/clear`：清空当前屏幕消息
 - `/help`：显示帮助
 - `/quit`：退出
@@ -222,15 +271,29 @@ curl -I http://127.0.0.1:3000/
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | POST | `/api/register` | 注册并登录 |
-| POST | `/api/login` | 登录 |
+| POST | `/api/login` | 登录（限速 5 次/15 分钟） |
 | POST | `/api/logout` | 退出 |
 | GET | `/api/me` | 当前账号 |
+| GET | `/api/me/export` | 导出聊天记录为 JSON |
+| DELETE | `/api/me` | 删除账号（需密码确认） |
 | GET/POST | `/api/rooms` | 列出/创建房间 |
 | GET/POST | `/api/rooms/:id/messages` | 拉取/发送消息 |
 | GET | `/api/events?after=:id` | 增量获取跨房间消息通知 |
 | POST/DELETE | `/api/me/avatar` | 上传/移除当前账号头像 |
 | GET | `/api/users/:id/avatar` | 鉴权读取用户头像 |
-| POST | `/api/files` | 上传不超过 10 MB 的 Base64 文件 |
+| POST | `/api/files` | 上传 Base64 文件 |
+| POST | `/api/uploads` | 创建分片上传会话 |
+| GET | `/api/uploads/:id` | 获取上传会话状态 |
+| PUT | `/api/uploads/:id/chunks` | 上传文件分片 |
+| DELETE | `/api/uploads/:id` | 取消上传会话 |
 | GET | `/api/files/:id` | 鉴权下载文件 |
+| GET | `/api/health` | 健康检查 |
+| GET | `/api/admin/overview` | 管理面板概览 |
+| PUT | `/api/admin/users/:id/admin` | 切换管理员状态 |
+| PUT | `/api/admin/users/:id/ban` | 封禁用户 |
+| PUT | `/api/admin/users/:id/unban` | 解封用户 |
+| PUT | `/api/admin/users/:id/mute` | 禁言用户 |
+| PUT | `/api/admin/users/:id/unmute` | 解除禁言 |
+| GET | `/api/admin/audit-logs` | 查看审计日志 |
 
 拉取消息可加 `?after=<消息ID>&limit=100` 实现增量更新。

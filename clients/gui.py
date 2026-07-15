@@ -301,13 +301,13 @@ class PolyChatApp:
         user = self.state.user
         content = ft.Row([
             self.avatar(user, 20),
-            ft.Column([ft.Text(user["username"], color="white", size=13, weight=ft.FontWeight.W_600), ft.Text("● 在线 · 点击更换头像", color="#4ADE80", size=9)], spacing=2, expand=True),
+            ft.Column([ft.Text(user["username"], color="white", size=13, weight=ft.FontWeight.W_600), ft.Text("● 在线 · 点击管理账号", color="#4ADE80", size=9)], spacing=2, expand=True),
             ft.Icon(ft.Icons.CHEVRON_RIGHT, color="#8390A7", size=18),
         ], spacing=10)
         if hasattr(self, "profile"):
             self.profile.content = content
         else:
-            self.profile = ft.Container(padding=ft.Padding(top=4), ink=True, on_click=self.choose_avatar, content=content)
+            self.profile = ft.Container(padding=ft.Padding(top=4), ink=True, on_click=self.open_profile_menu, content=content)
 
     async def load_rooms(self, select_first: bool = False):
         rooms = await self.call(self.state.api.rooms)
@@ -462,26 +462,50 @@ class PolyChatApp:
             self.show_toast(str(exc), error=True)
 
     async def choose_file(self, _=None):
-        files = await self.file_picker.pick_files(dialog_title="选择不超过 10 MB 的文件", allow_multiple=False)
+        files = await self.file_picker.pick_files(dialog_title="选择文件（支持多选）", allow_multiple=True)
         if not files:
             return
-        selected = files[0]
-        if not selected.path:
-            self.show_toast("当前平台未提供文件路径，无法上传文件", error=True)
-            return
-        self.status.value = f"正在上传 {selected.name}…"
+        self.status.value = f"正在上传 {len(files)} 个文件…"
         self.page.update()
         try:
-            message = await self.call(self.state.api.send_file, self.state.room["id"], selected.path, self.composer.value.strip())
+            for i, selected in enumerate(files):
+                if not selected.path:
+                    continue
+                self.status.value = f"正在上传 {selected.name} ({i + 1}/{len(files)})…"
+                self.page.update()
+                message = await self.call(self.state.api.send_file, self.state.room["id"], selected.path, self.composer.value.strip() if i == 0 else "")
+                self.state.messages.append(message)
+                self.state.last_id = message["id"]
             self.composer.value = ""
-            self.state.messages.append(message)
-            self.state.last_id = message["id"]
             self.status.value = ""
             self.render_messages()
             self.page.update()
         except (ApiError, OSError) as exc:
             self.status.value = ""
             self.show_toast(str(exc), error=True)
+
+    def open_profile_menu(self, _=None):
+        def change_avatar(_):
+            self.page.pop_dialog()
+            self.page.run_task(self.choose_avatar)
+
+        def export_data(_):
+            self.page.pop_dialog()
+            self.page.run_task(self.export_user_data)
+
+        def delete_account(_):
+            self.page.pop_dialog()
+            self.page.run_task(self.confirm_delete_account)
+
+        self.page.show_dialog(ft.AlertDialog(
+            title=ft.Text("账号管理"),
+            content=ft.Column([
+                ft.ListTile(title=ft.Text("更换头像"), leading=ft.Icon(ft.Icons.PERSON_OUTLINED), on_click=change_avatar),
+                ft.ListTile(title=ft.Text("导出聊天记录"), leading=ft.Icon(ft.Icons.DOWNLOAD_OUTLINED), on_click=export_data),
+                ft.ListTile(title=ft.Text("删除账号"), leading=ft.Icon(ft.Icons.DELETE_OUTLINE, color="#B42318"), on_click=delete_account),
+            ], tight=True),
+            actions=[ft.TextButton("关闭", on_click=lambda _: self.page.pop_dialog())],
+        ))
 
     async def choose_avatar(self, _=None):
         files = await self.file_picker.pick_files(dialog_title="选择 2 MB 以内的头像", allow_multiple=False, file_type=ft.FilePickerFileType.CUSTOM, allowed_extensions=["png", "jpg", "jpeg", "webp", "gif"])
@@ -494,6 +518,43 @@ class PolyChatApp:
             self.show_toast("头像已更新")
         except (ApiError, OSError) as exc:
             self.show_toast(str(exc), error=True)
+
+    async def export_user_data(self, _=None):
+        destination = await self.file_picker.save_file(dialog_title="导出聊天记录", file_name=f"polychat-export.json")
+        if not destination:
+            return
+        self.status.value = "正在导出聊天记录…"
+        self.page.update()
+        try:
+            path = await self.call(self.state.api.export_data, destination)
+            self.status.value = f"聊天记录已导出到 {path}"
+            self.page.update()
+        except ApiError as exc:
+            self.status.value = ""
+            self.show_toast(str(exc), error=True)
+
+    async def confirm_delete_account(self, _=None):
+        password = ft.TextField(label="输入密码确认", password=True, can_reveal_password=True, autofocus=True)
+
+        async def confirm(_):
+            try:
+                await self.call(self.state.api.delete_account, password.value)
+                self.page.pop_dialog()
+                self.show_toast("账号已删除")
+                self.state.user = None
+                self.show_login()
+            except ApiError as exc:
+                password.error_text = str(exc)
+                self.page.update()
+
+        self.page.show_dialog(ft.AlertDialog(
+            title=ft.Text("删除账号"),
+            content=ft.Column([
+                ft.Text("此操作不可恢复，所有消息和文件将被永久删除。", color="#B42318"),
+                password,
+            ], tight=True),
+            actions=[ft.TextButton("取消", on_click=lambda _: self.page.pop_dialog()), ft.FilledButton("确认删除", bgcolor="#B42318", on_click=lambda _: self.page.run_task(confirm, _))],
+        ))
 
     async def download_file(self, message):
         destination = await self.file_picker.save_file(dialog_title="保存附件", file_name=message["attachment_name"])

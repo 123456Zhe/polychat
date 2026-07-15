@@ -8,15 +8,12 @@
 
 - ✅ **阶段 1**：输入/在线状态 + 消息置顶与话题串 (`cf32265`)
 - ✅ **阶段 2**：离线 Web Push (`61c4762`)
+- ✅ **阶段 3**：增强文件上传（图片预览、拖拽上传、多图发送）
+- ✅ **阶段 4**：管理安全（登录限速、审计日志、管理员封禁/禁言）
+- ✅ **阶段 5**：数据管理（导出聊天记录、删除账户与个人数据）
+- ✅ **阶段 6**：运行监控（自动备份 SQLite、健康检查端点）
 
-### 待完成阶段
-
-- 🔜 **阶段 3**：增强文件上传（图片预览、拖拽上传、多图发送）
-- 🔜 **阶段 4**：管理安全（登录限速、审计日志、管理员封禁/禁言）
-- 🔜 **阶段 5**：数据管理（导出聊天记录、删除账户与个人数据）
-- 🔜 **阶段 6**：运行监控（自动备份 SQLite、健康检查端点）
-
-每阶段完成后测试、提交并推送到 GitHub。
+所有阶段已完成。GUI/TUI 客户端和文档已同步更新。
 
 ---
 
@@ -55,8 +52,13 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 ## Key details
 
 - First registered user automatically becomes admin.
-- Server auto-creates `data/`, `data/uploads/`, and `data/avatars/` directories.
-- Environment variables: `PORT` (default 3000), `HOST` (default 127.0.0.1), `DB_PATH`, `UPLOAD_DIR`, `AVATAR_DIR`.
+- Server auto-creates `data/`, `data/uploads/`, `data/avatars/`, and `data/backups/` directories.
+- Environment variables: `PORT` (default 3000), `HOST` (default 127.0.0.1), `DB_PATH`, `UPLOAD_DIR`, `AVATAR_DIR`, `MAX_FILE_SIZE`, `BACKUP_ENABLED`, `BACKUP_DIR`, `BACKUP_INTERVAL_HOURS`, `MAX_BACKUPS`.
 - `NODE_ENV=test` suppresses the server from listening (used by tests to bind to a random port).
 - `data/` is gitignored — do not commit database or uploaded files.
-- File upload limit: 10 MB. Avatar limit: 2 MB (PNG/JPEG/WebP/GIF only).
+- File upload limit: 100 MB (configurable). Avatar limit: 2 MB (PNG/JPEG/WebP/GIF only).
+- Login rate limiting: 5 attempts per 15 minutes per IP.
+- Admin can ban/mute users with configurable duration.
+- Users can export chat history and delete their account.
+- Health check endpoint: `GET /api/health`.
+- Optional automatic SQLite backup (enabled by default).

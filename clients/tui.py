@@ -126,7 +126,7 @@ class TUI:
 
     def command(self, value):
         if value == "/quit": return False
-        if value == "/help": self.status = "/rooms /room 编号 /newprivate 名称 /rename 名称 /delete-room /invite 用户 [admin] /kick 用户名 /reply /react /edit /retract /search /quit"; return True
+        if value == "/help": self.status = "/rooms /room 编号 /newprivate 名称 /rename 名称 /delete-room /invite 用户 [admin] /kick 用户名 /reply /react /edit /retract /search /sendfile /getfile /avatar /export /delete-account /quit"; return True
         if value == "/rooms": self.status = "  ".join(f"{i + 1}:{r['name']}" for i, r in enumerate(self.rooms)); return True
         if value.startswith("/room "):
             try:
@@ -203,6 +203,22 @@ class TUI:
                 _, file_id, destination = value.split(maxsplit=2)
                 self.api.download(int(file_id), destination); self.status = f"已下载到 {destination}"
             except (ValueError, ApiError, OSError) as exc: self.status = f"用法: /getfile ID 保存路径 · {exc}"
+            return True
+        if value.startswith("/export"):
+            parts = value.split(maxsplit=1)
+            destination = parts[1].strip() if len(parts) > 1 else "polychat-export.json"
+            try: self.api.export_data(destination); self.status = f"聊天记录已导出到 {destination}"
+            except (ApiError, OSError) as exc: self.status = str(exc)
+            return True
+        if value == "/delete-account":
+            try:
+                password = getpass.getpass("输入密码确认删除: ")
+                self.api.delete_account(password)
+                self.status = "账号已删除，即将退出…"
+                self.draw()
+                time.sleep(2)
+                return False
+            except ApiError as exc: self.status = str(exc)
             return True
         if value == "/clear": self.messages = []; self.scroll = 0; self.status = "屏幕已清空"; return True
         try: self.api.send(self.room["id"], value); self.fetch(); self.status = "已发送"

@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { readFileSync, mkdirSync, writeFileSync, appendFileSync, renameSync, unlinkSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdirSync, writeFileSync, appendFileSync, renameSync, unlinkSync } from 'node:fs';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
@@ -21,10 +21,14 @@ const LEGACY_FILE_SIZE = 10 * 1024 * 1024;
 const UPLOAD_CHUNK_SIZE = 1024 * 1024;
 const INLINE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const MAX_AVATAR_SIZE = 2 * 1024 * 1024;
+const BACKUP_DIR = process.env.BACKUP_DIR || join(dirname(DB_PATH), 'backups');
+const BACKUP_INTERVAL_HOURS = Number(process.env.BACKUP_INTERVAL_HOURS || 24);
+const BACKUP_ENABLED = process.env.BACKUP_ENABLED !== 'false';
 
 mkdirSync(join(ROOT, 'data'), { recursive: true });
 mkdirSync(UPLOAD_DIR, { recursive: true });
 mkdirSync(AVATAR_DIR, { recursive: true });
+if (BACKUP_ENABLED) mkdirSync(BACKUP_DIR, { recursive: true });
 export const db = new DatabaseSync(DB_PATH);
 db.exec(`
   PRAGMA journal_mode = WAL;
@@ -163,6 +167,34 @@ if (!vapidPublicKey || !vapidPrivateKey) {
   db.prepare("INSERT OR REPLACE INTO app_settings(key, value) VALUES ('vapid_private_key', ?)").run(vapidPrivateKey);
 }
 webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'mailto:polychat@example.com', vapidPublicKey, vapidPrivateKey);
+
+const startTime = Date.now();
+let lastBackupTime = null;
+let backupError = null;
+
+function performBackup() {
+  if (!BACKUP_ENABLED) return;
+  try {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = join(BACKUP_DIR, `polychat-${timestamp}.db`);
+    db.exec(`VACUUM INTO '${backupPath}'`);
+    lastBackupTime = Date.now();
+    backupError = null;
+    const backupFiles = readdirSync(BACKUP_DIR).filter(f => f.endsWith('.db')).sort();
+    const maxBackups = Number(process.env.MAX_BACKUPS || 7);
+    while (backupFiles.length > maxBackups) {
+      unlinkSync(join(BACKUP_DIR, backupFiles.shift()));
+    }
+  } catch (e) {
+    backupError = e.message;
+    console.error('Backup failed:', e.message);
+  }
+}
+
+if (BACKUP_ENABLED) {
+  performBackup();
+  setInterval(performBackup, BACKUP_INTERVAL_HOURS * 3600_000);
+}
 
 function json(res, status, body, headers = {}) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers });
@@ -364,6 +396,20 @@ function cookie(token, clear = false) {
 }
 
 async function api(req, res, url) {
+  if (req.method === 'GET' && url.pathname === '/api/health') {
+    const userCount = db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
+    const messageCount = db.prepare('SELECT COUNT(*) AS count FROM messages').get().count;
+    const uptimeMs = Date.now() - startTime;
+    return json(res, 200, {
+      status: 'ok',
+      version: '1.0.0',
+      uptime_ms: uptimeMs,
+      uptime_human: `${Math.floor(uptimeMs / 86400000)}d ${Math.floor((uptimeMs % 86400000) / 3600000)}h ${Math.floor((uptimeMs % 3600000) / 60000)}m`,
+      database: { path: DB_PATH, users: userCount, messages: messageCount },
+      backup: { enabled: BACKUP_ENABLED, last_backup: lastBackupTime, error: backupError }
+    });
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/register') {
     const { username = '', password = '' } = await readBody(req);
     const name = String(username).trim();

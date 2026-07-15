@@ -224,3 +224,18 @@ class ChatAPI:
                 pass
             raise ApiError(f"下载失败：{exc}") from exc
         return str(target)
+
+    def export_data(self, destination: str):
+        target = Path(destination)
+        try:
+            data = self.request_bytes("/api/me/export", timeout=120)
+            target.write_bytes(data)
+        except (ApiError, OSError) as exc:
+            raise ApiError(f"导出失败：{exc}") from exc
+        return str(target)
+
+    def delete_account(self, password: str):
+        return self.request("DELETE", "/api/me", {"password": password})
+
+    def health(self):
+        return self.request("GET", "/api/health")
