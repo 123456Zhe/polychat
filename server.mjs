@@ -309,7 +309,8 @@ async function readBody(req, maxLength = 70_000) {
 
 function requireUser(req, res) {
   const user = currentUser(req);
-  if (!user) json(res, 401, { error: '请先登录' });
+  if (!user) { json(res, 401, { error: '请先登录' }); return null; }
+  if (isUserBanned(user)) { json(res, 403, { error: '账号已被封禁', banned_until: user.banned_until }); return null; }
   return user;
 }
 
@@ -927,6 +928,7 @@ async function api(req, res, url) {
     const roomId = Number(messageMatch[1]);
     const context = requireRoomAccess(req, res, roomId); if (!context) return;
     const user = context.user;
+    if (isUserBanned(user)) return json(res, 403, { error: '账号已被封禁', banned_until: user.banned_until });
     if (isUserMuted(user)) return json(res, 403, { error: '你已被禁言，无法发送消息', muted_until: user.muted_until });
     const { content = '', attachment_id = null, reply_to = null, thread_root = null } = await readBody(req);
     const text = String(content).trim();
@@ -1052,6 +1054,10 @@ server.on('upgrade', (req, socket, head) => {
   const user = currentUser(req);
   if (!user) {
     socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+    return socket.destroy();
+  }
+  if (isUserBanned(user)) {
+    socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
     return socket.destroy();
   }
   webSocketServer.handleUpgrade(req, socket, head, client => {

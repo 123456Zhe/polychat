@@ -81,7 +81,15 @@ marked.use({
 async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers: { 'content-type': 'application/json', ...(options.headers || {}) } });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error || `请求失败 (${response.status})`);
+  if (!response.ok) {
+    if (response.status === 403 && body.banned_until) {
+      user.value = null;
+      shutdownRealtime();
+      notify(`账号已被封禁至 ${new Date(body.banned_until).toLocaleString()}`);
+      throw new Error(body.error);
+    }
+    throw new Error(body.error || `请求失败 (${response.status})`);
+  }
   return body;
 }
 function notify(text) { toast.value = text; setTimeout(() => toast.value = '', 2200); }
