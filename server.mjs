@@ -135,6 +135,16 @@ db.exec(`
     details TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS invite_codes (
+    id INTEGER PRIMARY KEY,
+    room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    code TEXT NOT NULL UNIQUE,
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    max_uses INTEGER,
+    use_count INTEGER NOT NULL DEFAULT 0,
+    expires_at INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
   INSERT OR IGNORE INTO rooms(id, name) VALUES (1, '大厅');
 `);
 if (!db.prepare('PRAGMA table_info(messages)').all().some(column => column.name === 'attachment_id')) {
@@ -776,6 +786,51 @@ async function api(req, res, url) {
     db.prepare('DELETE FROM room_members WHERE room_id = ? AND user_id = ?').run(context.room.id, targetId);
     broadcast({ type: 'rooms' });
     return json(res, 200, { ok: true });
+  }
+
+  const inviteCodeListMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/invite-codes$/);
+  if (inviteCodeListMatch && req.method === 'GET') {
+    const context = requireRoomManager(req, res, Number(inviteCodeListMatch[1])); if (!context) return;
+    const codes = db.prepare('SELECT invite_codes.*, users.username AS created_by_name FROM invite_codes LEFT JOIN users ON users.id = invite_codes.created_by WHERE invite_codes.room_id = ? ORDER BY invite_codes.id DESC').all(context.room.id);
+    return json(res, 200, { codes });
+  }
+  if (inviteCodeListMatch && req.method === 'POST') {
+    const context = requireRoomManager(req, res, Number(inviteCodeListMatch[1])); if (!context) return;
+    const { max_uses = null, duration_hours = null } = await readBody(req);
+    const code = randomBytes(4).toString('hex');
+    const expiresAt = duration_hours ? Date.now() + Number(duration_hours) * 3600_000 : null;
+    const maxUses = max_uses ? Number(max_uses) : null;
+    db.prepare('INSERT INTO invite_codes(room_id, code, created_by, max_uses, expires_at) VALUES (?, ?, ?, ?, ?)').run(context.room.id, code, context.user.id, maxUses, expiresAt);
+    return json(res, 201, { code: { id: db.prepare('SELECT last_insert_rowid() AS id').get().id, code, max_uses: maxUses, use_count: 0, expires_at: expiresAt, created_by_name: context.user.username } });
+  }
+  const inviteCodeDeleteMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/invite-codes\/(\d+)$/);
+  if (inviteCodeDeleteMatch && req.method === 'DELETE') {
+    const context = requireRoomManager(req, res, Number(inviteCodeDeleteMatch[1])); if (!context) return;
+    db.prepare('DELETE FROM invite_codes WHERE id = ? AND room_id = ?').run(Number(inviteCodeDeleteMatch[2]), context.room.id);
+    return json(res, 200, { ok: true });
+  }
+
+  const inviteJoinMatch = url.pathname.match(/^\/api\/invite\/([a-f0-9]+)$/);
+  if (inviteJoinMatch && req.method === 'POST') {
+    const user = requireUser(req, res); if (!user) return;
+    const codeStr = inviteJoinMatch[1];
+    const invite = db.prepare('SELECT * FROM invite_codes WHERE code = ?').get(codeStr);
+    if (!invite) return json(res, 404, { error: '邀请码无效' });
+    if (invite.expires_at && invite.expires_at <= Date.now()) return json(res, 400, { error: '邀请码已过期' });
+    if (invite.max_uses && invite.use_count >= invite.max_uses) return json(res, 400, { error: '邀请码已达到使用次数上限' });
+    db.prepare('UPDATE invite_codes SET use_count = use_count + 1 WHERE id = ?').run(invite.id);
+    db.prepare('INSERT OR IGNORE INTO room_members(room_id, user_id, role) VALUES (?, ?, ?)').run(invite.room_id, user.id, 'member');
+    const room = db.prepare('SELECT id, name FROM rooms WHERE id = ?').get(invite.room_id);
+    broadcast({ type: 'rooms' });
+    return json(res, 200, { ok: true, room });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/users/search') {
+    const user = requireUser(req, res); if (!user) return;
+    const q = url.searchParams.get('q') || '';
+    if (q.length < 1) return json(res, 200, { users: [] });
+    const users = db.prepare('SELECT id, username FROM users WHERE username LIKE ? ORDER BY username LIMIT 20').all(`%${q}%`);
+    return json(res, 200, { users });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/uploads') {
