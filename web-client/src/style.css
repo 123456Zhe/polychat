@@ -358,18 +358,92 @@ button { cursor: pointer; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 8px; background: #aab1ba; background-clip: padding-box; }
 
+/* Mobile overlay */
+.sidebar-overlay { position: fixed; inset: 0; z-index: 9; background: rgba(0,0,0,.45); }
+
 @media (max-width: 700px) {
+  /* Layout */
   .chat { grid-template-columns: 1fr; }
-  .chat > aside { display: none; }
-  .topbar { padding: 0 13px; }
-  .topbar > div small, .toolbar-button em { display: none; }
-  .toolbar-button { padding: 8px; }
-  .messages-scroll { padding: 17px 12px; }
-  .messages-scroll article { grid-template-columns: 36px minmax(0, 1fr); gap: 8px; }
-  .avatar { width: 36px; height: 36px; border-radius: 11px; }
-  .bubble { padding: 10px 12px; }
-  .composer { padding: 9px 11px 10px; }
+
+  /* Sidebar: off-canvas slide */
+  .chat > aside {
+    position: fixed; inset: 0; right: auto; z-index: 10;
+    width: 280px; max-width: 82vw;
+    transform: translateX(-100%);
+    transition: transform .25s cubic-bezier(.4,0,.2,1);
+    display: flex; flex-direction: column;
+  }
+  .chat > aside.open { transform: translateX(0); }
+
+  /* Topbar */
+  .topbar { padding: 0 10px; gap: 6px; height: 56px; }
+  .mobile-menu-btn { font-size: 22px; padding: 6px 8px; }
+  .topbar > div { min-width: 0; }
+  .topbar h2 { font-size: 15px; }
+  .topbar > div small { display: none; }
+  .topbar-actions { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .topbar-actions::-webkit-scrollbar { display: none; }
+  .toolbar-button { padding: 6px 7px; white-space: nowrap; flex: none; }
+  .toolbar-button em { display: none; }
+  .toolbar-button span { font-size: 16px; }
+
+  /* Messages */
+  .conversation { grid-template-rows: 56px auto minmax(0, 1fr) auto; }
+  .messages-scroll { padding: 14px 10px; }
+  .messages-scroll article { grid-template-columns: 34px minmax(0, 1fr); gap: 8px; margin-bottom: 24px; }
+  .avatar { width: 34px; height: 34px; border-radius: 10px; }
+  .bubble { padding: 9px 11px; border-radius: 3px 12px 12px; }
+  .bubble > header strong { font-size: 12px; }
+  .bubble > header small { font-size: 9px; }
+  .markdown { font-size: 13px; line-height: 1.55; }
+
+  /* Composer */
+  .composer { padding: 8px 10px 9px; }
+  .compose-row { gap: 6px; }
+  .composer textarea { min-height: 38px; max-height: 100px; padding: 9px 10px; font-size: 15px; /* prevents iOS zoom */ }
+  .attach { width: 38px; height: 38px; font-size: 20px; }
+  .send { height: 38px; padding: 0 14px; font-size: 13px; }
   .composer > small { display: none; }
-  .stats { grid-template-columns: repeat(2, 1fr); }
+  .file-preview { width: 28px; height: 28px; }
+
+  /* Modals */
+  .modal { padding: 8px; }
+  .modal > section { max-height: 92vh; padding: 24px; border-radius: 16px; }
   .theme-grid { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .thread-panel { width: 100vw; }
+  .ban-ip-form { flex-wrap: wrap; }
+
+  /* Announcement / pinned */
+  .announcement-bar, .pinned-bar { margin: 0 10px; }
+  .announcement-bar-header, .pinned-bar-header { padding: 7px 10px; font-size: 11px; }
+
+  /* Emoji picker */
+  .emoji-picker { padding: 6px; }
+  .emoji-picker > div button { width: 36px; height: 36px; font-size: 22px; }
+
+  /* Search */
+  .search-form input { font-size: 16px; /* prevents iOS zoom */ }
+  .room-modal input:not([type="checkbox"]) { font-size: 16px; }
+
+  /* Touch-friendly spacing */
+  .message-menu { min-width: 150px; }
+  .message-menu button { padding: 10px 12px; font-size: 13px; }
+}
+
+/* Extra small screens (< 380px) */
+@media (max-width: 380px) {
+  .topbar-actions { gap: 0; }
+  .toolbar-button { padding: 5px 6px; }
+  .messages-scroll { padding: 10px 8px; }
+  .messages-scroll article { grid-template-columns: 30px minmax(0, 1fr); gap: 6px; margin-bottom: 18px; }
+  .avatar { width: 30px; height: 30px; border-radius: 9px; }
+  .bubble { padding: 8px 9px; }
+}
+
+/* Safe area for notched phones (iOS) */
+@supports (padding-top: env(safe-area-inset-top)) {
+  .topbar { padding-top: env(safe-area-inset-top); }
+  .composer { padding-bottom: calc(9px + env(safe-area-inset-bottom)); }
+  .chat > aside { padding-top: env(safe-area-inset-top); }
 }

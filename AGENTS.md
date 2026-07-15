@@ -37,6 +37,7 @@ No `npm install` required for the server — only built-in Node 22.5+ modules ar
 | Run GUI client | `./run-gui.sh` (needs Python + Flet in `.venv-gui/`) |
 | Run TUI client | `./run-tui.sh` |
 | Build GUI standalone | `./build-gui.sh` (creates `dist/PolyChat-GUI/`) |
+| Build Android app | `./build-android.sh` (needs Android SDK) |
 | Docker | `docker compose up -d --build` |
 
 Run tests before committing. `npm test` creates a temporary SQLite DB and cleans up automatically.
@@ -45,7 +46,8 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 
 - **Server**: single file `server.mjs` — HTTP server + SQLite (`node:sqlite`) + all API routes. No framework, no build step for the server.
 - **Database**: SQLite with WAL mode, auto-migrates schema on startup (adds columns if missing). DB file at `data/polychat.db`.
-- **Web frontend**: Vue 3 + Vite app in `web-client/`. `npm run web:build` outputs production assets to `web/`, which the Node server serves directly.
+- **Web frontend**: Vue 3 + Vite app in `web-client/`. `npm run web:build` outputs production assets to `web/`, which the Node server serves directly. Mobile-responsive with sidebar toggle.
+- **Android app**: Capacitor wrapper in `android-app/`. Uses built web assets from `web/`. Build with `./build-android.sh`.
 - **GUI client**: `clients/gui.py` — Flet desktop app, shares `clients/chat_api.py` for HTTP logic. Needs `.venv-gui/` virtualenv (created by `build-gui.sh`).
 - **TUI client**: `clients/tui.py` — curses terminal client, shares `clients/chat_api.py`.
 

@@ -15,6 +15,7 @@ const searchOpen = ref(false), searchText = ref(''), searchResults = ref([]), me
 const createRoomOpen = ref(false), roomDraft = ref({ name: '', is_private: false }), memberName = ref(''), memberRole = ref('member');
 const openMessageActions = ref(null), reactionPickerFor = ref(null);
 const imagePreview = ref(''), roomManageOpen = ref(false), roomNameDraft = ref('');
+const sidebarOpen = ref(false), isMobile = ref(false);
 const onlineUsers = ref([]), typingByRoom = ref({}), pinsOpen = ref(false), pinnedMessages = ref([]);
 const roomPins = ref([]), pinsExpanded = ref(false), announcementExpanded = ref(true);
 const threadRoot = ref(null), threadMessages = ref([]), threadContent = ref('');
@@ -105,6 +106,8 @@ function time(value) { return new Date(`${value.replace(' ', 'T')}Z`).toLocaleSt
 function size(value = 0) { return value >= 1048576 ? `${(value / 1048576).toFixed(1)} MB` : value >= 1024 ? `${(value / 1024).toFixed(1)} KB` : `${value} B`; }
 function avatar(member) { return member?.avatar_url || (member?.avatar_updated_at ? `/api/users/${member.user_id ?? member.id}/avatar?v=${member.avatar_updated_at}` : ''); }
 function clearTimers() { clearTimeout(messageTimer); clearInterval(roomTimer); clearInterval(eventTimer); activeMessageRequest?.abort(); }
+function toggleSidebar() { sidebarOpen.value = !sidebarOpen.value; }
+function closeSidebar() { if (isMobile.value) sidebarOpen.value = false; }
 function shutdownRealtime() { clearTimers(); clearTimeout(reconnectTimer); if (socket) { socket.onclose = null; socket.close(); socket = null; } }
 function sendSocket(event) { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event)); }
 function stopTyping() { clearTimeout(typingTimer); if (typingRoomId) sendSocket({ type: 'typing', room_id: typingRoomId, typing: false }); typingRoomId = null; }
@@ -399,15 +402,38 @@ async function adminUnbanFingerprint(fp) { try { await api('/api/admin/banned-fi
 async function logout() { await api('/api/logout', { method: 'POST' }); shutdownRealtime(); location.reload(); }
 async function exportData() { try { const response = await fetch('/api/me/export'); if (!response.ok) throw new Error('导出失败'); const blob = await response.blob(); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `polychat-export-${Date.now()}.json`; a.click(); URL.revokeObjectURL(url); notify('聊天记录已导出'); } catch (e) { notify(e.message); } }
 async function deleteAccount() { const password = prompt('请输入密码以确认删除账号：'); if (!password) return; if (!confirm('确定要删除账号吗？此操作不可恢复，所有消息和文件将被永久删除。')) return; try { await api('/api/me', { method: 'DELETE', body: JSON.stringify({ password }) }); notify('账号已删除'); shutdownRealtime(); location.reload(); } catch (e) { notify(e.message); } }
-onMounted(async () => { deviceFingerprint.value = generateFingerprint(); renderThemeCss(); document.addEventListener('visibilitychange', handleVisibility); try { user.value = (await api('/api/me')).user; await enter(); } catch {} });
+onMounted(async () => {
+  deviceFingerprint.value = generateFingerprint();
+  renderThemeCss();
+  document.addEventListener('visibilitychange', handleVisibility);
+  isMobile.value = window.innerWidth <= 700;
+  window.addEventListener('resize', () => { isMobile.value = window.innerWidth <= 700; if (!isMobile.value) sidebarOpen.value = false; });
+  try { user.value = (await api('/api/me')).user; await enter(); } catch {}
+});
 onBeforeUnmount(() => { shutdownRealtime(); document.removeEventListener('visibilitychange', handleVisibility); });
 </script>
 
 <template>
   <main v-if="!user" class="auth"><section><img :src="icon"><p>MARKDOWN · LATEX · EVERYWHERE</p><h1>欢迎来到 PolyChat</h1><div class="tabs"><button :class="{active: mode === 'login'}" @click="mode = 'login'">登录</button><button :class="{active: mode === 'register'}" @click="mode = 'register'">注册</button></div><form @submit.prevent="authenticate"><input v-model="credentials.username" placeholder="用户名" required><input v-model="credentials.password" type="password" placeholder="密码" required><small>{{ error }}</small><button> {{ mode === 'login' ? '登录' : '创建账号' }} </button></form></section></main>
-  <main v-else class="chat"><aside><header class="brand"><img :src="icon"><span>PolyChat<small>让交流保持简单</small></span></header><button class="new" @click="newRoom"><span>＋</span> 新建聊天室</button><p class="nav-label">聊天室</p><nav><button v-for="item in rooms" :key="item.id" :class="{active: room?.id === item.id, hasUnread: unread[item.id]}" @click="choose(item)"><span>#</span><b>{{ item.name }}</b><small v-if="unread[item.id]" class="unread">{{ unread[item.id] > 99 ? '99+' : unread[item.id] }}</small></button></nav><footer><button class="profile-button" title="更换头像" @click="profileOpen = true"><img v-if="avatar(user)" :src="avatar(user)"><b v-else>{{ user.username[0] }}</b></button><span>{{ user.username }}<small>{{ isAdmin ? '管理员 · 在线' : '在线' }}</small></span><button class="logout" title="退出登录" @click="logout">↪</button></footer></aside>
+  <main v-else class="chat">
+    <div v-if="isMobile && sidebarOpen" class="sidebar-overlay" @click="sidebarOpen = false"></div>
+    <aside :class="{open: sidebarOpen}"><header class="brand"><img :src="icon"><span>PolyChat<small>让交流保持简单</small></span></header><button class="new" @click="newRoom"><span>＋</span> 新建聊天室</button><p class="nav-label">聊天室</p><nav><button v-for="item in rooms" :key="item.id" :class="{active: room?.id === item.id, hasUnread: unread[item.id]}" @click="choose(item); closeSidebar()"><span>#</span><b>{{ item.name }}</b><small v-if="unread[item.id]" class="unread">{{ unread[item.id] > 99 ? '99+' : unread[item.id] }}</small></button></nav><footer><button class="profile-button" title="更换头像" @click="profileOpen = true"><img v-if="avatar(user)" :src="avatar(user)"><b v-else>{{ user.username[0] }}</b></button><span>{{ user.username }}<small>{{ isAdmin ? '管理员 · 在线' : '在线' }}</small></span><button class="logout" title="退出登录" @click="logout">↪</button></footer></aside>
     <section class="conversation">
-      <header class="topbar"><div><h2><span>#</span> {{ room?.name || '大厅' }} <small v-if="room?.is_private">🔒 私有</small></h2><small><i class="online-dot"></i>{{ onlineUsers.length }} 人在线<span v-if="typingText"> · {{ typingText }}</span></small></div><button class="toolbar-button" @click="loadPins">⌖ <em>置顶</em></button><button class="toolbar-button" @click="openInviteCodePrompt">🔗 <em>加入</em></button><button class="toolbar-button" @click="searchOpen = true">⌕ <em>搜索</em></button><button v-if="room?.is_private && (room?.role === 'owner' || room?.role === 'admin' || isAdmin)" class="toolbar-button" @click="loadMembers">♙ <em>成员</em></button><button v-if="isAdmin || room?.role === 'owner' || room?.role === 'admin'" class="toolbar-button" @click="openAnnouncement">📢 <em>公告</em></button><button v-if="isAdmin || room?.role === 'owner' || room?.role === 'admin'" class="toolbar-button" @click="openRoomManage">⚙ <em>房间</em></button><button class="toolbar-button" title="主题与自定义 CSS" @click="themeOpen = true"><span>◐</span><em>主题</em></button><button v-if="isAdmin" class="toolbar-button" @click="adminOpen = true; loadAdmin(); loadBannedIps(); loadBannedFingerprints()">管理面板</button><button class="toolbar-button notification" :class="{on: notificationOn, blocked: notificationPermission === 'denied'}" :title="notificationLabel" @click="toggleNotifications"><span>{{ notificationOn ? '🔔' : '🔕' }}</span><em>{{ notificationButtonText }}</em></button></header>
+      <header class="topbar">
+        <button v-if="isMobile" class="toolbar-button mobile-menu-btn" @click="toggleSidebar">☰</button>
+        <div><h2><span>#</span> {{ room?.name || '大厅' }} <small v-if="room?.is_private">🔒 私有</small></h2><small><i class="online-dot"></i>{{ onlineUsers.length }} 人在线<span v-if="typingText"> · {{ typingText }}</span></small></div>
+        <div class="topbar-actions">
+          <button class="toolbar-button" @click="loadPins">⌖ <em>置顶</em></button>
+          <button class="toolbar-button" @click="openInviteCodePrompt">🔗 <em>加入</em></button>
+          <button class="toolbar-button" @click="searchOpen = true">⌕ <em>搜索</em></button>
+          <button v-if="room?.is_private && (room?.role === 'owner' || room?.role === 'admin' || isAdmin)" class="toolbar-button" @click="loadMembers">♙ <em>成员</em></button>
+          <button v-if="isAdmin || room?.role === 'owner' || room?.role === 'admin'" class="toolbar-button" @click="openAnnouncement">📢 <em>公告</em></button>
+          <button v-if="isAdmin || room?.role === 'owner' || room?.role === 'admin'" class="toolbar-button" @click="openRoomManage">⚙ <em>房间</em></button>
+          <button class="toolbar-button" title="主题与自定义 CSS" @click="themeOpen = true"><span>◐</span><em>主题</em></button>
+          <button v-if="isAdmin" class="toolbar-button" @click="adminOpen = true; loadAdmin(); loadBannedIps(); loadBannedFingerprints()">管理面板</button>
+          <button class="toolbar-button notification" :class="{on: notificationOn, blocked: notificationPermission === 'denied'}" :title="notificationLabel" @click="toggleNotifications"><span>{{ notificationOn ? '🔔' : '🔕' }}</span><em>{{ notificationButtonText }}</em></button>
+        </div>
+      </header>
       <div class="pinned-area" :class="{hidden: !room?.announcement && !roomPins.length}">
         <div v-if="room?.announcement" class="announcement-bar"><div class="announcement-bar-header" @click="announcementExpanded = !announcementExpanded"><span class="pinned-icon">📢</span><span>公告</span><small>by {{ room.announcement_username }}</small><span class="pinned-toggle">{{ announcementExpanded ? '收起' : '展开' }}</span><div v-if="isAdmin || room?.role === 'owner' || room?.role === 'admin'" class="announcement-bar-actions" @click.stop><button @click="openAnnouncement">编辑</button><button @click="deleteAnnouncement">删除</button></div></div><div v-if="announcementExpanded" class="announcement-bar-content markdown" v-html="markdown(room.announcement)"></div></div>
         <div v-if="roomPins.length" class="pinned-bar"><div class="pinned-bar-header" @click="pinsExpanded = !pinsExpanded"><span class="pinned-icon">📌</span><span>置顶消息 ({{ roomPins.length }})</span><span class="pinned-toggle">{{ pinsExpanded ? '收起' : '展开' }}</span></div><div v-if="pinsExpanded" class="pinned-bar-list"><article v-for="pin in roomPins" :key="pin.id" class="pinned-bar-item"><div class="pinned-bar-meta"><strong>{{ pin.username }}</strong><small>{{ time(pin.created_at) }}</small><button v-if="isAdmin || room?.role === 'owner' || room?.role === 'admin'" class="pinned-unpin" @click="unpinMessage(pin)">取消置顶</button></div><div v-if="pin.content" class="markdown" v-html="markdown(pin.content)"></div></article></div></div>

@@ -1,0 +1,71 @@
+name: Build Signed Release APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version name (e.g., 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Decode Keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android-app/android/app/polychat.keystore
+
+      - name: Install root dependencies
+        run: npm install
+
+      - name: Build web assets
+        run: npm run web:build
+
+      - name: Setup Capacitor
+        working-directory: android-app
+        run: |
+          npm install
+          npx cap add android || true
+          npx cap sync android
+
+      - name: Update version
+        working-directory: android-app/android
+        run: |
+          sed -i "s/versionCode .*/versionCode $(( $(date +%s) % 100000 ))/" app/build.gradle
+          sed -i "s/versionName .*/versionName \"${{ inputs.version }}\"/" app/build.gradle
+
+      - name: Build Signed APK
+        working-directory: android-app/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=polychat.keystore \
+            -Pandroid.injected.signing.store.password=${{ secrets.ANDROID_KEYSTORE_PASSWORD }} \
+            -Pandroid.injected.signing.key.alias=${{ secrets.ANDROID_KEY_ALIAS }} \
+            -Pandroid.injected.signing.key.password=${{ secrets.ANDROID_KEY_PASSWORD }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: v${{ inputs.version }}
+          files: android-app/android/app/build/outputs/apk/release/app-release.apk
+          generate_release_notes: true
