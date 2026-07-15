@@ -407,6 +407,57 @@ async function api(req, res, url) {
     return json(res, 200, { user: publicUser(user) });
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/me/export') {
+    const user = requireUser(req, res); if (!user) return;
+    const messages = db.prepare(`
+      SELECT messages.id, messages.content, messages.created_at, messages.edited_at, messages.deleted_at,
+        rooms.name AS room_name, attachments.original_name AS attachment_name
+      FROM messages
+      JOIN rooms ON rooms.id = messages.room_id
+      LEFT JOIN attachments ON attachments.id = messages.attachment_id
+      WHERE messages.user_id = ?
+      ORDER BY messages.id
+    `).all(user.id);
+    const exportData = {
+      user: { id: user.id, username: user.username, created_at: user.created_at },
+      export_date: new Date().toISOString(),
+      message_count: messages.length,
+      messages: messages.map(m => ({
+        room: m.room_name,
+        content: m.content,
+        attachment: m.attachment_name || null,
+        created_at: m.created_at,
+        edited_at: m.edited_at,
+        is_deleted: Boolean(m.deleted_at)
+      }))
+    };
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'content-disposition': `attachment; filename="polychat-export-${user.id}-${Date.now()}.json"`
+    });
+    res.end(JSON.stringify(exportData, null, 2));
+    return;
+  }
+
+  if (req.method === 'DELETE' && url.pathname === '/api/me') {
+    const user = requireUser(req, res); if (!user) return;
+    if (user.is_admin) {
+      const adminCount = db.prepare('SELECT COUNT(*) AS count FROM users WHERE is_admin = 1').get().count;
+      if (adminCount <= 1) return json(res, 400, { error: '不能删除最后一个管理员账号' });
+    }
+    const { password = '' } = await readBody(req);
+    const fullUser = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(user.id);
+    if (!checkPassword(String(password), fullUser.password_hash)) return json(res, 401, { error: '密码错误' });
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
+    db.prepare('UPDATE messages SET content = \'[已删除]\', attachment_id = NULL, deleted_at = CURRENT_TIMESTAMP WHERE user_id = ?').run(user.id);
+    db.prepare('DELETE FROM attachments WHERE user_id = ?').run(user.id);
+    db.prepare('DELETE FROM room_members WHERE user_id = ?').run(user.id);
+    db.prepare('DELETE FROM message_reactions WHERE user_id = ?').run(user.id);
+    db.prepare('DELETE FROM push_subscriptions WHERE user_id = ?').run(user.id);
+    db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+    return json(res, 200, { ok: true }, { 'set-cookie': cookie('', true) });
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/admin/overview') {
     if (!requireAdmin(req, res)) return;
     const stats = {
