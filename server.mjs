@@ -115,6 +115,22 @@ db.exec(`
     expires_at INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS login_attempts (
+    id INTEGER PRIMARY KEY,
+    ip_address TEXT NOT NULL,
+    username TEXT,
+    success INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_login_attempts_ip ON login_attempts(ip_address, created_at);
+  CREATE TABLE IF NOT EXISTS audit_logs (
+    id INTEGER PRIMARY KEY,
+    admin_id INTEGER NOT NULL REFERENCES users(id),
+    action TEXT NOT NULL,
+    target_user_id INTEGER REFERENCES users(id),
+    details TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
   INSERT OR IGNORE INTO rooms(id, name) VALUES (1, '大厅');
 `);
 if (!db.prepare('PRAGMA table_info(messages)').all().some(column => column.name === 'attachment_id')) {
@@ -132,6 +148,8 @@ if (!userColumns.has('is_admin')) db.exec('ALTER TABLE users ADD COLUMN is_admin
 if (!userColumns.has('avatar_name')) db.exec('ALTER TABLE users ADD COLUMN avatar_name TEXT');
 if (!userColumns.has('avatar_mime')) db.exec('ALTER TABLE users ADD COLUMN avatar_mime TEXT');
 if (!userColumns.has('avatar_updated_at')) db.exec('ALTER TABLE users ADD COLUMN avatar_updated_at INTEGER');
+if (!userColumns.has('banned_until')) db.exec('ALTER TABLE users ADD COLUMN banned_until INTEGER');
+if (!userColumns.has('muted_until')) db.exec('ALTER TABLE users ADD COLUMN muted_until INTEGER');
 if (db.prepare('SELECT COUNT(*) AS count FROM users WHERE is_admin = 1').get().count === 0) {
   db.prepare('UPDATE users SET is_admin = 1 WHERE id = (SELECT id FROM users ORDER BY id LIMIT 1)').run();
 }
@@ -167,7 +185,7 @@ function currentUser(req) {
   const token = tokenOf(req);
   if (!token) return null;
   return db.prepare(`
-    SELECT users.id, users.username, users.is_admin, users.avatar_updated_at FROM sessions
+    SELECT users.id, users.username, users.is_admin, users.avatar_updated_at, users.banned_until, users.muted_until FROM sessions
     JOIN users ON users.id = sessions.user_id
     WHERE sessions.token = ? AND sessions.expires_at > ?
   `).get(token, Date.now()) || null;
@@ -179,7 +197,9 @@ function publicUser(user) {
     username: user.username,
     is_admin: Boolean(user.is_admin),
     avatar_updated_at: user.avatar_updated_at || null,
-    avatar_url: user.avatar_updated_at ? `/api/users/${user.id}/avatar?v=${user.avatar_updated_at}` : null
+    avatar_url: user.avatar_updated_at ? `/api/users/${user.id}/avatar?v=${user.avatar_updated_at}` : null,
+    banned_until: user.banned_until || null,
+    muted_until: user.muted_until || null
   };
 }
 
@@ -209,6 +229,40 @@ function createSession(userId) {
   db.prepare('INSERT INTO sessions(token, user_id, expires_at) VALUES (?, ?, ?)')
     .run(token, userId, Date.now() + SESSION_DAYS * 86400_000);
   return token;
+}
+
+const LOGIN_RATE_LIMIT_WINDOW = 15 * 60 * 1000;
+const LOGIN_RATE_LIMIT_MAX = 5;
+
+function getLoginAttempts(ip) {
+  const since = new Date(Date.now() - LOGIN_RATE_LIMIT_WINDOW).toISOString();
+  return db.prepare('SELECT COUNT(*) AS count FROM login_attempts WHERE ip_address = ? AND created_at > ? AND success = 0').get(ip, since).count;
+}
+
+function recordLoginAttempt(ip, username, success) {
+  db.prepare('INSERT INTO login_attempts(ip_address, username, success) VALUES (?, ?, ?)').run(ip, username || null, success ? 1 : 0);
+}
+
+function isUserBanned(user) {
+  if (!user.banned_until) return false;
+  if (user.banned_until <= Date.now()) {
+    db.prepare('UPDATE users SET banned_until = NULL WHERE id = ?').run(user.id);
+    return false;
+  }
+  return true;
+}
+
+function isUserMuted(user) {
+  if (!user.muted_until) return false;
+  if (user.muted_until <= Date.now()) {
+    db.prepare('UPDATE users SET muted_until = NULL WHERE id = ?').run(user.id);
+    return false;
+  }
+  return true;
+}
+
+function logAudit(adminId, action, targetUserId = null, details = null) {
+  db.prepare('INSERT INTO audit_logs(admin_id, action, target_user_id, details) VALUES (?, ?, ?, ?)').run(adminId, action, targetUserId, details);
 }
 
 async function readBody(req, maxLength = 70_000) {
@@ -327,9 +381,17 @@ async function api(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/login') {
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+    const attempts = getLoginAttempts(ip);
+    if (attempts >= LOGIN_RATE_LIMIT_MAX) return json(res, 429, { error: `登录尝试过多，请 ${LOGIN_RATE_LIMIT_WINDOW / 60000} 分钟后再试` });
     const { username = '', password = '' } = await readBody(req);
-    const user = db.prepare('SELECT id, username, password_hash, is_admin, avatar_updated_at FROM users WHERE username = ?').get(String(username).trim());
-    if (!user || !checkPassword(String(password), user.password_hash)) return json(res, 401, { error: '用户名或密码错误' });
+    const user = db.prepare('SELECT id, username, password_hash, is_admin, avatar_updated_at, banned_until FROM users WHERE username = ?').get(String(username).trim());
+    if (!user || !checkPassword(String(password), user.password_hash)) {
+      recordLoginAttempt(ip, String(username).trim(), false);
+      return json(res, 401, { error: '用户名或密码错误' });
+    }
+    if (isUserBanned(user)) return json(res, 403, { error: '账号已被封禁', banned_until: user.banned_until });
+    recordLoginAttempt(ip, String(username).trim(), true);
     const token = createSession(user.id);
     return json(res, 200, { token, user: publicUser(user) }, { 'set-cookie': cookie(token) });
   }
@@ -353,7 +415,7 @@ async function api(req, res, url) {
       messages: db.prepare('SELECT COUNT(*) AS count FROM messages').get().count,
       files: db.prepare('SELECT COUNT(*) AS count FROM attachments').get().count,
     };
-    const users = db.prepare(`SELECT users.id, users.username, users.is_admin, users.created_at,
+    const users = db.prepare(`SELECT users.id, users.username, users.is_admin, users.created_at, users.banned_until, users.muted_until,
       (SELECT COUNT(*) FROM messages WHERE messages.user_id = users.id) AS message_count
       FROM users ORDER BY users.id`).all();
     return json(res, 200, { stats, users });
@@ -370,7 +432,70 @@ async function api(req, res, url) {
       return json(res, 400, { error: '至少需要保留一名管理员' });
     }
     db.prepare('UPDATE users SET is_admin = ? WHERE id = ?').run(is_admin ? 1 : 0, targetId);
+    logAudit(admin.id, is_admin ? 'grant_admin' : 'revoke_admin', targetId);
     return json(res, 200, { user: publicUser({ ...target, is_admin: Boolean(is_admin) }) });
+  }
+
+  const adminBanMatch = url.pathname.match(/^\/api\/admin\/users\/(\d+)\/ban$/);
+  if (adminBanMatch && req.method === 'PUT') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const targetId = Number(adminBanMatch[1]);
+    const { duration_hours = 24 } = await readBody(req);
+    const target = db.prepare('SELECT id, username, is_admin, avatar_updated_at, banned_until FROM users WHERE id = ?').get(targetId);
+    if (!target) return json(res, 404, { error: '用户不存在' });
+    if (target.is_admin) return json(res, 400, { error: '不能封禁管理员' });
+    const bannedUntil = Date.now() + Number(duration_hours) * 3600_000;
+    db.prepare('UPDATE users SET banned_until = ? WHERE id = ?').run(bannedUntil, targetId);
+    logAudit(admin.id, 'ban_user', targetId, `封禁 ${duration_hours} 小时`);
+    return json(res, 200, { user: publicUser({ ...target, banned_until: bannedUntil }) });
+  }
+
+  const adminUnbanMatch = url.pathname.match(/^\/api\/admin\/users\/(\d+)\/unban$/);
+  if (adminUnbanMatch && req.method === 'PUT') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const targetId = Number(adminUnbanMatch[1]);
+    const target = db.prepare('SELECT id, username, is_admin, avatar_updated_at, banned_until FROM users WHERE id = ?').get(targetId);
+    if (!target) return json(res, 404, { error: '用户不存在' });
+    db.prepare('UPDATE users SET banned_until = NULL WHERE id = ?').run(targetId);
+    logAudit(admin.id, 'unban_user', targetId);
+    return json(res, 200, { user: publicUser({ ...target, banned_until: null }) });
+  }
+
+  const adminMuteMatch = url.pathname.match(/^\/api\/admin\/users\/(\d+)\/mute$/);
+  if (adminMuteMatch && req.method === 'PUT') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const targetId = Number(adminMuteMatch[1]);
+    const { duration_hours = 1 } = await readBody(req);
+    const target = db.prepare('SELECT id, username, is_admin, avatar_updated_at, muted_until FROM users WHERE id = ?').get(targetId);
+    if (!target) return json(res, 404, { error: '用户不存在' });
+    if (target.is_admin) return json(res, 400, { error: '不能禁言管理员' });
+    const mutedUntil = Date.now() + Number(duration_hours) * 3600_000;
+    db.prepare('UPDATE users SET muted_until = ? WHERE id = ?').run(mutedUntil, targetId);
+    logAudit(admin.id, 'mute_user', targetId, `禁言 ${duration_hours} 小时`);
+    return json(res, 200, { user: publicUser({ ...target, muted_until: mutedUntil }) });
+  }
+
+  const adminUnmuteMatch = url.pathname.match(/^\/api\/admin\/users\/(\d+)\/unmute$/);
+  if (adminUnmuteMatch && req.method === 'PUT') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const targetId = Number(adminUnmuteMatch[1]);
+    const target = db.prepare('SELECT id, username, is_admin, avatar_updated_at, muted_until FROM users WHERE id = ?').get(targetId);
+    if (!target) return json(res, 404, { error: '用户不存在' });
+    db.prepare('UPDATE users SET muted_until = NULL WHERE id = ?').run(targetId);
+    logAudit(admin.id, 'unmute_user', targetId);
+    return json(res, 200, { user: publicUser({ ...target, muted_until: null }) });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/audit-logs') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const logs = db.prepare(`
+      SELECT audit_logs.*, admins.username AS admin_name, targets.username AS target_name
+      FROM audit_logs
+      LEFT JOIN users AS admins ON admins.id = audit_logs.admin_id
+      LEFT JOIN users AS targets ON targets.id = audit_logs.target_user_id
+      ORDER BY audit_logs.id DESC LIMIT 100
+    `).all();
+    return json(res, 200, { logs });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/me/avatar') {
@@ -705,6 +830,7 @@ async function api(req, res, url) {
     const roomId = Number(messageMatch[1]);
     const context = requireRoomAccess(req, res, roomId); if (!context) return;
     const user = context.user;
+    if (isUserMuted(user)) return json(res, 403, { error: '你已被禁言，无法发送消息', muted_until: user.muted_until });
     const { content = '', attachment_id = null, reply_to = null, thread_root = null } = await readBody(req);
     const text = String(content).trim();
     const attachmentId = attachment_id == null ? null : Number(attachment_id);
