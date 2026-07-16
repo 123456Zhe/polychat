@@ -260,7 +260,7 @@ async function loadRooms() {
 async function choose(item) {
   const generation = ++roomGeneration;
   activeMessageRequest?.abort();
-  stopTyping(); room.value = item; clearUnread(item.id); messages.value = []; lastId = 0; oldestId = 0; hasOlderMessages.value = false; roomPins.value = [];
+  stopTyping(); room.value = item; conversation.value = null; clearUnread(item.id); messages.value = []; lastId = 0; oldestId = 0; hasOlderMessages.value = false; roomPins.value = [];
   await loadLatestMessages(generation);
   await loadRoomPins();
   scheduleMessagePoll();
@@ -286,7 +286,7 @@ async function loadLatestMessages(generation = roomGeneration) {
   finally { if (activeMessageRequest === controller) activeMessageRequest = null; messagesLoading = false; }
 }
 async function pollNewMessages() {
-  if (!room.value || messagesLoading) return false;
+  if (!room.value || messagesLoading || view.value === 'dm') return false;
   const targetRoom = room.value.id;
   const generation = roomGeneration;
   const nearBottom = !messageList.value || messageList.value.scrollHeight - messageList.value.scrollTop - messageList.value.clientHeight < 100;
@@ -437,7 +437,7 @@ async function declineFriend(userId) { try { await api(`/api/friends/${userId}/d
 async function removeFriend(userId) { try { await api(`/api/friends/${userId}`, { method: 'DELETE' }); await loadFriends(); await loadConversations(); } catch (e) { notify(e.message); } }
 async function loadConversations() { try { const result = await api('/api/dm/conversations'); conversations.value = result.conversations; dmUnread.value = {}; for (const conv of conversations.value) if (conv.unread) dmUnread.value[conv.id] = conv.unread; } catch { /* ignore */ } }
 async function openDm(peer) { try { const result = await api('/api/dm/conversations', { method: 'POST', body: JSON.stringify({ username: peer.username }) }); await loadConversations(); await selectConversation(result.conversation); } catch (e) { notify(e.message); } }
-async function selectConversation(conv) { conversation.value = conv; dmMessages.value = []; dmLastId = 0; dmOldestId = 0; dmReplyTarget.value = null; dmInput.value = ''; view.value = 'dm'; friendsOpen.value = false; try { const result = await api(`/api/dm/conversations/${conv.id}/messages?before=9007199254740991&limit=60`); dmMessages.value = result.messages; dmLastId = dmMessages.value.at(-1)?.id || 0; dmOldestId = dmMessages.value[0]?.id || 0; await nextTick(); messageList.value?.scrollTo({ top: messageList.value.scrollHeight }); } catch (e) { notify(e.message); } await markConversationRead(); }
+async function selectConversation(conv) { conversation.value = conv; dmMessages.value = []; dmLastId = 0; dmOldestId = 0; dmReplyTarget.value = null; dmInput.value = ''; view.value = 'dm'; room.value = null; roomPins.value = []; friendsOpen.value = false; try { const result = await api(`/api/dm/conversations/${conv.id}/messages?before=9007199254740991&limit=60`); dmMessages.value = result.messages; dmLastId = dmMessages.value.at(-1)?.id || 0; dmOldestId = dmMessages.value[0]?.id || 0; await nextTick(); messageList.value?.scrollTo({ top: messageList.value.scrollHeight }); } catch (e) { notify(e.message); } await markConversationRead(); }
 async function markConversationRead() { if (!conversation.value) return; const last = dmLastId || (dmMessages.value.at(-1)?.id || 0); if (!last) return; try { await api(`/api/dm/conversations/${conversation.value.id}/read`, { method: 'POST', body: JSON.stringify({ message_id: last }) }); dmUnread.value[conversation.value.id] = 0; } catch { /* ignore */ } }
 async function sendDm() { if (!conversation.value || (!dmInput.value.trim() && !dmFiles.value.length)) return; try { const text = dmInput.value; const filesToSend = [...dmFiles.value]; const replyTo = dmReplyTarget.value?.id || null; dmInput.value = ''; dmFiles.value = []; dmReplyTarget.value = null; if (filesToSend.length === 0) { const result = await api(`/api/dm/conversations/${conversation.value.id}/messages`, { method: 'POST', body: JSON.stringify({ content: text, reply_to: replyTo }) }); dmMessages.value = appendUnique(dmMessages.value, [result.message]); dmLastId = result.message.id; } else { for (let i = 0; i < filesToSend.length; i++) { const file = filesToSend[i]; const uploaded = await api('/api/files', { method: 'POST', body: JSON.stringify({ name: file.name, type: file.type || 'application/octet-stream', data: await fileData(file) }) }); const result = await api(`/api/dm/conversations/${conversation.value.id}/messages`, { method: 'POST', body: JSON.stringify({ content: i === 0 ? text : '', attachment_id: uploaded.file.id, reply_to: i === 0 ? replyTo : null }) }); dmMessages.value = appendUnique(dmMessages.value, [result.message]); dmLastId = result.message.id; } } await nextTick(); messageList.value?.scrollTo({ top: messageList.value.scrollHeight, behavior: 'smooth' }); await loadConversations(); } catch (e) { notify(e.message); } }
 function selectRooms() { view.value = 'rooms'; conversation.value = null; }
@@ -485,7 +485,7 @@ onBeforeUnmount(() => { shutdownRealtime(); document.removeEventListener('visibi
           <button class="toolbar-button notification" :class="{on: notificationOn, blocked: notificationPermission === 'denied'}" :title="notificationLabel" @click="toggleNotifications"><span>{{ notificationOn ? '🔔' : '🔕' }}</span><em>{{ notificationButtonText }}</em></button>
         </div>
       </header>
-      <div class="pinned-area" :class="{hidden: !room?.announcement && !roomPins.length}">
+      <div class="pinned-area" :class="{hidden: view === 'dm' || (!room?.announcement && !roomPins.length)}">
         <div v-if="room?.announcement" class="announcement-bar"><div class="announcement-bar-header" @click="announcementExpanded = !announcementExpanded"><span class="pinned-icon">📢</span><span>公告</span><small>by {{ room.announcement_username }}</small><span class="pinned-toggle">{{ announcementExpanded ? '收起' : '展开' }}</span><div v-if="isAdmin || room?.role === 'owner' || room?.role === 'admin'" class="announcement-bar-actions" @click.stop><button @click="openAnnouncement">编辑</button><button @click="deleteAnnouncement">删除</button></div></div><div v-if="announcementExpanded" class="announcement-bar-content markdown" v-html="markdown(room.announcement)"></div></div>
         <div v-if="roomPins.length" class="pinned-bar"><div class="pinned-bar-header" @click="pinsExpanded = !pinsExpanded"><span class="pinned-icon">📌</span><span>置顶消息 ({{ roomPins.length }})</span><span class="pinned-toggle">{{ pinsExpanded ? '收起' : '展开' }}</span></div><div v-if="pinsExpanded" class="pinned-bar-list"><article v-for="pin in roomPins" :key="pin.id" class="pinned-bar-item"><div class="pinned-bar-meta"><strong>{{ pin.username }}</strong><small>{{ time(pin.created_at) }}</small><button v-if="isAdmin || room?.role === 'owner' || room?.role === 'admin'" class="pinned-unpin" @click="unpinMessage(pin)">取消置顶</button></div><div v-if="pin.content" class="markdown" v-html="markdown(pin.content)"></div></article></div></div>
       </div>
