@@ -13,6 +13,9 @@ services:
       DB_PATH: /app/data/polychat.db
       UPLOAD_DIR: /app/data/uploads
       AVATAR_DIR: /app/data/avatars
+      ONEBOT_REVERSE_URL: ${ONEBOT_REVERSE_URL:-}
+      ONEBOT_BOT_TOKEN: ${ONEBOT_BOT_TOKEN:-}
+      ONEBOT_ACCESS_TOKEN: ${ONEBOT_ACCESS_TOKEN:-}
     volumes:
       - ./data:/app/data
     healthcheck:
