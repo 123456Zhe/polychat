@@ -141,11 +141,14 @@ export function createOnebotActionHandler(ctx) {
         case 'get_group_member_info': {
           const roomId = Number(params.group_id);
           const targetId = Number(params.user_id);
-          const room = roomForUser(roomId, user.id);
-          if (!room) return respond(null, 'failed', 100, '房间不存在或无权限');
-          const member = db.prepare(`SELECT users.id, users.username, room_members.role FROM room_members JOIN users ON users.id = room_members.user_id WHERE room_id = ? AND user_id = ?`).get(roomId, targetId);
-          if (!member) return respond(null, 'failed', 100, '成员不存在');
-          respond({ user_id: member.id, nickname: member.username, role: member.role });
+          if (!targetId) return respond(null, 'failed', 100, '缺少 user_id');
+          const room = roomId ? roomForUser(roomId, user.id) : null;
+          const member = roomId
+            ? db.prepare(`SELECT users.id, users.username, room_members.role FROM room_members JOIN users ON users.id = room_members.user_id WHERE room_id = ? AND user_id = ?`).get(roomId, targetId)
+            : null;
+          const fallback = member || db.prepare('SELECT id, username FROM users WHERE id = ?').get(targetId);
+          if (!fallback) return respond(null, 'failed', 100, '用户不存在');
+          respond({ user_id: fallback.id, nickname: fallback.username, role: member?.role || 'member' });
           break;
         }
         case 'get_group_msg_history': {
