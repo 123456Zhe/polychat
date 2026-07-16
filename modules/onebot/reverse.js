@@ -84,10 +84,7 @@ export function createOnebotReverse({ db, isUserBanned, botSockets, handleAction
   function heartbeat() {
     for (const state of connections) {
       const ws = state.socket;
-      if (!ws || ws.readyState !== 1) continue;
-      if (!ws.isAlive) { ws.terminate(); continue; }
-      ws.isAlive = false;
-      ws.ping();
+      if (!ws || ws.readyState !== 1 || !state.botUser) continue;
       ws.send(JSON.stringify({ time: onebotTS(), self_id: state.botUser.id, post_type: 'meta_event', meta_event_type: 'heartbeat', status: { online: true, good: true }, interval: 30000 }));
     }
   }
