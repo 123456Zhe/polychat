@@ -42,6 +42,7 @@ export function createOnebotReverse({ db, isUserBanned, botSockets, handleAction
     const { cfg } = state;
     const headers = {
       'X-Self-ID': String(botUser.id),
+      'X-Client-Role': 'Universal',
       'User-Agent': 'PolyChat-OneBot/11',
     };
     if (cfg.accessToken) headers.Authorization = `Bearer ${cfg.accessToken}`;
