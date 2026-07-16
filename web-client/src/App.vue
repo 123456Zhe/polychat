@@ -26,7 +26,7 @@ const view = ref('rooms'), conversations = ref([]), conversation = ref(null), dm
 const friendsOpen = ref(false), friendList = ref({ accepted: [], incoming: [], outgoing: [] }), friendSearchQuery = ref(''), friendSearchResults = ref([]);
 const dmTypeahead = ref(''), dmInput = ref(''), dmReplyTarget = ref(null), dmFiles = ref([]);
 const totalDmUnread = computed(() => Object.values(dmUnread.value).reduce((total, count) => total + count, 0));
-let messageTimer, roomTimer, eventTimer, lastId = 0, oldestId = 0, eventCursor = null;
+let messageTimer, roomTimer, eventTimer, dmTimer, friendTimer, lastId = 0, oldestId = 0, eventCursor = null;
 let roomGeneration = 0, activeMessageRequest = null, roomsLoading = false, eventsLoading = false, messagesLoading = false;
 let socket = null, reconnectTimer = null, socketBackoff = 1000;
 let typingTimer = null, typingRoomId = null;
@@ -112,7 +112,7 @@ function avatar(member) { return member?.avatar_url || (member?.avatar_updated_a
 function clearTimers() { clearTimeout(messageTimer); clearInterval(roomTimer); clearInterval(eventTimer); activeMessageRequest?.abort(); }
 function toggleSidebar() { sidebarOpen.value = !sidebarOpen.value; }
 function closeSidebar() { if (isMobile.value) sidebarOpen.value = false; }
-function shutdownRealtime() { clearTimers(); clearTimeout(reconnectTimer); if (socket) { socket.onclose = null; socket.close(); socket = null; } }
+function shutdownRealtime() { clearTimers(); clearTimeout(reconnectTimer); clearInterval(dmTimer); clearInterval(friendTimer); if (socket) { socket.onclose = null; socket.close(); socket = null; } }
 function sendSocket(event) { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event)); }
 function stopTyping() { clearTimeout(typingTimer); if (typingRoomId) sendSocket({ type: 'typing', room_id: typingRoomId, typing: false }); typingRoomId = null; }
 function sendTyping() {
@@ -167,12 +167,11 @@ async function enter() {
   if (navigator.permissions && notificationSupported.value) navigator.permissions.query({ name: 'notifications' }).then(status => { status.onchange = syncNotificationState; }).catch(() => {});
 }
 function startPolling() {
-  clearTimeout(messageTimer); clearInterval(roomTimer); clearInterval(eventTimer);
+  clearTimeout(messageTimer); clearInterval(roomTimer); clearInterval(eventTimer); clearInterval(dmTimer); clearInterval(friendTimer);
   const background = document.hidden;
   roomTimer = setInterval(loadRooms, socket?.readyState === WebSocket.OPEN ? 120_000 : 15_000);
   if (socket?.readyState !== WebSocket.OPEN) eventTimer = setInterval(events, background ? 15_000 : 3_000);
-  if (socket?.readyState !== WebSocket.OPEN) setInterval(loadConversations, 10_000);
-  if (socket?.readyState !== WebSocket.OPEN) setInterval(loadFriends, 30_000);
+  if (socket?.readyState !== WebSocket.OPEN) { dmTimer = setInterval(loadConversations, 10_000); friendTimer = setInterval(loadFriends, 30_000); }
   scheduleMessagePoll(socket?.readyState === WebSocket.OPEN ? 60_000 : (background ? 12_000 : 1_500));
 }
 function scheduleMessagePoll(delay = 1_500) {
@@ -441,6 +440,7 @@ async function selectConversation(conv) { conversation.value = conv; dmMessages.
 async function markConversationRead() { if (!conversation.value) return; const last = dmLastId || (dmMessages.value.at(-1)?.id || 0); if (!last) return; try { await api(`/api/dm/conversations/${conversation.value.id}/read`, { method: 'POST', body: JSON.stringify({ message_id: last }) }); dmUnread.value[conversation.value.id] = 0; } catch { /* ignore */ } }
 async function sendDm() { if (!conversation.value || (!dmInput.value.trim() && !dmFiles.value.length)) return; try { const text = dmInput.value; const filesToSend = [...dmFiles.value]; const replyTo = dmReplyTarget.value?.id || null; dmInput.value = ''; dmFiles.value = []; dmReplyTarget.value = null; if (filesToSend.length === 0) { const result = await api(`/api/dm/conversations/${conversation.value.id}/messages`, { method: 'POST', body: JSON.stringify({ content: text, reply_to: replyTo }) }); dmMessages.value = appendUnique(dmMessages.value, [result.message]); dmLastId = result.message.id; } else { for (let i = 0; i < filesToSend.length; i++) { const file = filesToSend[i]; const uploaded = await api('/api/files', { method: 'POST', body: JSON.stringify({ name: file.name, type: file.type || 'application/octet-stream', data: await fileData(file) }) }); const result = await api(`/api/dm/conversations/${conversation.value.id}/messages`, { method: 'POST', body: JSON.stringify({ content: i === 0 ? text : '', attachment_id: uploaded.file.id, reply_to: i === 0 ? replyTo : null }) }); dmMessages.value = appendUnique(dmMessages.value, [result.message]); dmLastId = result.message.id; } } await nextTick(); messageList.value?.scrollTo({ top: messageList.value.scrollHeight, behavior: 'smooth' }); await loadConversations(); } catch (e) { notify(e.message); } }
 function selectRooms() { view.value = 'rooms'; conversation.value = null; }
+async function selectDmView() { await loadConversations(); if (conversations.value.length) await selectConversation(conversations.value[0]); else view.value = 'dm'; }
 function dmAvatar(member) { return member?.avatar_url || (member?.avatar_updated_at ? `/api/users/${member.user_id ?? member.id}/avatar?v=${member.avatar_updated_at}` : ''); }
 function startDmReply(message) { dmReplyTarget.value = message; }
 async function retractDm(message) { if (!confirm('确定撤回这条私信吗？')) return; try { await api(`/api/dm/messages/${message.id}`, { method: 'DELETE' }); message.content = ''; message.attachment_id = null; message.deleted_at = new Date().toISOString(); notify('消息已撤回'); } catch (e) { notify(e.message); } }
@@ -472,7 +472,7 @@ onBeforeUnmount(() => { shutdownRealtime(); document.removeEventListener('visibi
         <div v-else><h2><span>#</span> {{ room?.name || '大厅' }} <small v-if="room?.is_private">🔒 私有</small></h2><small><i class="online-dot"></i>{{ onlineUsers.length }} 人在线<span v-if="typingText"> · {{ typingText }}</span></small></div>
         <div class="topbar-actions">
           <button class="toolbar-button" @click="openFriends"><span>👥</span><em>好友</em><small v-if="totalDmUnread || friendList.incoming.length" class="unread">{{ (totalDmUnread + friendList.incoming.length) > 99 ? '99+' : (totalDmUnread + friendList.incoming.length) }}</small></button>
-          <button class="toolbar-button" @click="loadConversations(); selectRooms(); view = 'dm'; friendsOpen = false" v-if="view !== 'dm'"><span>✉</span><em>私信</em><small v-if="totalDmUnread" class="unread">{{ totalDmUnread > 99 ? '99+' : totalDmUnread }}</small></button>
+          <button class="toolbar-button" @click="selectDmView()" v-if="view !== 'dm'"><span>✉</span><em>私信</em><small v-if="totalDmUnread" class="unread">{{ totalDmUnread > 99 ? '99+' : totalDmUnread }}</small></button>
           <button class="toolbar-button" @click="loadPins">⌖ <em>置顶</em></button>
           <button class="toolbar-button" @click="openInviteCodePrompt">🔗 <em>加入</em></button>
           <button class="toolbar-button" @click="searchOpen = true">⌕ <em>搜索</em></button>
