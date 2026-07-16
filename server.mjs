@@ -1726,6 +1726,7 @@ export const server = http.createServer(async (req, res) => {
 
 const onebot = setupOnebot({ db, eventBus, roomForUser, validateMentions, hydrateMessages, broadcast, conversationMembers, socketCanAccess, isUserBanned });
 onebot.attach(server);
+if (process.env.NODE_ENV !== 'test') onebot.startReverse();
 
 const webSocketServer = new WebSocketServer({ noServer: true });
 server.on('upgrade', (req, socket, head) => {

@@ -1,7 +1,7 @@
 import { onebotTS, onebotSegments, onebotMessageText, onebotGetOrCreateDm } from './utils.js';
 
 export function createOnebotActionHandler(ctx) {
-  const { db, roomForUser, validateMentions, hydrateMessages, broadcast, botSockets } = ctx;
+  const { db, roomForUser, validateMentions, hydrateMessages, broadcast, conversationMembers, socketCanAccess, botSockets } = ctx;
 
   function broadcastOnebotGroupMessage(roomId, message, sender) {
     const cache = new Map();
