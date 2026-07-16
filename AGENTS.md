@@ -12,8 +12,10 @@
 - ✅ **阶段 4**：管理安全（登录限速、审计日志、管理员封禁/禁言）
 - ✅ **阶段 5**：数据管理（导出聊天记录、删除账户与个人数据）
 - ✅ **阶段 6**：运行监控（自动备份 SQLite、健康检查端点）
+- ✅ **阶段 7**：好友系统（好友请求、接受/拒绝、删除、双向关系）
+- ✅ **阶段 8**：私信系统（DM 会话、消息发送/编辑/撤回/表情、未读计数、已读回执、WebSocket 实时推送）
 
-所有阶段已完成。GUI/TUI 客户端和文档已同步更新。
+所有阶段已完成。GUI/TUI/Web 客户端和文档已同步更新。
 
 ---
 
@@ -64,3 +66,7 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 - Users can export chat history and delete their account.
 - Health check endpoint: `GET /api/health`.
 - Optional automatic SQLite backup (enabled by default).
+- WebSocket realtime: room messages, DM messages, friend events (request/accept/remove), typing indicators, presence. HTTP polling retained as fallback.
+- Friend system: bidirectional — sender creates pending request; accept creates reverse row. Must be friends to start a DM conversation.
+- DM (private messaging): `dm_conversations` + `dm_members` tables. Messages stored in `messages` table with `dm_id` set and `room_id` null. Supports unread counts, marking as read, edit, retract, and reactions.
+- `NODE_ENV=test` disables registration rate limiting so tests can create unlimited accounts from the same IP.

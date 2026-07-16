@@ -46,7 +46,11 @@ class TUI:
         self.screen, self.api, self.user = screen, api, user
         self.timezone = local_timezone()
         self.rooms = api.rooms(); self.room = self.rooms[0]; self.messages = []; self.last_id = 0
-        self.input = ""; self.status = "Enter 发送 · ↑↓/PgUp/PgDn 滚动 · /help 查看命令"; self.last_poll = 0; self.last_room_poll = 0
+        self.view = "rooms"  # "rooms" | "dm"
+        self.conversations = []
+        self.conversation = None
+        self.dm_messages = []; self.dm_last_id = 0
+        self.input = ""; self.status = "Enter 发送 · ↑↓/PgUp/PgDn 滚动 · /help 查看命令"; self.last_poll = 0; self.last_room_poll = 0; self.last_dm_poll = 0
         self.scroll = 0
         self.max_scroll = 0
         self.page_size = 1
@@ -55,9 +59,15 @@ class TUI:
 
     def fetch(self):
         try:
-            new = self.api.messages(self.room["id"], self.last_id)
-            self.messages.extend(new)
-            if new: self.last_id = new[-1]["id"]
+            if self.view == "dm" and self.conversation:
+                new = self.api.dm_messages(self.conversation["id"], self.dm_last_id)
+                self.dm_messages.extend(new)
+                if new: self.dm_last_id = new[-1]["id"]
+                if new: self.api.mark_dm_read(self.conversation["id"], self.dm_last_id)
+            elif self.room:
+                new = self.api.messages(self.room["id"], self.last_id)
+                self.messages.extend(new)
+                if new: self.last_id = new[-1]["id"]
         except ApiError as exc: self.status = str(exc)
 
     def refresh_rooms(self):
@@ -67,13 +77,22 @@ class TUI:
             self.room = next((room for room in self.rooms if room["id"] == selected_id), self.rooms[0])
         except ApiError as exc: self.status = str(exc)
 
+    def refresh_conversations(self):
+        try:
+            self.conversations = self.api.dm_conversations()
+        except ApiError as exc: self.status = str(exc)
+
     def draw(self):
         s = self.screen; s.erase(); h, w = s.getmaxyx()
         if h < 8 or w < 35: s.addnstr(0, 0, "终端窗口太小", max(1, w - 1)); s.refresh(); return
-        title = f" ◖P◗ PolyChat  #{self.room['name']}  ·  {self.user['username']} "
+        if self.view == "dm" and self.conversation:
+            title = f" ◖P◗ PolyChat  ✉ {self.conversation.get('peer', {}).get('username', '私信')}  ·  {self.user['username']} "
+        else:
+            title = f" ◖P◗ PolyChat  #{self.room['name']}  ·  {self.user['username']} "
         s.attron(curses.A_REVERSE); s.addnstr(0, 0, title.ljust(w), w - 1); s.attroff(curses.A_REVERSE)
         lines = []
-        for msg in self.messages:
+        source = self.dm_messages if self.view == "dm" else self.messages
+        for msg in source:
             created_at = format_server_time(msg["created_at"], self.timezone)
             suffix = " · 已编辑" if msg.get("edited_at") else ""
             lines.append((f"{msg['id']} · {msg['username']}  {created_at}{suffix}", curses.A_BOLD))
@@ -126,7 +145,7 @@ class TUI:
 
     def command(self, value):
         if value == "/quit": return False
-        if value == "/help": self.status = "/rooms /room 编号 /newprivate 名称 /rename 名称 /delete-room /invite 用户 [admin] /kick 用户名 /reply /react /edit /retract /search /sendfile /getfile /avatar /announcement /invite-code /export /delete-account /quit"; return True
+        if value == "/help": self.status = "/rooms /room 编号 /newprivate 名称 /rename 名称 /delete-room /invite 用户 [admin] /kick 用户名 /reply /react /edit /retract /search /sendfile /getfile /avatar /announcement /invite-code /friends /addfriend 用户 /accept 用户 /delfriend 用户 /dm 用户 /dmback /export /delete-account /quit"; return True
         if value == "/rooms": self.status = "  ".join(f"{i + 1}:{r['name']}" for i, r in enumerate(self.rooms)); return True
         if value.startswith("/room "):
             try:
@@ -244,8 +263,54 @@ class TUI:
                 self.status = f"邀请码: {code['code']}"
             except ApiError as exc: self.status = str(exc)
             return True
+        if value == "/friends":
+            try:
+                friends = self.api.friends()
+                parts = []
+                if friends.get("incoming"): parts.append("请求:" + ",".join(f["username"] for f in friends["incoming"]))
+                parts.append("好友:" + ",".join(f["username"] for f in friends.get("accepted", [])))
+                self.status = "  ".join(parts) or "暂无好友"
+            except ApiError as exc: self.status = str(exc)
+            return True
+        if value.startswith("/addfriend "):
+            try: self.api.friend_request(value[11:].strip()); self.status = "好友请求已发送"
+            except ApiError as exc: self.status = str(exc)
+            return True
+        if value.startswith("/accept "):
+            try:
+                name = value[8:].strip()
+                target = next(f for f in self.api.friends().get("incoming", []) if f["username"] == name)
+                self.api.friend_accept(target["id"]); self.status = f"已接受 {name} 的好友请求"
+            except (ApiError, StopIteration) as exc: self.status = f"用法: /accept 用户名 · {exc}"
+            return True
+        if value.startswith("/delfriend "):
+            try:
+                name = value[10:].strip()
+                target = next(f for f in self.api.friends().get("accepted", []) if f["username"] == name)
+                self.api.friend_remove(target["id"]); self.status = f"已删除好友 {name}"
+            except (ApiError, StopIteration) as exc: self.status = f"用法: /delfriend 用户名 · {exc}"
+            return True
+        if value.startswith("/dm "):
+            try:
+                name = value[4:].strip()
+                conv = self.api.create_dm(name)
+                self.refresh_conversations()
+                self.conversation = next((c for c in self.conversations if c["id"] == conv["id"]), conv)
+                self.view = "dm"; self.dm_messages = []; self.dm_last_id = 0; self.scroll = 0; self.fetch()
+                self.status = f"已进入与 {name} 的私信"
+            except ApiError as exc: self.status = str(exc)
+            return True
+        if value == "/dmback":
+            self.view = "rooms"; self.conversation = None; self.status = "返回聊天室"; return True
         if value == "/clear": self.messages = []; self.scroll = 0; self.status = "屏幕已清空"; return True
-        try: self.api.send(self.room["id"], value); self.fetch(); self.status = "已发送"
+        try:
+            if self.view == "dm" and self.conversation:
+                self.api.send_dm(self.conversation["id"], value)
+            elif self.room:
+                self.api.send(self.room["id"], value)
+            else:
+                self.status = "请先选择一个聊天室或私信"; return True
+            self.fetch(); self.status = "已发送"
         except ApiError as exc: self.status = str(exc)
         return True
 
@@ -253,6 +318,11 @@ class TUI:
         while True:
             if time.monotonic() - self.last_poll > 1.5: self.fetch(); self.last_poll = time.monotonic()
             if time.monotonic() - self.last_room_poll > 3: self.refresh_rooms(); self.last_room_poll = time.monotonic()
+            if time.monotonic() - self.last_dm_poll > 5:
+                if self.view == "rooms":
+                    try: self.conversations = self.api.dm_conversations()
+                    except ApiError: pass
+                self.last_dm_poll = time.monotonic()
             self.draw()
             try: key = self.screen.get_wch()
             except curses.error: continue

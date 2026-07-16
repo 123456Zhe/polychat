@@ -12,6 +12,13 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 - 多聊天室，可由任意已登录用户创建
 - Web 端支持标题、列表、引用、代码块、链接、图片、粗体、斜体、删除线等 Markdown
 - Web 端通过 KaTeX 支持行内 `$...$` 和块级 `$$...$$` LaTeX；CDN 不可用时显示原始公式
+- WebSocket 实时推送：房间消息、私信、好友事件（请求/接受/删除）、输入状态和在线状态；所有客户端保留 HTTP 轮询作为降级方案
+
+### 好友与私信
+- 好友系统：发送请求→对方接受→双向关系，支持拒绝和删除
+- 私信（DM）：好友间可开启私信会话，支持发送、编辑、撤回、表情和未读计数
+- Web 端私信显示未读角标、已读回执和实时消息推送
+- 仅好友间可发起私信，非好友返回 403
 
 ### 文件与媒体
 - 登录用户可传输文件；附件持久化保存、鉴权下载，单文件上限 100 MB（可通过 `MAX_FILE_SIZE` 配置）
@@ -187,6 +194,12 @@ $$
 - `/sendfile ./报告.pdf`：发送文件
 - `/getfile 12 ./报告.pdf`：按消息中显示的文件 ID 下载
 - `/avatar ./头像.png`：上传当前账号头像
+- `/friends`：查看好友列表
+- `/addfriend 用户名`：发送好友请求
+- `/accept 用户名`：接受好友请求
+- `/delfriend 用户名`：删除好友
+- `/dm 用户名`：进入私信会话
+- `/dmback`：返回聊天室列表
 - `/export [文件名]`：导出聊天记录
 - `/delete-account`：删除账号
 - `/clear`：清空当前屏幕消息
@@ -201,7 +214,7 @@ python3 -m unittest discover -s test -p 'test_client.py'
 python3 -m py_compile clients/chat_api.py clients/gui.py clients/tui.py
 ```
 
-测试使用临时 SQLite 数据库，覆盖注册、登录、鉴权、建房、Markdown/LaTeX 消息持久化与密码非明文存储。
+测试使用临时 SQLite 数据库，覆盖注册、登录、鉴权、建房、Markdown/LaTeX 消息持久化、密码非明文存储、好友请求/接受/删除、私信发送/编辑/撤回/表情/未读/已读以及 WebSocket 实时推送。
 
 ## 构建 GUI
 
@@ -281,6 +294,19 @@ curl -I http://127.0.0.1:3000/
 | GET | `/api/events?after=:id` | 增量获取跨房间消息通知 |
 | POST/DELETE | `/api/me/avatar` | 上传/移除当前账号头像 |
 | GET | `/api/users/:id/avatar` | 鉴权读取用户头像 |
+| GET | `/api/friends` | 查看好友列表（含待处理请求） |
+| POST | `/api/friends/request` | 发送好友请求（需用户名） |
+| POST | `/api/friends/:id/accept` | 接受好友请求 |
+| POST | `/api/friends/:id/decline` | 拒绝好友请求 |
+| DELETE | `/api/friends/:id` | 删除好友 |
+| GET | `/api/dm/conversations` | 列出私信会话 |
+| POST | `/api/dm/conversations` | 创建私信会话（需用户名，必须是好友） |
+| GET | `/api/dm/conversations/:id/messages` | 拉取私信消息 |
+| POST | `/api/dm/conversations/:id/messages` | 发送私信 |
+| PUT | `/api/dm/messages/:id` | 编辑私信 |
+| DELETE | `/api/dm/messages/:id` | 撤回私信 |
+| POST | `/api/dm/messages/:id/reactions` | 私信添加表情 |
+| POST | `/api/dm/conversations/:id/read` | 标记私信已读 |
 | POST | `/api/files` | 上传 Base64 文件 |
 | POST | `/api/uploads` | 创建分片上传会话 |
 | GET | `/api/uploads/:id` | 获取上传会话状态 |
@@ -296,4 +322,4 @@ curl -I http://127.0.0.1:3000/
 | PUT | `/api/admin/users/:id/unmute` | 解除禁言 |
 | GET | `/api/admin/audit-logs` | 查看审计日志 |
 
-拉取消息可加 `?after=<消息ID>&limit=100` 实现增量更新。
+拉取消息可加 `?after=<消息ID>&limit=100` 实现增量更新。私信会话列表返回未读数，拉取消息后可调用 `/api/dm/conversations/:id/read` 标记已读。WebSocket 地址为 `ws://host:port/ws?token=<token>`，连接后自动接收房间消息、私信和好友事件的实时推送。

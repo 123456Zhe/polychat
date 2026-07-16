@@ -267,3 +267,156 @@ test('Web Push VAPID 公钥和订阅可持久化及注销', async () => {
   assert.equal((await api('/api/push/subscriptions', { method: 'DELETE', headers: auth, body: JSON.stringify({ endpoint: subscription.endpoint }) })).response.status, 200);
   assert.equal(db.prepare('SELECT 1 FROM push_subscriptions WHERE endpoint = ?').get(subscription.endpoint), undefined);
 });
+
+test('好友请求、接受和好友列表', async () => {
+  const alice = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'friend_alice', password: 'friend-password-1' }) });
+  const bob = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'friend_bob', password: 'friend-password-2' }) });
+  const aliceAuth = { authorization: `Bearer ${alice.body.token}` };
+  const bobAuth = { authorization: `Bearer ${bob.body.token}` };
+
+  // Alice sends friend request to Bob
+  const request = await api('/api/friends/request', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ username: 'friend_bob' }) });
+  assert.equal(request.response.status, 201);
+
+  // Cannot send duplicate request
+  const dup = await api('/api/friends/request', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ username: 'friend_bob' }) });
+  assert.equal(dup.response.status, 409);
+
+  // Cannot add self
+  const self = await api('/api/friends/request', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ username: 'friend_alice' }) });
+  assert.equal(self.response.status, 400);
+
+  // Bob sees incoming request
+  const bobFriends = await api('/api/friends', { headers: bobAuth });
+  assert.equal(bobFriends.body.incoming.length, 1);
+  assert.equal(bobFriends.body.incoming[0].username, 'friend_alice');
+
+  // Alice sees outgoing request
+  const aliceFriends = await api('/api/friends', { headers: aliceAuth });
+  assert.equal(aliceFriends.body.outgoing.length, 1);
+  assert.equal(aliceFriends.body.outgoing[0].username, 'friend_bob');
+
+  // Bob declines then re-requests and accepts
+  await api(`/api/friends/${alice.body.user.id}/decline`, { method: 'POST', headers: bobAuth });
+  await api('/api/friends/request', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ username: 'friend_bob' }) });
+  await api(`/api/friends/${alice.body.user.id}/accept`, { method: 'POST', headers: bobAuth });
+
+  // Both now see accepted
+  const afterAccept = await api('/api/friends', { headers: aliceAuth });
+  assert.equal(afterAccept.body.accepted.length >= 1, true);
+  assert.ok(afterAccept.body.accepted.some(f => f.username === 'friend_bob'));
+
+  // Remove friend
+  await api(`/api/friends/${bob.body.user.id}`, { method: 'DELETE', headers: aliceAuth });
+  const afterRemove = await api('/api/friends', { headers: aliceAuth });
+  assert.ok(!afterRemove.body.accepted.some(f => f.username === 'friend_bob'));
+});
+
+test('私信会话创建、消息发送、未读和已读', async () => {
+  const alice = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'dm_alice', password: 'dm-password-1' }) });
+  const bob = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'dm_bob', password: 'dm-password-2' }) });
+  const aliceAuth = { authorization: `Bearer ${alice.body.token}` };
+  const bobAuth = { authorization: `Bearer ${bob.body.token}` };
+
+  // Must be friends first
+  await api('/api/friends/request', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ username: 'dm_bob' }) });
+  await api(`/api/friends/${alice.body.user.id}/accept`, { method: 'POST', headers: bobAuth });
+
+  // Cannot DM non-friend
+  const charlie = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'dm_charlie', password: 'dm-password-3' }) });
+  const charlieAuth = { authorization: `Bearer ${charlie.body.token}` };
+  const noFriendDm = await api('/api/dm/conversations', { method: 'POST', headers: charlieAuth, body: JSON.stringify({ username: 'dm_alice' }) });
+  assert.equal(noFriendDm.response.status, 403);
+
+  // Cannot DM self
+  const selfDm = await api('/api/dm/conversations', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ username: 'dm_alice' }) });
+  assert.equal(selfDm.response.status, 400);
+
+  // Create DM conversation
+  const conv = await api('/api/dm/conversations', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ username: 'dm_bob' }) });
+  assert.equal(conv.response.status, 201);
+  const convId = conv.body.conversation.id;
+  assert.ok(conv.body.conversation.peer);
+
+  // Creating again returns existing
+  const conv2 = await api('/api/dm/conversations', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ username: 'dm_bob' }) });
+  assert.equal(conv2.body.conversation.id, convId);
+
+  // Send DM
+  const sent = await api(`/api/dm/conversations/${convId}/messages`, { method: 'POST', headers: aliceAuth, body: JSON.stringify({ content: '私信你好' }) });
+  assert.equal(sent.response.status, 201);
+  assert.equal(sent.body.message.content, '私信你好');
+
+  // Bob reads messages
+  const bobMsgs = await api(`/api/dm/conversations/${convId}/messages`, { headers: bobAuth });
+  assert.equal(bobMsgs.body.messages.length, 1);
+  assert.equal(bobMsgs.body.messages[0].content, '私信你好');
+
+  // Bob sees unread = 1
+  const bobConvs = await api('/api/dm/conversations', { headers: bobAuth });
+  assert.equal(bobConvs.body.conversations[0].unread, 1);
+
+  // Mark read
+  await api(`/api/dm/conversations/${convId}/read`, { method: 'POST', headers: bobAuth, body: JSON.stringify({ message_id: sent.body.message.id }) });
+  const bobConvs2 = await api('/api/dm/conversations', { headers: bobAuth });
+  assert.equal(bobConvs2.body.conversations[0].unread, 0);
+
+  // Edit DM
+  const edited = await api(`/api/dm/messages/${sent.body.message.id}`, { method: 'PUT', headers: aliceAuth, body: JSON.stringify({ content: '已编辑' }) });
+  assert.equal(edited.body.message.content, '已编辑');
+
+  // Retract DM
+  await api(`/api/dm/messages/${sent.body.message.id}`, { method: 'DELETE', headers: aliceAuth });
+  const retracted = await api(`/api/dm/conversations/${convId}/messages`, { headers: bobAuth });
+  assert.equal(retracted.body.messages[0].is_deleted, true);
+
+  // DM reactions
+  const sent2 = await api(`/api/dm/conversations/${convId}/messages`, { method: 'POST', headers: bobAuth, body: JSON.stringify({ content: '表情测试' }) });
+  const reactions = await api(`/api/dm/messages/${sent2.body.message.id}/reactions`, { method: 'POST', headers: aliceAuth, body: JSON.stringify({ emoji: '👍' }) });
+  assert.equal(reactions.body.reactions.length, 1);
+  assert.equal(reactions.body.reactions[0].emoji, '👍');
+});
+
+test('WebSocket 实时推送私信和好友事件', async () => {
+  const alice = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'ws_dm_alice', password: 'ws-dm-password-1' }) });
+  const bob = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'ws_dm_bob', password: 'ws-dm-password-2' }) });
+  const aliceAuth = { authorization: `Bearer ${alice.body.token}` };
+  const bobAuth = { authorization: `Bearer ${bob.body.token}` };
+
+  await api('/api/friends/request', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ username: 'ws_dm_bob' }) });
+  await api(`/api/friends/${alice.body.user.id}/accept`, { method: 'POST', headers: bobAuth });
+
+  const socket = new WebSocket(`${base.replace('http:', 'ws:')}/ws?token=${encodeURIComponent(alice.body.token)}`);
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('WebSocket 连接超时')), 2000);
+    socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
+    socket.addEventListener('error', reject, { once: true });
+  });
+
+  const nextEvent = type => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`未收到 ${type} 事件`)), 2000);
+    const listener = event => {
+      const payload = JSON.parse(event.data);
+      if (payload.type !== type) return;
+      clearTimeout(timer); socket.removeEventListener('message', listener); resolve(payload);
+    };
+    socket.addEventListener('message', listener);
+  });
+
+  // Create DM and send from Bob, Alice should receive dm_message
+  const conv = await api('/api/dm/conversations', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ username: 'ws_dm_bob' }) });
+  const convId = conv.body.conversation.id;
+  const dmEvent = nextEvent('dm_message');
+  await api(`/api/dm/conversations/${convId}/messages`, { method: 'POST', headers: bobAuth, body: JSON.stringify({ content: 'ws 私信' }) });
+  const received = await dmEvent;
+  assert.equal(received.conversation_id, convId);
+  assert.equal(received.message.content, 'ws 私信');
+
+  // Room message should also arrive with full payload
+  const roomEvent = nextEvent('message');
+  await api('/api/rooms/1/messages', { method: 'POST', headers: bobAuth, body: JSON.stringify({ content: 'ws 房间' }) });
+  const roomReceived = await roomEvent;
+  assert.equal(roomReceived.message.content, 'ws 房间');
+
+  socket.close();
+});

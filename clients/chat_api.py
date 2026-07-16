@@ -259,3 +259,45 @@ class ChatAPI:
 
     def search_users(self, query: str):
         return self.request("GET", "/api/users/search?" + urllib.parse.urlencode({"q": query}))["users"]
+
+    def friends(self):
+        return self.request("GET", "/api/friends")
+
+    def friend_request(self, username: str):
+        return self.request("POST", "/api/friends/request", {"username": username})["friend"]
+
+    def friend_accept(self, user_id: int):
+        return self.request("POST", f"/api/friends/{int(user_id)}/accept")["friend"]
+
+    def friend_decline(self, user_id: int):
+        return self.request("POST", f"/api/friends/{int(user_id)}/decline")
+
+    def friend_remove(self, user_id: int):
+        return self.request("DELETE", f"/api/friends/{int(user_id)}")
+
+    def dm_conversations(self):
+        return self.request("GET", "/api/dm/conversations")["conversations"]
+
+    def create_dm(self, username: str):
+        return self.request("POST", "/api/dm/conversations", {"username": username})["conversation"]
+
+    def dm_messages(self, conv_id: int, after: int = 0, before: int = 0):
+        params = {"after": after}
+        if before:
+            params["before"] = before
+        return self.request("GET", f"/api/dm/conversations/{int(conv_id)}/messages?" + urllib.parse.urlencode(params))["messages"]
+
+    def send_dm(self, conv_id: int, content: str, attachment_id: int | None = None, reply_to: int | None = None):
+        return self.request("POST", f"/api/dm/conversations/{int(conv_id)}/messages", {"content": content, "attachment_id": attachment_id, "reply_to": reply_to})["message"]
+
+    def edit_dm(self, message_id: int, content: str):
+        return self.request("PUT", f"/api/dm/messages/{int(message_id)}", {"content": content})["message"]
+
+    def retract_dm(self, message_id: int):
+        return self.request("DELETE", f"/api/dm/messages/{int(message_id)}")
+
+    def react_dm(self, message_id: int, emoji: str):
+        return self.request("POST", f"/api/dm/messages/{int(message_id)}/reactions", {"emoji": emoji})["reactions"]
+
+    def mark_dm_read(self, conv_id: int, message_id: int):
+        return self.request("POST", f"/api/dm/conversations/{int(conv_id)}/read", {"message_id": message_id})

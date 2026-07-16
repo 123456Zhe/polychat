@@ -76,6 +76,13 @@ class ChatState:
     image_failed: set[int] = field(default_factory=set)
     reply_to: dict | None = None
     active: bool = True
+    view: str = "rooms"  # "rooms" | "dm"
+    conversations: list[dict] = field(default_factory=list)
+    conversation: dict | None = None
+    dm_messages: list[dict] = field(default_factory=list)
+    dm_last_id: int = 0
+    dm_reply_to: dict | None = None
+    friends: dict = field(default_factory=dict)
 
 
 class PolyChatApp:
@@ -83,6 +90,7 @@ class PolyChatApp:
         self.page = page
         self.state = ChatState(ChatAPI(server or os.getenv("POLYCHAT_SERVER") or load_server()))
         self.rooms_view = ft.Column(spacing=4, scroll=ft.ScrollMode.AUTO, expand=True)
+        self.dm_view = ft.Column(spacing=4, scroll=ft.ScrollMode.AUTO, expand=True)
         self.messages_view = ft.ListView(expand=True, spacing=14, padding=ft.Padding(28, 22, 28, 22), auto_scroll=True)
         self.room_name = ft.Text("大厅", size=20, weight=ft.FontWeight.W_700, color="#172033")
         self.status = ft.Text("", size=12, color=MUTED)
@@ -252,24 +260,33 @@ class PolyChatApp:
         self.page.update()
 
     def header(self):
+        right_actions = [
+            ft.IconButton(ft.Icons.PEOPLE_ALT_OUTLINED, tooltip="好友与私信", on_click=self.open_friends),
+        ]
+        if self.state.view == "dm":
+            right_actions.append(ft.IconButton(ft.Icons.ARROW_BACK, tooltip="返回聊天室", on_click=lambda _: self.select_rooms()))
+        else:
+            right_actions.extend([
+                ft.IconButton(ft.Icons.SEARCH, tooltip="搜索消息", on_click=self.open_search),
+                ft.IconButton(ft.Icons.PEOPLE_OUTLINE, tooltip="邀请私有房间成员", on_click=lambda _: self.page.run_task(self.open_members, _)),
+                ft.IconButton(ft.Icons.SETTINGS_OUTLINED, tooltip="房间设置", on_click=self.open_room_settings),
+            ])
+        right_actions.append(ft.Container(ft.Row([ft.Icon(ft.Icons.CIRCLE, size=9, color="#22C55E"), ft.Text("已连接", size=12, color="#15803D", weight=ft.FontWeight.W_600)], spacing=6), bgcolor="#ECFDF3", padding=ft.Padding(11, 7, 11, 7), border_radius=16))
         return ft.Container(
             height=82,
             bgcolor="white",
             padding=ft.Padding(left=28, right=28),
             content=ft.Row([
-                ft.Column([self.room_name, ft.Text("消息自动同步 · 支持 Markdown 与 LaTeX", size=11, color=MUTED)], spacing=2),
+                ft.Column([self.room_name, ft.Text("消息自动同步 · 支持 Markdown 与 LaTeX" if self.state.view != "dm" else "私信仅双方可见", size=11, color=MUTED)], spacing=2),
                 ft.Container(expand=True),
-                ft.IconButton(ft.Icons.SEARCH, tooltip="搜索消息", on_click=self.open_search),
-                ft.IconButton(ft.Icons.PEOPLE_OUTLINE, tooltip="邀请私有房间成员", on_click=lambda _: self.page.run_task(self.open_members, _)),
-                ft.IconButton(ft.Icons.SETTINGS_OUTLINED, tooltip="房间设置", on_click=self.open_room_settings),
-                ft.Container(ft.Row([ft.Icon(ft.Icons.CIRCLE, size=9, color="#22C55E"), ft.Text("已连接", size=12, color="#15803D", weight=ft.FontWeight.W_600)], spacing=6), bgcolor="#ECFDF3", padding=ft.Padding(11, 7, 11, 7), border_radius=16),
+                *right_actions,
             ]),
         )
 
     def render_sidebar(self):
         self.rooms_view.controls.clear()
         for room in self.state.rooms:
-            selected = self.state.room and room["id"] == self.state.room["id"]
+            selected = self.state.view == "rooms" and self.state.room and room["id"] == self.state.room["id"]
             self.rooms_view.controls.append(ft.Container(
                 padding=ft.Padding(13, 10, 13, 10),
                 border_radius=9,
@@ -277,6 +294,17 @@ class PolyChatApp:
                 ink=True,
                 on_click=lambda _, room=room: self.page.run_task(self.select_room, room),
                 content=ft.Row([ft.Icon(ft.Icons.TAG, size=17, color="#AEBBD0" if not selected else "white"), ft.Text(room["name"], color="white" if selected else "#B6C1D3", size=14, weight=ft.FontWeight.W_600 if selected else ft.FontWeight.W_400)], spacing=8),
+            ))
+        self.dm_view.controls.clear()
+        for conv in self.state.conversations:
+            selected = self.state.view == "dm" and self.state.conversation and conv["id"] == self.state.conversation["id"]
+            self.dm_view.controls.append(ft.Container(
+                padding=ft.Padding(13, 10, 13, 10),
+                border_radius=9,
+                bgcolor="#2B3A55" if selected else None,
+                ink=True,
+                on_click=lambda _, conv=conv: self.page.run_task(self.select_conversation, conv),
+                content=ft.Row([ft.Icon(ft.Icons.CHAT_BUBBLE_OUTLINE, size=17, color="#AEBBD0" if not selected else "white"), ft.Text(conv.get("peer", {}).get("username", "私信"), color="white" if selected else "#B6C1D3", size=14, weight=ft.FontWeight.W_600 if selected else ft.FontWeight.W_400)], spacing=8),
             ))
         self.render_profile()
         brand = ft.Row([
@@ -292,6 +320,9 @@ class PolyChatApp:
                 ft.Divider(height=1, color="#253047"),
                 ft.Row([ft.Text("聊天室", color="#8895AB", size=11, weight=ft.FontWeight.W_700), ft.Container(expand=True), ft.IconButton(ft.Icons.ADD, icon_color="#E3E8F5", bgcolor="#263653", icon_size=18, tooltip="新建聊天室", on_click=self.open_new_room)], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 self.rooms_view,
+                ft.Divider(height=1, color="#253047"),
+                ft.Row([ft.Text("私信", color="#8895AB", size=11, weight=ft.FontWeight.W_700), ft.Container(expand=True), ft.IconButton(ft.Icons.PERSON_ADD_ALT_1, icon_color="#E3E8F5", bgcolor="#263653", icon_size=18, tooltip="好友与私信", on_click=self.open_friends)], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                self.dm_view,
                 ft.Divider(height=1, color="#253047"),
                 self.profile,
             ], expand=True, spacing=14),
@@ -342,6 +373,167 @@ class PolyChatApp:
             self.page.update()
         except ApiError as exc:
             self.show_toast(str(exc), error=True)
+
+    async def load_conversations(self):
+        try:
+            self.state.conversations = await self.call(self.state.api.dm_conversations)
+        except ApiError:
+            pass
+
+    async def open_dm(self, peer):
+        try:
+            conv = await self.call(self.state.api.create_dm, peer["username"])
+            await self.load_conversations()
+            for candidate in self.state.conversations:
+                if candidate["id"] == conv["id"]:
+                    await self.select_conversation(candidate)
+                    return
+        except ApiError as exc:
+            self.show_toast(str(exc), error=True)
+
+    async def select_conversation(self, conv):
+        self.state.view = "dm"
+        self.state.conversation = conv
+        self.state.dm_messages = []
+        self.state.dm_last_id = 0
+        self.state.dm_reply_to = None
+        self.room_name.value = f"✉ {conv.get('peer', {}).get('username', '私信')}"
+        self.render_sidebar()
+        self.page.update()
+        try:
+            messages = await self.call(self.state.api.dm_messages, conv["id"], 0)
+            self.state.dm_messages = messages
+            self.state.dm_last_id = messages[-1]["id"] if messages else 0
+            await self.call(self.state.api.mark_dm_read, conv["id"], self.state.dm_last_id)
+            self.render_messages()
+            self.render_sidebar()
+            self.page.update()
+        except ApiError as exc:
+            self.show_toast(str(exc), error=True)
+
+    def select_rooms(self):
+        self.state.view = "rooms"
+        self.state.conversation = None
+        self.room_name.value = f"# {self.state.room['name']}" if self.state.room else "# 大厅"
+        self.render_sidebar()
+        self.render_messages()
+        self.page.update()
+
+    async def send_dm(self, _=None):
+        if not self.state.conversation or not self.composer.value.strip():
+            return
+        content = self.composer.value.strip()
+        self.composer.value = ""
+        self.status.value = "正在发送…"
+        self.page.update()
+        try:
+            message = await self.call(self.state.api.send_dm, self.state.conversation["id"], content, None, self.state.dm_reply_to["id"] if self.state.dm_reply_to else None)
+            self.state.dm_messages.append(message)
+            self.state.dm_last_id = message["id"]
+            self.status.value = ""
+            self.state.dm_reply_to = None
+            await self.call(self.state.api.mark_dm_read, self.state.conversation["id"], self.state.dm_last_id)
+            self.render_messages()
+            self.render_sidebar()
+            self.page.update()
+        except ApiError as exc:
+            self.composer.value = content
+            self.status.value = ""
+            self.show_toast(str(exc), error=True)
+
+    async def load_friends(self):
+        try:
+            self.state.friends = await self.call(self.state.api.friends)
+        except ApiError:
+            pass
+
+    def open_friends(self, _=None):
+        self.page.run_task(self._open_friends)
+
+    async def _open_friends(self):
+            await self.load_friends()
+            accepted = self.state.friends.get("accepted", [])
+            incoming = self.state.friends.get("incoming", [])
+            query = ft.TextField(label="搜索用户名并发送好友请求", autofocus=True)
+            results = ft.Column(spacing=4, scroll=ft.ScrollMode.AUTO)
+            accepted_list = ft.Column(spacing=4)
+
+            def render_accepted():
+                accepted_list.controls.clear()
+                if not accepted:
+                    accepted_list.controls.append(ft.Text("还没有好友，搜索并发送好友请求吧。", size=12, color=MUTED))
+                for friend in accepted:
+                    accepted_list.controls.append(ft.Row([
+                        ft.Text(friend["username"], expand=True),
+                        ft.TextButton("私信", on_click=lambda _, f=friend: (self.page.pop_dialog(), self.page.run_task(self.open_dm, f))),
+                        ft.TextButton("删除", on_click=lambda _, fid=friend["id"]: self.page.run_task(self._remove_friend, fid)),
+                    ], spacing=6))
+
+            async def search(_):
+                try:
+                    found = await self.call(self.state.api.search_users, query.value)
+                    results.controls.clear()
+                    for user in found:
+                        if any(f["id"] == user["id"] for f in accepted):
+                            continue
+                        results.controls.append(ft.Row([
+                            ft.Text(user["username"], expand=True),
+                            ft.TextButton("加好友", on_click=lambda _, u=user: self.page.run_task(self._request_friend, u["username"])),
+                        ], spacing=6))
+                except ApiError as exc:
+                    self.show_toast(str(exc), error=True)
+
+            async def _request_friend(username):
+                try:
+                    await self.call(self.state.api.friend_request, username)
+                    self.show_toast(f"已向 {username} 发送好友请求")
+                    query.value = ""
+                    results.controls.clear()
+                    await self.load_friends()
+                    render_accepted()
+                    self.page.update()
+                except ApiError as exc:
+                    self.show_toast(str(exc), error=True)
+
+            async def _remove_friend(friend_id):
+                try:
+                    await self.call(self.state.api.friend_remove, friend_id)
+                    await self.load_friends()
+                    await self.load_conversations()
+                    render_accepted()
+                    self.page.update()
+                except ApiError as exc:
+                    self.show_toast(str(exc), error=True)
+
+            def accept_incoming(friend_id):
+                self.page.run_task(self._accept_friend, friend_id)
+
+            async def _accept_friend(friend_id):
+                try:
+                    await self.call(self.state.api.friend_accept, friend_id)
+                    await self.load_friends()
+                    render_accepted()
+                    self.page.update()
+                except ApiError as exc:
+                    self.show_toast(str(exc), error=True)
+
+            render_accepted()
+            incoming_controls = [ft.Text(f"好友请求 ({len(incoming)})", size=12, weight=ft.FontWeight.W_700, color="#172033")] if incoming else []
+            for friend in incoming:
+                incoming_controls.append(ft.Row([
+                    ft.Text(friend["username"], expand=True),
+                    ft.TextButton("接受", on_click=lambda _, fid=friend["id"]: accept_incoming(fid)),
+                ], spacing=6))
+            content = ft.Column([
+                ft.Row([query, ft.FilledButton("搜索", on_click=lambda _: self.page.run_task(search))]),
+                results,
+                ft.Divider(),
+                *incoming_controls,
+                ft.Divider(),
+                ft.Text("我的好友", size=12, weight=ft.FontWeight.W_700, color="#172033"),
+                accepted_list,
+            ], tight=True, scroll=ft.ScrollMode.AUTO, height=460)
+            self.page.show_dialog(ft.AlertDialog(title=ft.Text("好友与私信"), content=content, actions=[ft.TextButton("关闭", on_click=lambda _: self.page.pop_dialog())]))
 
     def message_card(self, message):
         mine = message["user_id"] == self.state.user["id"]
@@ -404,6 +596,88 @@ class PolyChatApp:
             ),
         ], vertical_alignment=ft.CrossAxisAlignment.START, spacing=10)
 
+    def dm_message_card(self, message):
+        mine = message["user_id"] == self.state.user["id"]
+        body = ft.Markdown(
+            flet_markdown(message.get("content") or ""),
+            extension_set=ft.MarkdownExtensionSet.GITHUB_FLAVORED,
+            auto_follow_links=True,
+            latex_scale_factor=1.1,
+            selectable=True,
+        )
+        card_controls = [
+            ft.Row([
+                ft.Text(message["username"], size=13, weight=ft.FontWeight.W_700, color="#1B2740"),
+                ft.Text(format_server_time(message["created_at"]), size=10, color="#98A2B3"),
+                ft.Container(expand=True),
+                ft.IconButton(ft.Icons.REPLY_OUTLINED, icon_size=15, icon_color="#7D879A", tooltip="回复", on_click=lambda _, message=message: self.start_dm_reply(message)),
+                ft.IconButton(ft.Icons.CONTENT_COPY_OUTLINED, icon_size=15, icon_color="#7D879A", tooltip="复制 Markdown", on_click=lambda _, message=message: self.page.run_task(self.copy_markdown, message)),
+                *([ft.IconButton(ft.Icons.EDIT_OUTLINED, icon_size=15, tooltip="编辑", on_click=lambda _, message=message: self.open_edit(message)), ft.IconButton(ft.Icons.UNDO_OUTLINED, icon_size=15, tooltip="撤回", on_click=lambda _, message=message: self.page.run_task(self.retract_dm, message))] if mine else []),
+            ], spacing=8),
+        ]
+        if message.get("reply_to"):
+            card_controls.append(ft.Container(content=ft.Text(f"↳ 回复 {message.get('reply_username') or '消息'}：{message.get('reply_content') or '已撤回'}", size=11, color=MUTED, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS), bgcolor="#F1F3F8", padding=7, border_radius=7))
+        if message.get("is_deleted"):
+            card_controls.append(ft.Text("此消息已撤回", italic=True, color=MUTED))
+            return ft.Row([self.avatar(message, 19), ft.Container(content=ft.Column(card_controls, spacing=7, tight=True), bgcolor="#FFFFFF", padding=14, border_radius=14, border=ft.Border.all(1, "#E8EBF1"), expand=True)], vertical_alignment=ft.CrossAxisAlignment.START, spacing=10)
+        if message.get("content"):
+            card_controls.append(body)
+        if message.get("attachment_id"):
+            size = message.get("attachment_size", 0)
+            readable = f"{size / 1024 / 1024:.1f} MB" if size >= 1024 * 1024 else (f"{size / 1024:.1f} KB" if size >= 1024 else f"{size} B")
+            if message.get("attachment_type") in INLINE_IMAGE_TYPES:
+                card_controls.extend([
+                    self.message_image(message),
+                    ft.Row([
+                        ft.Text(f"{message['attachment_name']} · {readable}", size=10, color=MUTED, expand=True),
+                        ft.TextButton("下载原图", on_click=lambda _, message=message: self.page.run_task(self.download_file, message)),
+                    ], spacing=4),
+                ])
+            else:
+                card_controls.append(ft.Container(
+                    ink=True,
+                    on_click=lambda _, message=message: self.page.run_task(self.download_file, message),
+                    bgcolor="#EEEDFF",
+                    border_radius=10,
+                    padding=10,
+                    content=ft.Row([ft.Icon(ft.Icons.ATTACH_FILE, color=ACCENT), ft.Column([ft.Text(message["attachment_name"], size=12, weight=ft.FontWeight.W_600), ft.Text(f"{readable} · 点击下载", size=10, color=MUTED)], spacing=1)], spacing=8),
+                ))
+        reaction_controls = [ft.TextButton(f"{item['emoji']} {item['count']}", on_click=lambda _, emoji=item['emoji'], message=message: self.page.run_task(self.react_dm_message, message, emoji)) for item in message.get("reactions", [])]
+        reaction_controls.extend(ft.IconButton(ft.Icons.ADD_REACTION_OUTLINED, icon_size=16, tooltip="添加表情", on_click=lambda _, message=message: self.open_reaction(message)) for _ in [0])
+        card_controls.append(ft.Row(reaction_controls, spacing=2, wrap=True))
+        return ft.Row([
+            self.avatar(message, 19),
+            ft.Container(
+                content=ft.Column(card_controls, spacing=7, tight=True),
+                bgcolor="#FFFFFF" if mine else "#FBFCFE",
+                padding=ft.Padding(14, 14, 14, 14),
+                border_radius=14,
+                border=ft.Border.all(1, "#E8EBF1"),
+                expand=True,
+            ),
+        ], vertical_alignment=ft.CrossAxisAlignment.START, spacing=10)
+
+    def start_dm_reply(self, message):
+        self.state.dm_reply_to = message
+        self.show_toast(f"正在回复 {message['username']}")
+        self.page.update()
+
+    async def retract_dm(self, message):
+        try:
+            await self.call(self.state.api.retract_dm, message["id"])
+            message["content"] = ""; message["attachment_id"] = None; message["is_deleted"] = True
+            self.render_messages(); self.page.update()
+        except ApiError as exc:
+            self.show_toast(str(exc), error=True)
+
+    async def react_dm_message(self, message, emoji):
+        try:
+            message["reactions"] = await self.call(self.state.api.react_dm, message["id"], emoji)
+            if getattr(self.page, "dialog", None): self.page.pop_dialog()
+            self.render_messages(); self.page.update()
+        except ApiError as exc:
+            self.show_toast(str(exc), error=True)
+
     async def copy_markdown(self, message: dict):
         try:
             await self.clipboard.set(message.get("content") or "")
@@ -412,6 +686,14 @@ class PolyChatApp:
             self.show_toast("复制失败，请检查系统剪贴板权限", error=True)
 
     def render_messages(self):
+        if self.state.view == "dm":
+            self.room_name.value = f"✉ {self.state.conversation.get('peer', {}).get('username', '私信')}" if self.state.conversation else "✉ 私信"
+            self.messages_view.controls.clear()
+            if not self.state.dm_messages:
+                self.messages_view.controls.append(ft.Container(ft.Column([ft.Icon(ft.Icons.FORUM_OUTLINED, size=42, color="#AAB2C2"), ft.Text("私信", size=18, weight=ft.FontWeight.W_600), ft.Text("只有互为好友才能私信，消息仅双方可见。", color=MUTED)], horizontal_alignment=ft.CrossAxisAlignment.CENTER), alignment=ft.Alignment.CENTER, expand=True))
+            else:
+                self.messages_view.controls.extend(self.dm_message_card(message) for message in self.state.dm_messages)
+            return
         self.room_name.value = f"# {self.state.room['name']}" if self.state.room else "# 大厅"
         self.messages_view.controls.clear()
         if self.state.room and self.state.room.get("announcement"):
@@ -431,11 +713,12 @@ class PolyChatApp:
             self.messages_view.controls.extend(self.message_card(message) for message in self.state.messages)
 
     def compose_bar(self):
+        reply = self.state.dm_reply_to if self.state.view == "dm" else self.state.reply_to
         return ft.Container(
             bgcolor=PAPER,
             padding=ft.Padding(24, 10, 24, 20),
             content=ft.Column([
-                ft.Container(content=ft.Text(f"↳ 回复 {self.state.reply_to['username']}：{self.state.reply_to.get('content', '')[:70]}", size=11), bgcolor="#EEF1F7", padding=7, border_radius=7, visible=self.state.reply_to is not None),
+                ft.Container(content=ft.Text(f"↳ 回复 {reply['username']}：{reply.get('content', '')[:70]}", size=11), bgcolor="#EEF1F7", padding=7, border_radius=7, visible=reply is not None),
                 ft.Container(
                     bgcolor="white",
                     border=ft.Border.all(1, "#DDE2EA"),
@@ -453,6 +736,9 @@ class PolyChatApp:
         )
 
     async def send_message(self, _=None):
+        if self.state.view == "dm":
+            await self.send_dm(_)
+            return
         if not self.state.room or not self.composer.value.strip():
             return
         content = self.composer.value.strip()
@@ -737,20 +1023,36 @@ class PolyChatApp:
     async def poll_loop(self):
         while self.state.active:
             await asyncio.sleep(1.8)
-            if not self.state.room:
-                continue
             try:
-                messages = await self.call(self.state.api.messages, self.state.room["id"], self.state.last_id)
                 rooms = await self.call(self.state.api.rooms)
-                if messages:
-                    self.state.messages.extend(messages)
-                    self.state.last_id = messages[-1]["id"]
-                    self.render_messages()
                 if [(room["id"], room["name"]) for room in rooms] != [(room["id"], room["name"]) for room in self.state.rooms]:
                     self.state.rooms = rooms
-                    self.state.room = next((room for room in rooms if room["id"] == self.state.room["id"]), self.state.room)
+                    if self.state.view == "rooms" and self.state.room:
+                        self.state.room = next((room for room in rooms if room["id"] == self.state.room["id"]), self.state.room)
                     self.render_sidebar()
-                if messages:
+                if self.state.view == "rooms" and self.state.room:
+                    messages = await self.call(self.state.api.messages, self.state.room["id"], self.state.last_id)
+                    if messages:
+                        self.state.messages.extend(messages)
+                        self.state.last_id = messages[-1]["id"]
+                        self.render_messages()
+                        self.page.update()
+                elif self.state.view == "dm" and self.state.conversation:
+                    dm = await self.call(self.state.api.dm_messages, self.state.conversation["id"], self.state.dm_last_id)
+                    if dm:
+                        self.state.dm_messages.extend(dm)
+                        self.state.dm_last_id = dm[-1]["id"]
+                        await self.call(self.state.api.mark_dm_read, self.state.conversation["id"], self.state.dm_last_id)
+                        self.render_messages()
+                        self.render_sidebar()
+                        self.page.update()
+                conversations = self.state.conversations = await self.call(self.state.api.dm_conversations)
+                if self.state.view == "dm" and self.state.conversation:
+                    updated = next((c for c in conversations if c["id"] == self.state.conversation["id"]), None)
+                    if updated:
+                        self.state.conversation = updated
+                if [(c["id"], c.get("peer", {}).get("username")) for c in conversations] != [(c["id"], c.get("peer", {}).get("username")) for c in self.state.conversations]:
+                    self.render_sidebar()
                     self.page.update()
             except ApiError:
                 pass
