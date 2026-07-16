@@ -1,16 +1,8 @@
+import { onebotSegments as segments } from './utils.js';
+
 export function registerOnebotEventListeners(ctx) {
   const { eventBus, botSockets, conversationMembers, socketCanAccess } = ctx;
   const onebotTS = () => Math.floor(Date.now() / 1000);
-  const segments = (message) => {
-    const seg = [];
-    if (message.content) seg.push({ type: 'text', data: { text: message.content } });
-    if (message.attachment_id && message.attachment_type?.startsWith('image/')) {
-      seg.push({ type: 'image', data: { file: `/api/files/${message.attachment_id}` } });
-    } else if (message.attachment_id) {
-      seg.push({ type: 'file', data: { file: `/api/files/${message.attachment_id}`, name: message.attachment_name || '' } });
-    }
-    return seg;
-  };
 
   function broadcastGroup(roomId, message, sender) {
     const cache = new Map();

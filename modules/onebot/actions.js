@@ -148,6 +148,26 @@ export function createOnebotActionHandler(ctx) {
           respond({ user_id: member.id, nickname: member.username, role: member.role });
           break;
         }
+        case 'get_group_msg_history': {
+          const roomId = Number(params.group_id);
+          const room = roomForUser(roomId, user.id);
+          if (!room) return respond(null, 'failed', 100, '房间不存在或无权限');
+          const count = Math.min(Number(params.count) || 20, 100);
+          const beforeId = Number(params.message_seq || params.message_id) || null;
+          const rows = beforeId
+            ? db.prepare(`SELECT messages.*, users.username FROM messages JOIN users ON users.id = messages.user_id WHERE messages.room_id = ? AND messages.id < ? ORDER BY messages.id DESC LIMIT ?`).all(roomId, beforeId, count)
+            : db.prepare(`SELECT messages.*, users.username FROM messages JOIN users ON users.id = messages.user_id WHERE messages.room_id = ? ORDER BY messages.id DESC LIMIT ?`).all(roomId, count);
+          rows.reverse();
+          respond({
+            messages: rows.map(m => ({
+              time: Math.floor(new Date(m.created_at).getTime() / 1000),
+              message_type: 'group', message_id: m.id, real_id: m.id, group_id: roomId,
+              user_id: m.user_id, sender: { user_id: m.user_id, nickname: m.username },
+              message: onebotSegments(m), raw_message: m.content || ''
+            }))
+          });
+          break;
+        }
         case 'get_friend_list': {
           const friends = db.prepare(`SELECT users.id, users.username FROM friendships JOIN users ON users.id = friendships.friend_id
             WHERE friendships.user_id = ? AND friendships.status = 'accepted' ORDER BY users.username`).all(user.id);

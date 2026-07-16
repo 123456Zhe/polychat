@@ -2,9 +2,22 @@ export function onebotTS() {
   return Math.floor(Date.now() / 1000);
 }
 
+export function onebotTextSegments(text) {
+  const seg = [];
+  const regex = /\[at:(\d+)\]/g;
+  let last = 0, m;
+  while ((m = regex.exec(text)) !== null) {
+    if (m.index > last) seg.push({ type: 'text', data: { text: text.slice(last, m.index) } });
+    seg.push({ type: 'at', data: { qq: m[1] } });
+    last = regex.lastIndex;
+  }
+  if (last < text.length) seg.push({ type: 'text', data: { text: text.slice(last) } });
+  return seg;
+}
+
 export function onebotSegments(message) {
   const seg = [];
-  if (message.content) seg.push({ type: 'text', data: { text: message.content } });
+  if (message.content) seg.push(...onebotTextSegments(message.content));
   if (message.attachment_id && message.attachment_type?.startsWith('image/')) {
     seg.push({ type: 'image', data: { file: `/api/files/${message.attachment_id}` } });
   } else if (message.attachment_id) {
