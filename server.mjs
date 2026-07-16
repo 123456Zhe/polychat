@@ -6,6 +6,23 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import webpush from 'web-push';
+import { setupOnebot } from './modules/onebot/index.js';
+
+function createEventBus() {
+  const listeners = new Map();
+  return {
+    on(event, fn) {
+      if (!listeners.has(event)) listeners.set(event, []);
+      listeners.get(event).push(fn);
+    },
+    emit(event, data) {
+      for (const fn of (listeners.get(event) || [])) {
+        try { fn(data); } catch (e) { console.error(`EventBus[${event}] error:`, e); }
+      }
+    }
+  };
+}
+const eventBus = createEventBus();
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC = join(ROOT, 'web');
@@ -185,6 +202,12 @@ db.exec(`
     PRIMARY KEY(conversation_id, user_id)
   );
 `);
+db.exec(`CREATE TABLE IF NOT EXISTS bot_tokens (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+)`);
 if (!db.prepare('PRAGMA table_info(messages)').all().some(column => column.name === 'attachment_id')) {
   db.exec('ALTER TABLE messages ADD COLUMN attachment_id INTEGER REFERENCES attachments(id)');
 }
@@ -242,6 +265,28 @@ if (!dmMemberColumns.has('last_read_id')) db.exec('ALTER TABLE dm_members ADD CO
 if (db.prepare('SELECT COUNT(*) AS count FROM users WHERE is_admin = 1').get().count === 0) {
   db.prepare('UPDATE users SET is_admin = 1 WHERE id = (SELECT id FROM users ORDER BY id LIMIT 1)').run();
 }
+db.exec(`CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type TEXT NOT NULL DEFAULT 'system',
+  title TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  link TEXT,
+  data TEXT,
+  is_read INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now'))
+)`);
+db.exec('CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read, id DESC)');
+db.exec(`CREATE TABLE IF NOT EXISTS bot_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  reviewed_at TEXT
+)`);
 
 let vapidPublicKey = process.env.VAPID_PUBLIC_KEY || db.prepare("SELECT value FROM app_settings WHERE key = 'vapid_public_key'").get()?.value;
 let vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || db.prepare("SELECT value FROM app_settings WHERE key = 'vapid_private_key'").get()?.value;
@@ -312,6 +357,7 @@ function currentUser(req) {
 function publicUser(user) {
   return {
     id: user.id,
+    number: user.id,
     username: user.username,
     is_admin: Boolean(user.is_admin),
     avatar_updated_at: user.avatar_updated_at || null,
@@ -456,6 +502,34 @@ function requireRoomManager(req, res, roomId) {
   if (!context.user.is_admin && !['owner', 'admin'].includes(context.room.role)) { json(res, 403, { error: '需要聊天室管理权限' }); return null; }
   return context;
 }
+function validateMentions(text) {
+  const regex = /\[at:(\d+)\]/g;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const userId = Number(match[1]);
+    if (!db.prepare('SELECT id FROM users WHERE id = ?').get(userId)) return userId;
+  }
+  return null;
+}
+
+function resolveMentions(text) {
+  if (!text) return [];
+  const seen = new Set();
+  const mentions = [];
+  const regex = /\[at:(\d+)\]/g;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const userId = Number(match[1]);
+    if (!seen.has(userId)) {
+      seen.add(userId);
+      const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(userId);
+      if (user) mentions.push({ id: user.id, username: user.username, type: 'user' });
+      else mentions.push({ id: userId, username: `用户${userId}`, type: 'unknown' });
+    }
+  }
+  return mentions;
+}
+
 function hydrateMessages(messages, viewerId) {
   if (!messages.length) return messages;
   const ids = messages.map(message => message.id);
@@ -468,10 +542,15 @@ function hydrateMessages(messages, viewerId) {
     const userIds = reaction.users.split(',').map(Number);
     byMessage.get(reaction.message_id).push({ emoji: reaction.emoji, count: userIds.length, reacted: userIds.includes(viewerId) });
   }
-  return messages.map(message => ({ ...message, is_deleted: Boolean(message.deleted_at), reactions: byMessage.get(message.id) || [] }));
+  return messages.map(message => {
+    const enriched = { ...message, is_deleted: Boolean(message.deleted_at), reactions: byMessage.get(message.id) || [] };
+    enriched.mentions = resolveMentions(enriched.content);
+    return enriched;
+  });
 }
 
 const sockets = new Set();
+
 function socketCanAccess(socket, roomId) {
   const room = roomForUser(roomId, socket.user.id);
   return room && (!room.is_private || room.role || socket.user.is_admin);
@@ -517,6 +596,19 @@ async function pushMessage(roomId, senderId, message) {
       else throw error;
     }
   }));
+}
+
+function createNotification(userId, { type = 'system', title, content, link = null, data = null }) {
+  const result = db.prepare('INSERT INTO notifications(user_id, type, title, content, link, data) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(userId, type, title, content, link, data ? JSON.stringify(data) : null);
+  const id = Number(result.lastInsertRowid);
+  const notif = { id, type, title, content, link, data, is_read: false, created_at: new Date().toISOString() };
+  for (const s of sockets) {
+    if (s.readyState === 1 && s.user.id === userId) {
+      s.send(JSON.stringify({ type: 'notification', notification: notif }));
+    }
+  }
+  return id;
 }
 
 function cookie(token, clear = false) {
@@ -953,9 +1045,20 @@ async function api(req, res, url) {
 
   const roomMemberMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/members$/);
   if (roomMemberMatch && req.method === 'GET') {
-    const context = requireRoomManager(req, res, Number(roomMemberMatch[1])); if (!context) return;
+    const context = requireRoomAccess(req, res, Number(roomMemberMatch[1])); if (!context) return;
     const members = db.prepare(`SELECT users.id, users.username, room_members.role FROM room_members JOIN users ON users.id = room_members.user_id WHERE room_id = ? ORDER BY role, username`).all(context.room.id);
     return json(res, 200, { members });
+  }
+  const roomMentionMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/mentionables$/);
+  if (roomMentionMatch && req.method === 'GET') {
+    const context = requireRoomAccess(req, res, Number(roomMentionMatch[1])); if (!context) return;
+    let candidates;
+    if (context.room.is_private) {
+      candidates = db.prepare('SELECT users.id, users.username FROM room_members JOIN users ON users.id = room_members.user_id WHERE room_id = ? ORDER BY username').all(context.room.id);
+    } else {
+      candidates = db.prepare('SELECT id, username FROM users ORDER BY username').all();
+    }
+    return json(res, 200, { users: candidates });
   }
   if (roomMemberMatch && req.method === 'POST') {
     const context = requireRoomManager(req, res, Number(roomMemberMatch[1])); if (!context) return;
@@ -1018,7 +1121,9 @@ async function api(req, res, url) {
     const user = requireUser(req, res); if (!user) return;
     const q = url.searchParams.get('q') || '';
     if (q.length < 1) return json(res, 200, { users: [] });
-    const users = db.prepare('SELECT id, username FROM users WHERE username LIKE ? ORDER BY username LIMIT 20').all(`%${q}%`);
+    const byId = /^\d+$/.test(q) ? db.prepare('SELECT id, username FROM users WHERE id = ?').get(Number(q)) : null;
+    const byName = db.prepare('SELECT id, username FROM users WHERE username LIKE ? ORDER BY username LIMIT 20').all(`%${q}%`);
+    const users = byId ? [byId, ...byName.filter(u => u.id !== byId.id)] : byName;
     return json(res, 200, { users });
   }
 
@@ -1272,6 +1377,8 @@ async function api(req, res, url) {
     if (replyId && !db.prepare('SELECT id FROM messages WHERE id = ? AND room_id = ?').get(replyId, roomId)) return json(res, 400, { error: '回复目标不存在或不在当前聊天室' });
     const threadRoot = thread_root == null ? null : Number(thread_root);
     if (threadRoot && !db.prepare('SELECT id FROM messages WHERE id = ? AND room_id = ? AND thread_root IS NULL').get(threadRoot, roomId)) return json(res, 400, { error: '话题根消息不存在' });
+    const badMention = validateMentions(text);
+    if (badMention) return json(res, 400, { error: `被 @ 的用户 ${badMention} 不存在` });
     const result = db.prepare('INSERT INTO messages(room_id, user_id, content, attachment_id, reply_to, thread_root) VALUES (?, ?, ?, ?, ?, ?)').run(roomId, user.id, text, attachmentId, replyId, threadRoot);
     const message = db.prepare(`SELECT messages.id, messages.content, messages.created_at, messages.reply_to, messages.thread_root, messages.edited_at, messages.deleted_at,
       users.id AS user_id, users.username, users.avatar_updated_at, parent.content AS reply_content, parent_user.username AS reply_username, attachments.id AS attachment_id,
@@ -1282,6 +1389,7 @@ async function api(req, res, url) {
       LEFT JOIN attachments ON attachments.id = messages.attachment_id WHERE messages.id = ?`).get(result.lastInsertRowid);
     const hydrated = hydrateMessages([message], user.id)[0];
     broadcast({ type: threadRoot ? 'thread_message' : 'message', room_id: roomId, message_id: Number(result.lastInsertRowid), thread_root: threadRoot, message: hydrated }, roomId);
+    if (!threadRoot) eventBus.emit('message:sent', { roomId, message: hydrated, sender: user, threadRoot });
     void pushMessage(roomId, user.id, message).catch(error => console.error('Web Push failed:', error.message));
     return json(res, 201, { message: hydrated });
   }
@@ -1421,12 +1529,15 @@ async function api(req, res, url) {
     }
     const replyId = reply_to == null ? null : Number(reply_to);
     if (replyId && !db.prepare('SELECT id FROM messages WHERE id = ? AND dm_id = ?').get(replyId, convId)) return json(res, 400, { error: '回复目标不存在或不在当前会话' });
+    const badMention = validateMentions(text);
+    if (badMention) return json(res, 400, { error: `被 @ 的用户 ${badMention} 不存在` });
     const result = db.prepare('INSERT INTO messages(dm_id, user_id, content, attachment_id, reply_to) VALUES (?, ?, ?, ?, ?)').run(convId, user.id, text, attachmentId, replyId);
     const message = db.prepare(`SELECT ${dmMessageColumns} FROM messages JOIN users ON users.id = messages.user_id
       LEFT JOIN messages AS parent ON parent.id = messages.reply_to LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id
       LEFT JOIN attachments ON attachments.id = messages.attachment_id WHERE messages.id = ?`).get(result.lastInsertRowid);
     const hydrated = hydrateMessages([message], user.id)[0];
     broadcastDm(convId, { type: 'dm_message', conversation_id: convId, message: hydrated });
+    eventBus.emit('dm:sent', { conversationId: convId, message: hydrated, sender: user });
     return json(res, 201, { message: hydrated });
   }
 
@@ -1477,6 +1588,100 @@ async function api(req, res, url) {
     return json(res, 200, { reactions: hydrateMessages([{ id: messageId }], user.id)[0].reactions });
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/admin/bot/tokens') {
+    if (!requireAdmin(req, res)) return;
+    const tokens = db.prepare(`SELECT bot_tokens.token, bot_tokens.name, bot_tokens.created_at,
+      users.id AS user_id, users.username FROM bot_tokens
+      JOIN users ON users.id = bot_tokens.user_id ORDER BY bot_tokens.created_at DESC`).all();
+    return json(res, 200, { tokens });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/admin/bot/tokens') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const { user_id, name = '' } = await readBody(req);
+    if (!user_id || typeof user_id !== 'number') return json(res, 400, { error: '需要指定 user_id' });
+    const target = db.prepare('SELECT id, username FROM users WHERE id = ?').get(user_id);
+    if (!target) return json(res, 404, { error: '用户不存在' });
+    const token = randomBytes(24).toString('base64url');
+    db.prepare('INSERT INTO bot_tokens(token, user_id, name) VALUES (?, ?, ?)').run(token, user_id, String(name).trim() || `Bot for ${target.username}`);
+    logAudit(admin.id, 'create_bot_token', user_id, `创建 Bot Token: ${name || target.username}`);
+    return json(res, 201, { token: { token, user_id, name: String(name).trim() || `Bot for ${target.username}` } });
+  }
+
+  const botTokenDeleteMatch = url.pathname.match(/^\/api\/admin\/bot\/tokens\/([A-Za-z0-9_-]+)$/);
+  if (botTokenDeleteMatch && req.method === 'DELETE') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const token = botTokenDeleteMatch[1];
+    const row = db.prepare('SELECT user_id FROM bot_tokens WHERE token = ?').get(token);
+    if (!row) return json(res, 404, { error: 'Token 不存在' });
+    db.prepare('DELETE FROM bot_tokens WHERE token = ?').run(token);
+    logAudit(admin.id, 'delete_bot_token', row.user_id);
+    return json(res, 200, { ok: true });
+  }
+
+  // ── 通知 API ──
+  if (req.method === 'GET' && url.pathname === '/api/notifications') {
+    const user = requireUser(req, res); if (!user) return;
+    const unreadOnly = url.searchParams.get('unread') === '1';
+    const notifs = db.prepare(`SELECT * FROM notifications WHERE user_id = ?${unreadOnly ? ' AND is_read = 0' : ''} ORDER BY id DESC LIMIT 50`).all(user.id);
+    return json(res, 200, { notifications: notifs.map(n => ({ ...n, data: n.data ? JSON.parse(n.data) : null })) });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/notifications/unread-count') {
+    const user = requireUser(req, res); if (!user) return;
+    const { count } = db.prepare('SELECT COUNT(*) AS count FROM notifications WHERE user_id = ? AND is_read = 0').get(user.id);
+    return json(res, 200, { count });
+  }
+  const notifReadMatch = url.pathname.match(/^\/api\/notifications\/(\d+)\/read$/);
+  if (notifReadMatch && req.method === 'PUT') {
+    const user = requireUser(req, res); if (!user) return;
+    db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?').run(Number(notifReadMatch[1]), user.id);
+    return json(res, 200, { ok: true });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/notifications/read-all') {
+    const user = requireUser(req, res); if (!user) return;
+    db.prepare('UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0').run(user.id);
+    return json(res, 200, { ok: true });
+  }
+
+  // ── Bot 创建申请 API ──
+  if (req.method === 'POST' && url.pathname === '/api/bot-requests') {
+    const user = requireUser(req, res); if (!user) return;
+    const { name = '', reason = '' } = await readBody(req);
+    if (!name.trim()) return json(res, 400, { error: '请填写机器人名称' });
+    db.prepare('INSERT INTO bot_requests(user_id, name, reason) VALUES (?, ?, ?)').run(user.id, name.trim(), reason.trim());
+    return json(res, 201, { ok: true });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/admin/bot-requests') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const requests = db.prepare(`SELECT bot_requests.*, users.username FROM bot_requests
+      JOIN users ON users.id = bot_requests.user_id ORDER BY bot_requests.created_at DESC`).all();
+    return json(res, 200, { requests });
+  }
+  const botReqApproveMatch = url.pathname.match(/^\/api\/admin\/bot-requests\/(\d+)$/);
+  if (botReqApproveMatch && req.method === 'PUT') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const { status = 'rejected' } = await readBody(req);
+    if (!['approved', 'rejected'].includes(status)) return json(res, 400, { error: '状态必须为 approved 或 rejected' });
+    const reqId = Number(botReqApproveMatch[1]);
+    const row = db.prepare('SELECT * FROM bot_requests WHERE id = ?').get(reqId);
+    if (!row || row.status !== 'pending') return json(res, 404, { error: '申请不存在或已处理' });
+    if (status === 'approved') {
+      const pwd = randomBytes(16).toString('hex');
+      const r = db.prepare('INSERT INTO users(username, password_hash) VALUES (?, ?)').run(row.name, hashPassword(pwd));
+      const userId = Number(r.lastInsertRowid);
+      const token = randomBytes(24).toString('base64url');
+      db.prepare('INSERT INTO bot_tokens(token, user_id, name) VALUES (?, ?, ?)').run(token, userId, row.name);
+      db.prepare('UPDATE bot_requests SET status = ?, reviewed_by = ?, reviewed_at = datetime(\'now\') WHERE id = ?').run('approved', admin.id, reqId);
+      logAudit(admin.id, 'approve_bot', userId, `批准机器人创建: ${row.name}`);
+      createNotification(row.user_id, { type: 'bot_approval', title: '机器人审批通过', content: `您的机器人「${row.name}」已通过审批`, data: { bot_request_id: reqId, status: 'approved', token } });
+    } else {
+      db.prepare('UPDATE bot_requests SET status = ?, reviewed_by = ?, reviewed_at = datetime(\'now\') WHERE id = ?').run('rejected', admin.id, reqId);
+      logAudit(admin.id, 'reject_bot', row.user_id, `拒绝机器人创建: ${row.name}`);
+      createNotification(row.user_id, { type: 'bot_approval', title: '机器人审批未通过', content: `您的机器人「${row.name}」未通过审批`, data: { bot_request_id: reqId, status: 'rejected' } });
+    }
+    return json(res, 200, { ok: true });
+  }
+
   return json(res, 404, { error: '接口不存在' });
 }
 
@@ -1518,6 +1723,9 @@ export const server = http.createServer(async (req, res) => {
     if (!res.headersSent) json(res, error.status || 500, { error: error.status ? error.message : '服务器内部错误' });
   }
 });
+
+const onebot = setupOnebot({ db, eventBus, roomForUser, validateMentions, hydrateMessages, broadcast, conversationMembers, socketCanAccess, isUserBanned });
+onebot.attach(server);
 
 const webSocketServer = new WebSocketServer({ noServer: true });
 server.on('upgrade', (req, socket, head) => {
@@ -1569,6 +1777,7 @@ const heartbeat = setInterval(() => {
     socket.isAlive = false;
     socket.ping();
   }
+  onebot.heartbeat();
 }, 30_000);
 heartbeat.unref();
 

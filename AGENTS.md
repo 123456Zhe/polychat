@@ -46,7 +46,7 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 
 ## Architecture
 
-- **Server**: single file `server.mjs` — HTTP server + SQLite (`node:sqlite`) + all API routes. No framework, no build step for the server.
+- **Server**: `server.mjs` — HTTP server + SQLite (`node:sqlite`) + core API routes. Realtime bots/AI live in the `modules/onebot/` package, loaded via `setupOnebot()` and wired through an EventBus (`message:sent`, `dm:sent`). No framework, no build step for the server.
 - **Database**: SQLite with WAL mode, auto-migrates schema on startup (adds columns if missing). DB file at `data/polychat.db`.
 - **Web frontend**: Vue 3 + Vite app in `web-client/`. `npm run web:build` outputs production assets to `web/`, which the Node server serves directly. Mobile-responsive with sidebar toggle.
 - **Android app**: Capacitor wrapper in `android-app/`. Uses built web assets from `web/`. Build with `./build-android.sh`.
@@ -70,3 +70,37 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 - Friend system: bidirectional — sender creates pending request; accept creates reverse row. Must be friends to start a DM conversation.
 - DM (private messaging): `dm_conversations` + `dm_members` tables. Messages stored in `messages` table with `dm_id` set and `room_id` null. Supports unread counts, marking as read, edit, retract, and reactions.
 - `NODE_ENV=test` disables registration rate limiting so tests can create unlimited accounts from the same IP.
+- OneBot v11 gateway at `ws://HOST:PORT/api/onebot/ws?token=<bot_token>` (also `/api` standard path). Bots authenticate with a bot token created by an admin-approved bot request.
+
+## Session work log
+
+### This session (OneBot modularization)
+- Extracted all OneBot/bot logic out of `server.mjs` into `modules/onebot/`:
+  - `utils.js` — `onebotTS`, `onebotSegments`, `onebotMessageText`, `onebotGetOrCreateDm`
+  - `actions.js` — `createOnebotActionHandler` (the `handleOnebotAction` switch)
+  - `ws.js` — `createOnebotWs` (own `WebSocketServer`, upgrade auth via `bot_tokens`, heartbeat)
+  - `events.js` — `registerOnebotEventListeners` (EventBus `message:sent` / `dm:sent` → bot broadcasts)
+  - `index.js` — `setupOnebot(ctx)` wiring everything
+- `server.mjs` now calls `setupOnebot(...)` after `http.createServer`, passes deps via ctx, and emits `message:sent` / `dm:sent` at the human message-send endpoints.
+- Removed broken `AI_USER_ID` references: `[at:ai]` handling in `resolveMentions`, `ai` field in `/api/health`, and the dangling `/api/ai/info` endpoint. AI is now a user-created bot approved by admins.
+- All 13 Node tests pass; server boots cleanly and OneBot WS rejects connections without a token (returns 401).
+
+### Previously (from prior sessions, uncommitted)
+- Notification system: `notifications` table, `createNotification()`, WS push, REST API (unread count, mark-read, read-all), bell UI planned in `web-client/src/App.vue`.
+- Bot request/approval flow: `bot_requests` table, `POST /api/bot-requests`, `GET /api/admin/bot-requests`, `PUT /api/admin/bot-requests/:id` (auto-creates user + bot token + notifies applicant).
+- `@` mention system: validation in `validateMentions`, red badge, desktop notification prefix `@你`, `mentionedUnread` tracking, `/api/rooms/:id/mentionables` endpoint.
+- Admin panel tabs (users/security/bots) and notification bell UI designed but NOT yet wired into `web-client/src/App.vue`.
+
+### Status
+- Module extraction DONE. Client-side notification bell + admin bots tab DONE. OneBot protocol fixes (standard field alignment) DONE.
+- All server Node tests pass (13/13); web-client builds cleanly.
+- Nothing committed yet.
+
+### This session (client wiring + protocol)
+- Web client `App.vue`: removed `aiUser` / `/api/ai/info` / `[at:ai]` suggestion.
+- Notification bell + dropdown: `loadNotifications`, `loadNotifCount`, `markNotifRead`, `markAllNotifRead`, `pushNotification` (driven by `notification` WS event).
+- Admin panel: 3-tab layout (用户 / 安全 / 机器人); users tab, security tab (IP/device bans), bots tab with `submitBotRequest` + `reviewBotRequest` (approve/reject bot-requests).
+- style.css: `notif-bell` / `notif-dropdown` / `notif-item`, `admin-tabs`, `bot-request` styles.
+- OneBot `modules/onebot/ws.js`: now also accepts standard `/api` path; sends `heartbeat` meta_event on connect.
+- End-to-end verified: register → submit bot-request (201) → auth-gated notification/bot-request endpoints return 401 without token → OneBot WS returns 401 for bad/missing token.
+
