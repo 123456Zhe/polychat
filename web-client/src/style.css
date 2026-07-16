@@ -355,6 +355,13 @@ button { cursor: pointer; }
 .banned-ip small { color: #8b94a2; }
 .banned-ip button { margin-left: auto; padding: 3px 8px; border: 1px solid var(--warm-300); border-radius: 6px; color: #c2413a; font-size: 10px; background: var(--white); }
 
+.friend-avatar { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; vertical-align: middle; }
+.friend-avatar b { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; color: #fff; font-size: 11px; background: linear-gradient(135deg, var(--blue-600), var(--violet-600)); vertical-align: middle; }
+.friend-section { margin-bottom: 14px; }
+.friends-modal .invite-search { margin: 10px 0 14px; }
+.nav-add { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin-left: 6px; padding: 0; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; color: var(--blue-400); font-size: 13px; line-height: 1; background: transparent; cursor: pointer; vertical-align: middle; }
+.nav-add:hover { color: #fff; border-color: rgba(255,255,255,.5); background: rgba(255,255,255,.1); }
+
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 8px; background: #aab1ba; background-clip: padding-box; }
 
