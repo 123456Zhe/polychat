@@ -95,7 +95,12 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 ### Status
 - Module extraction DONE. Client-side notification bell + admin bots tab DONE. OneBot protocol fixes (standard field alignment) DONE.
 - All server Node tests pass (15/15); web-client builds cleanly.
-- Prior session changes are committed locally and `main` is ahead of `origin/main`; the current security fixes remain uncommitted.
+- OneBot security fixes are committed and deployed; the current bot configuration UX changes remain uncommitted.
+
+### This session (bot configuration UX)
+- Admin bot workspace shows the forward OneBot endpoint, request history, issued tokens, and copy/revoke actions.
+- Approval notifications provide one-click Token, WebSocket URL, and configuration JSON copying.
+- Revoking a Bot Token immediately disconnects the associated OneBot connection.
 
 ### This session (client wiring + protocol)
 - Web client `App.vue`: removed `aiUser` / `/api/ai/info` / `[at:ai]` suggestion.

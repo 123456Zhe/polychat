@@ -33,6 +33,7 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 - 管理员可封禁/禁言用户（支持设置时长）
 - 登录限速保护（5 次/15 分钟）
 - 审计日志记录管理员操作
+- 管理员可在机器人面板审批申请、复制 OneBot WebSocket 配置和撤销 Bot Token
 
 ### 数据管理
 - 用户可导出聊天记录为 JSON 文件
@@ -85,6 +86,10 @@ npm run web:dev
 ```bash
 npm run web:build
 ```
+
+## 机器人接入
+
+管理员在 Web 管理面板的“机器人”页审批申请后，可以直接复制 Bot Token、带凭据的 OneBot v11 WebSocket 地址或配置 JSON。正向 WebSocket 端点为 `/api/onebot/ws`（兼容标准 `/api` 路径）；撤销 Token 会立即断开对应机器人连接。
 
 ### Web 主题与自定义 CSS
 

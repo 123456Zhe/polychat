@@ -487,6 +487,7 @@ button { cursor: pointer; }
 .notif-time { font-size: 10px; color: #a2aab6; }
 .notif-token { margin-top: 7px; padding: 8px; background: #f1f5f9; border-radius: 8px; font-size: 11px; color: #475569; }
 .notif-token code { display: block; word-break: break-all; margin: 4px 0; font-family: ui-monospace, monospace; background: #fff; padding: 6px 8px; border-radius: 6px; border: 1px solid #e2e8f0; }
+.notif-token > div { display: flex; flex-wrap: wrap; gap: 10px; }
 .notif-token button { font-size: 11px; color: #2563eb; background: transparent; border: 0; padding: 0; }
 
 /* Admin panel tabs */
@@ -502,4 +503,29 @@ button { cursor: pointer; }
 .status-badge.pending { color: #d97706; background: #fffbeb; }
 .status-badge.approved { color: #16a34a; background: #f0fdf4; }
 .status-badge.rejected { color: #dc2626; background: #fef2f2; }
-
+.modal:has(+ .bot-config-overlay) { visibility: hidden; }
+.bot-config-overlay { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 20px; background: rgba(17, 24, 39, .48); }
+.bot-config-panel { position: relative; width: min(900px, 100%); max-height: min(820px, calc(100vh - 40px)); overflow: auto; padding: 24px; border: 1px solid var(--warm-300); border-radius: 12px; background: var(--white); box-shadow: 0 24px 70px rgba(20, 30, 50, .28); }
+.bot-config-panel > p { margin: 0 0 4px; color: var(--blue-700); font-size: 10px; font-weight: 800; }
+.bot-config-panel > h2 { margin: 0 0 16px; color: var(--slate-950); }
+.bot-connect { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 14px; border: 1px solid #bfdbfe; border-radius: 8px; background: #eff6ff; }
+.bot-connect div { min-width: 0; }
+.bot-connect b, .bot-connect small { display: block; }
+.bot-connect small { overflow: hidden; margin-top: 3px; color: #526276; font-family: ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.bot-connect button, .bot-token-actions button { padding: 6px 9px; border: 1px solid var(--warm-300); border-radius: 7px; color: #475569; background: var(--white); }
+.bot-config-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px; margin-top: 18px; }
+.bot-config-column { min-width: 0; }
+.bot-config-column h3 { display: flex; align-items: center; justify-content: space-between; margin: 0 0 8px; font-size: 14px; }
+.bot-token-row { padding: 12px 0; border-top: 1px solid var(--warm-200); }
+.bot-token-row > div:first-child { display: grid; gap: 3px; }
+.bot-token-row small { color: #87909d; font-size: 11px; }
+.bot-token-row code { width: fit-content; padding: 3px 6px; border-radius: 5px; color: #475569; background: var(--warm-100); font-size: 11px; }
+.bot-token-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.bot-token-actions button.danger { color: #b42318; border-color: #fecaca; }
+@media (max-width: 700px) {
+  .bot-config-overlay { padding: 8px; }
+  .bot-config-panel { max-height: calc(100vh - 16px); padding: 18px 14px; }
+  .bot-config-grid { grid-template-columns: 1fr; }
+  .bot-request-form { grid-template-columns: 1fr; }
+  .bot-connect { align-items: stretch; flex-direction: column; }
+}

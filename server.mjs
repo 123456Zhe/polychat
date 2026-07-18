@@ -1617,6 +1617,7 @@ async function api(req, res, url) {
     const row = db.prepare('SELECT user_id FROM bot_tokens WHERE token = ?').get(token);
     if (!row) return json(res, 404, { error: 'Token 不存在' });
     db.prepare('DELETE FROM bot_tokens WHERE token = ?').run(token);
+    onebot.disconnectUser(row.user_id);
     logAudit(admin.id, 'delete_bot_token', row.user_id);
     return json(res, 200, { ok: true });
   }

@@ -477,6 +477,12 @@ test('机器人申请校验、审批和通知 Token 完整流程', async () => {
   assert.equal(marked.response.status, 200);
   const unread = await api('/api/notifications/unread-count', { headers: requesterAuth });
   assert.equal(unread.body.count, 0);
+  const tokens = await api('/api/admin/bot/tokens', { headers: adminAuth });
+  assert.ok(tokens.body.tokens.some(item => item.token === notification.data.token));
+  const revoked = await api(`/api/admin/bot/tokens/${notification.data.token}`, { method: 'DELETE', headers: adminAuth });
+  assert.equal(revoked.response.status, 200);
+  const afterRevoke = await api('/api/admin/bot/tokens', { headers: adminAuth });
+  assert.ok(!afterRevoke.body.tokens.some(item => item.token === notification.data.token));
 });
 
 test('OneBot 遵守消息权限、好友限制和账号处罚状态', async () => {
