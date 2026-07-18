@@ -501,6 +501,12 @@ test('OneBot 遵守消息权限、好友限制和账号处罚状态', async () =
   assert.equal(tokenResult.response.status, 201);
   const socket = await openSocket(`${base.replace('http:', 'ws:')}/api/onebot/ws?token=${encodeURIComponent(tokenResult.body.token.token)}`);
 
+  const publicMember = await onebotAction(socket, 'get_group_member_info', { group_id: 1, user_id: target.body.user.id });
+  assert.equal(publicMember.status, 'ok');
+  assert.equal(publicMember.data.nickname, 'policy_target');
+  const publicMembers = await onebotAction(socket, 'get_group_member_list', { group_id: 1 });
+  assert.ok(publicMembers.data.some(member => member.user_id === target.body.user.id));
+
   const privateRoom = await api('/api/rooms', { method: 'POST', headers: ownerAuth, body: JSON.stringify({ name: 'OneBot私密测试', is_private: true }) });
   const secret = await api(`/api/rooms/${privateRoom.body.room.id}/messages`, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ content: '不可越权读取' }) });
   const deniedRead = await onebotAction(socket, 'get_msg', { message_id: secret.body.message.id });

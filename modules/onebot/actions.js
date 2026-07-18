@@ -161,7 +161,10 @@ export function createOnebotActionHandler(ctx) {
           const roomId = Number(params.group_id);
           const room = accessibleRoom(roomId);
           if (!room) return respond(null, 'failed', 100, '房间不存在或无权限');
-          const members = db.prepare(`SELECT users.id, users.username, room_members.role FROM room_members JOIN users ON users.id = room_members.user_id WHERE room_id = ? ORDER BY role, username`).all(roomId);
+          const members = room.is_private
+            ? db.prepare(`SELECT users.id, users.username, room_members.role FROM room_members JOIN users ON users.id = room_members.user_id WHERE room_id = ? ORDER BY role, username`).all(roomId)
+            : db.prepare(`SELECT users.id, users.username, COALESCE(room_members.role, 'member') AS role FROM users
+                LEFT JOIN room_members ON room_members.room_id = ? AND room_members.user_id = users.id ORDER BY role, username`).all(roomId);
           respond(members.map(m => ({ user_id: m.id, nickname: m.username, role: m.role })));
           break;
         }
@@ -174,7 +177,7 @@ export function createOnebotActionHandler(ctx) {
           const member = roomId
             ? db.prepare(`SELECT users.id, users.username, room_members.role FROM room_members JOIN users ON users.id = room_members.user_id WHERE room_id = ? AND user_id = ?`).get(roomId, targetId)
             : null;
-          const fallback = roomId ? member : db.prepare('SELECT id, username FROM users WHERE id = ?').get(targetId);
+          const fallback = roomId && room.is_private ? member : (member || db.prepare('SELECT id, username FROM users WHERE id = ?').get(targetId));
           if (!fallback) return respond(null, 'failed', 100, '用户不存在');
           respond({ user_id: fallback.id, nickname: fallback.username, role: member?.role || 'member' });
           break;
