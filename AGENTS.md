@@ -22,11 +22,12 @@
 ## Quick start
 
 ```bash
+npm install                  # first run only
 ./run-server.sh              # starts Node server on :3000
 # or just: node server.mjs
 ```
 
-No `npm install` required for the server — only built-in Node 22.5+ modules are used. `npm install` is only needed for the web frontend dev/build.
+Run `npm install` once before starting the server or building the web frontend. SQLite itself is provided by Node 22.5+ through `node:sqlite`.
 
 ## Commands
 
@@ -85,16 +86,16 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 - Removed broken `AI_USER_ID` references: `[at:ai]` handling in `resolveMentions`, `ai` field in `/api/health`, and the dangling `/api/ai/info` endpoint. AI is now a user-created bot approved by admins.
 - All 13 Node tests pass; server boots cleanly and OneBot WS rejects connections without a token (returns 401).
 
-### Previously (from prior sessions, uncommitted)
-- Notification system: `notifications` table, `createNotification()`, WS push, REST API (unread count, mark-read, read-all), bell UI planned in `web-client/src/App.vue`.
+### Previously implemented
+- Notification system: `notifications` table, `createNotification()`, WS push, REST API (unread count, mark-read, read-all), and bell UI in `web-client/src/App.vue`.
 - Bot request/approval flow: `bot_requests` table, `POST /api/bot-requests`, `GET /api/admin/bot-requests`, `PUT /api/admin/bot-requests/:id` (auto-creates user + bot token + notifies applicant).
 - `@` mention system: validation in `validateMentions`, red badge, desktop notification prefix `@你`, `mentionedUnread` tracking, `/api/rooms/:id/mentionables` endpoint.
-- Admin panel tabs (users/security/bots) and notification bell UI designed but NOT yet wired into `web-client/src/App.vue`.
+- Admin panel tabs (users/security/bots) and notification bell UI are wired into `web-client/src/App.vue`.
 
 ### Status
 - Module extraction DONE. Client-side notification bell + admin bots tab DONE. OneBot protocol fixes (standard field alignment) DONE.
-- All server Node tests pass (13/13); web-client builds cleanly.
-- Nothing committed yet.
+- All server Node tests pass (15/15); web-client builds cleanly.
+- Prior session changes are committed locally and `main` is ahead of `origin/main`; the current security fixes remain uncommitted.
 
 ### This session (client wiring + protocol)
 - Web client `App.vue`: removed `aiUser` / `/api/ai/info` / `[at:ai]` suggestion.
@@ -103,4 +104,3 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 - style.css: `notif-bell` / `notif-dropdown` / `notif-item`, `admin-tabs`, `bot-request` styles.
 - OneBot `modules/onebot/ws.js`: now also accepts standard `/api` path; sends `heartbeat` meta_event on connect.
 - End-to-end verified: register → submit bot-request (201) → auth-gated notification/bot-request endpoints return 401 without token → OneBot WS returns 401 for bad/missing token.
-

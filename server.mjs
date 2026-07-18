@@ -399,6 +399,7 @@ const LOGIN_RATE_LIMIT_WINDOW = 15 * 60 * 1000;
 const LOGIN_RATE_LIMIT_MAX = 5;
 const REGISTER_RATE_WINDOW = 60 * 60 * 1000; // 1 小时
 const REGISTER_RATE_MAX = 5; // 每小时最多注册 5 个账号
+const USERNAME_RE = /^[\p{L}\p{N}_-]{2,24}$/u;
 
 function getLoginAttempts(ip) {
   const since = new Date(Date.now() - LOGIN_RATE_LIMIT_WINDOW).toISOString();
@@ -638,7 +639,7 @@ async function api(req, res, url) {
     const fp = typeof fingerprint === 'string' && fingerprint.length <= 128 ? fingerprint : null;
     if (fp && isFingerprintBanned(fp)) return json(res, 403, { error: '该设备已被封禁' });
     const name = String(username).trim();
-    if (!/^[\p{L}\p{N}_-]{2,24}$/u.test(name)) return json(res, 400, { error: '用户名需为 2–24 位字母、数字、下划线或连字符' });
+    if (!USERNAME_RE.test(name)) return json(res, 400, { error: '用户名需为 2–24 位字母、数字、下划线或连字符' });
     if (String(password).length < 8 || String(password).length > 128) return json(res, 400, { error: '密码需为 8–128 位' });
     if (process.env.NODE_ENV !== 'test') {
       const regSince = new Date(Date.now() - REGISTER_RATE_WINDOW).toISOString();
@@ -784,6 +785,7 @@ async function api(req, res, url) {
     if (target.is_admin) return json(res, 400, { error: '不能封禁管理员' });
     const bannedUntil = Date.now() + Number(duration_hours) * 3600_000;
     db.prepare('UPDATE users SET banned_until = ? WHERE id = ?').run(bannedUntil, targetId);
+    onebot.disconnectUser(targetId);
     logAudit(admin.id, 'ban_user', targetId, `封禁 ${duration_hours} 小时`);
     return json(res, 200, { user: publicUser({ ...target, banned_until: bannedUntil }) });
   }
@@ -1647,8 +1649,13 @@ async function api(req, res, url) {
   if (req.method === 'POST' && url.pathname === '/api/bot-requests') {
     const user = requireUser(req, res); if (!user) return;
     const { name = '', reason = '' } = await readBody(req);
-    if (!name.trim()) return json(res, 400, { error: '请填写机器人名称' });
-    db.prepare('INSERT INTO bot_requests(user_id, name, reason) VALUES (?, ?, ?)').run(user.id, name.trim(), reason.trim());
+    const botName = String(name).trim();
+    const botReason = String(reason).trim();
+    if (!USERNAME_RE.test(botName)) return json(res, 400, { error: '机器人名称需为 2–24 位字母、数字、下划线或连字符' });
+    if (botReason.length > 500) return json(res, 400, { error: '用途说明最多 500 个字符' });
+    if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(botName)) return json(res, 409, { error: '该名称已被使用' });
+    if (db.prepare("SELECT 1 FROM bot_requests WHERE name = ? COLLATE NOCASE AND status = 'pending'").get(botName)) return json(res, 409, { error: '该机器人名称已有待处理申请' });
+    db.prepare('INSERT INTO bot_requests(user_id, name, reason) VALUES (?, ?, ?)').run(user.id, botName, botReason);
     return json(res, 201, { ok: true });
   }
   if (req.method === 'GET' && url.pathname === '/api/admin/bot-requests') {
@@ -1666,6 +1673,8 @@ async function api(req, res, url) {
     const row = db.prepare('SELECT * FROM bot_requests WHERE id = ?').get(reqId);
     if (!row || row.status !== 'pending') return json(res, 404, { error: '申请不存在或已处理' });
     if (status === 'approved') {
+      if (!USERNAME_RE.test(row.name)) return json(res, 400, { error: '机器人名称格式无效，请拒绝该旧申请后重新提交' });
+      if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(row.name)) return json(res, 409, { error: '机器人名称已被使用' });
       const pwd = randomBytes(16).toString('hex');
       const r = db.prepare('INSERT INTO users(username, password_hash) VALUES (?, ?)').run(row.name, hashPassword(pwd));
       const userId = Number(r.lastInsertRowid);
@@ -1724,13 +1733,14 @@ export const server = http.createServer(async (req, res) => {
   }
 });
 
-const onebot = setupOnebot({ db, eventBus, roomForUser, validateMentions, hydrateMessages, broadcast, conversationMembers, socketCanAccess, isUserBanned });
+const onebot = setupOnebot({ db, eventBus, roomForUser, validateMentions, hydrateMessages, broadcast, conversationMembers, socketCanAccess, isUserBanned, isUserMuted });
 onebot.attach(server);
 if (process.env.NODE_ENV !== 'test') onebot.startReverse();
 
 const webSocketServer = new WebSocketServer({ noServer: true });
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  if (url.pathname === '/api/onebot/ws' || url.pathname === '/api') return;
   if (url.pathname !== '/ws') return socket.destroy();
   const token = url.searchParams.get('token');
   if (token && !req.headers.authorization) req.headers.authorization = `Bearer ${token}`;

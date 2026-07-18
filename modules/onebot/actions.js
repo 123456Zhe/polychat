@@ -1,7 +1,7 @@
 import { onebotTS, onebotSegments, onebotMessageText, onebotGetOrCreateDm } from './utils.js';
 
 export function createOnebotActionHandler(ctx) {
-  const { db, roomForUser, validateMentions, hydrateMessages, broadcast, conversationMembers, socketCanAccess, botSockets } = ctx;
+  const { db, roomForUser, validateMentions, hydrateMessages, broadcast, conversationMembers, socketCanAccess, isUserBanned, isUserMuted, botSockets } = ctx;
 
   function broadcastOnebotGroupMessage(roomId, message, sender) {
     const cache = new Map();
@@ -36,18 +36,31 @@ export function createOnebotActionHandler(ctx) {
 
   return async function handleOnebotAction(client, msg) {
     const { action, params = {}, echo } = msg;
-    const user = client.user;
     function respond(data = null, status = 'ok', retcode = 0, errMsg = null) {
       if (client.readyState !== 1) return;
       const res = { status, retcode, data, echo, message: errMsg };
       client.send(JSON.stringify(Object.fromEntries(Object.entries(res).filter(([, v]) => v !== null))));
     }
+    const user = db.prepare('SELECT id, username, is_admin, avatar_updated_at, banned_until, muted_until, device_fingerprint FROM users WHERE id = ?').get(client.user.id);
+    if (!user || isUserBanned(user)) {
+      respond(null, 'failed', 403, '机器人账号已被封禁或删除');
+      client.close(4003, 'Bot account disabled');
+      return;
+    }
+    client.user = user;
+    const accessibleRoom = roomId => socketCanAccess(client, roomId) ? roomForUser(roomId, user.id) : null;
+    const rejectMuted = () => {
+      if (!isUserMuted(user)) return false;
+      respond(null, 'failed', 403, '机器人账号已被禁言');
+      return true;
+    };
     try {
       switch (action) {
         case 'send_group_msg': {
+          if (rejectMuted()) return;
           if (!params.group_id) return respond(null, 'failed', 100, '缺少 group_id');
           const roomId = Number(params.group_id);
-          const room = roomForUser(roomId, user.id);
+          const room = accessibleRoom(roomId);
           if (!room) return respond(null, 'failed', 100, '房间不存在或无权限');
           const text = onebotMessageText(params.message);
           if (!text || text.length > 10000) return respond(null, 'failed', 100, '消息内容无效');
@@ -64,9 +77,15 @@ export function createOnebotActionHandler(ctx) {
           break;
         }
         case 'send_private_msg': {
+          if (rejectMuted()) return;
           if (!params.user_id) return respond(null, 'failed', 100, '缺少 user_id');
           const targetId = Number(params.user_id);
           if (targetId === user.id) return respond(null, 'failed', 100, '不能给自己发消息');
+          const target = db.prepare('SELECT id FROM users WHERE id = ?').get(targetId);
+          if (!target) return respond(null, 'failed', 100, '用户不存在');
+          const friendship = db.prepare("SELECT 1 FROM friendships WHERE user_id = ? AND friend_id = ? AND status = 'accepted'").get(user.id, targetId)
+            || db.prepare("SELECT 1 FROM friendships WHERE user_id = ? AND friend_id = ? AND status = 'accepted'").get(targetId, user.id);
+          if (!friendship) return respond(null, 'failed', 403, '只有互为好友才能私信');
           const convId = onebotGetOrCreateDm(db, user.id, targetId);
           const text = onebotMessageText(params.message);
           if (!text || text.length > 10000) return respond(null, 'failed', 100, '消息内容无效');
@@ -93,6 +112,10 @@ export function createOnebotActionHandler(ctx) {
           if (!mid) return respond(null, 'failed', 100, '缺少 message_id');
           const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(mid);
           if (!message) return respond(null, 'failed', 100, '消息不存在');
+          const canAccess = message.room_id
+            ? socketCanAccess(client, message.room_id)
+            : message.dm_id && db.prepare('SELECT 1 FROM dm_members WHERE conversation_id = ? AND user_id = ?').get(message.dm_id, user.id);
+          if (!canAccess) return respond(null, 'failed', 403, '无权访问该消息');
           const canDelete = message.user_id === user.id || (message.room_id && (user.is_admin || ['owner', 'admin'].includes(roomForUser(message.room_id, user.id)?.role)));
           if (!canDelete) return respond(null, 'failed', 100, '无权撤回');
           db.prepare("UPDATE messages SET content = '', attachment_id = NULL, deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(mid);
@@ -106,6 +129,10 @@ export function createOnebotActionHandler(ctx) {
           if (!mid) return respond(null, 'failed', 100, '缺少 message_id');
           const message = db.prepare(`SELECT messages.*, users.username FROM messages JOIN users ON users.id = messages.user_id WHERE messages.id = ?`).get(mid);
           if (!message) return respond(null, 'failed', 100, '消息不存在');
+          const canAccess = message.room_id
+            ? socketCanAccess(client, message.room_id)
+            : message.dm_id && db.prepare('SELECT 1 FROM dm_members WHERE conversation_id = ? AND user_id = ?').get(message.dm_id, user.id);
+          if (!canAccess) return respond(null, 'failed', 403, '无权访问该消息');
           respond({
             message_id: message.id, user_id: message.user_id, message: onebotSegments(message),
             real_id: message.id, sender: { user_id: message.user_id, nickname: message.username },
@@ -125,14 +152,14 @@ export function createOnebotActionHandler(ctx) {
         }
         case 'get_group_info': {
           const roomId = Number(params.group_id);
-          const room = roomForUser(roomId, user.id);
+          const room = accessibleRoom(roomId);
           if (!room) return respond(null, 'failed', 100, '房间不存在或无权限');
           respond({ group_id: room.id, group_name: room.name });
           break;
         }
         case 'get_group_member_list': {
           const roomId = Number(params.group_id);
-          const room = roomForUser(roomId, user.id);
+          const room = accessibleRoom(roomId);
           if (!room) return respond(null, 'failed', 100, '房间不存在或无权限');
           const members = db.prepare(`SELECT users.id, users.username, room_members.role FROM room_members JOIN users ON users.id = room_members.user_id WHERE room_id = ? ORDER BY role, username`).all(roomId);
           respond(members.map(m => ({ user_id: m.id, nickname: m.username, role: m.role })));
@@ -142,18 +169,19 @@ export function createOnebotActionHandler(ctx) {
           const roomId = Number(params.group_id);
           const targetId = Number(params.user_id);
           if (!targetId) return respond(null, 'failed', 100, '缺少 user_id');
-          const room = roomId ? roomForUser(roomId, user.id) : null;
+          const room = roomId ? accessibleRoom(roomId) : null;
+          if (roomId && !room) return respond(null, 'failed', 100, '房间不存在或无权限');
           const member = roomId
             ? db.prepare(`SELECT users.id, users.username, room_members.role FROM room_members JOIN users ON users.id = room_members.user_id WHERE room_id = ? AND user_id = ?`).get(roomId, targetId)
             : null;
-          const fallback = member || db.prepare('SELECT id, username FROM users WHERE id = ?').get(targetId);
+          const fallback = roomId ? member : db.prepare('SELECT id, username FROM users WHERE id = ?').get(targetId);
           if (!fallback) return respond(null, 'failed', 100, '用户不存在');
           respond({ user_id: fallback.id, nickname: fallback.username, role: member?.role || 'member' });
           break;
         }
         case 'get_group_msg_history': {
           const roomId = Number(params.group_id);
-          const room = roomForUser(roomId, user.id);
+          const room = accessibleRoom(roomId);
           if (!room) return respond(null, 'failed', 100, '房间不存在或无权限');
           const count = Math.min(Number(params.count) || 20, 100);
           const beforeId = Number(params.message_seq || params.message_id) || null;

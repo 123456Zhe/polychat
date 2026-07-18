@@ -24,6 +24,32 @@ async function api(path, options = {}) {
   return { response, body: await response.json() };
 }
 
+async function openSocket(url) {
+  const socket = new WebSocket(url);
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('WebSocket 连接超时')), 2000);
+    socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
+    socket.addEventListener('error', reject, { once: true });
+  });
+  return socket;
+}
+
+function onebotAction(socket, action, params = {}) {
+  const echo = `test-${Date.now()}-${Math.random()}`;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`OneBot ${action} 响应超时`)), 2000);
+    const listener = event => {
+      const payload = JSON.parse(event.data);
+      if (payload.echo !== echo) return;
+      clearTimeout(timer);
+      socket.removeEventListener('message', listener);
+      resolve(payload);
+    };
+    socket.addEventListener('message', listener);
+    socket.send(JSON.stringify({ action, params, echo }));
+  });
+}
+
 test('注册、登录和持久化聊天完整流程', async () => {
   const registered = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'alice', password: 'correct-horse' }) });
   assert.equal(registered.response.status, 201);
@@ -419,4 +445,87 @@ test('WebSocket 实时推送私信和好友事件', async () => {
   assert.equal(roomReceived.message.content, 'ws 房间');
 
   socket.close();
+});
+
+test('机器人申请校验、审批和通知 Token 完整流程', async () => {
+  const requester = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'bot_requester', password: 'bot-request-password' }) });
+  const requesterAuth = { authorization: `Bearer ${requester.body.token}` };
+  const adminLogin = await api('/api/login', { method: 'POST', body: JSON.stringify({ username: 'alice', password: 'correct-horse' }) });
+  const adminAuth = { authorization: `Bearer ${adminLogin.body.token}` };
+
+  const invalid = await api('/api/bot-requests', { method: 'POST', headers: requesterAuth, body: JSON.stringify({ name: '!', reason: '' }) });
+  assert.equal(invalid.response.status, 400);
+  const existing = await api('/api/bot-requests', { method: 'POST', headers: requesterAuth, body: JSON.stringify({ name: 'alice', reason: '' }) });
+  assert.equal(existing.response.status, 409);
+
+  const submitted = await api('/api/bot-requests', { method: 'POST', headers: requesterAuth, body: JSON.stringify({ name: 'approved_bot', reason: '自动回复' }) });
+  assert.equal(submitted.response.status, 201);
+  const duplicate = await api('/api/bot-requests', { method: 'POST', headers: requesterAuth, body: JSON.stringify({ name: 'APPROVED_BOT', reason: '' }) });
+  assert.equal(duplicate.response.status, 409);
+
+  const requests = await api('/api/admin/bot-requests', { headers: adminAuth });
+  const request = requests.body.requests.find(item => item.name === 'approved_bot');
+  assert.ok(request);
+  const approved = await api(`/api/admin/bot-requests/${request.id}`, { method: 'PUT', headers: adminAuth, body: JSON.stringify({ status: 'approved' }) });
+  assert.equal(approved.response.status, 200);
+
+  const notifications = await api('/api/notifications', { headers: requesterAuth });
+  const notification = notifications.body.notifications.find(item => item.data?.bot_request_id === request.id);
+  assert.equal(notification.type, 'bot_approval');
+  assert.match(notification.data.token, /^[A-Za-z0-9_-]+$/);
+  const marked = await api(`/api/notifications/${notification.id}/read`, { method: 'PUT', headers: requesterAuth });
+  assert.equal(marked.response.status, 200);
+  const unread = await api('/api/notifications/unread-count', { headers: requesterAuth });
+  assert.equal(unread.body.count, 0);
+});
+
+test('OneBot 遵守消息权限、好友限制和账号处罚状态', async () => {
+  const adminLogin = await api('/api/login', { method: 'POST', body: JSON.stringify({ username: 'alice', password: 'correct-horse' }) });
+  const adminAuth = { authorization: `Bearer ${adminLogin.body.token}` };
+  const bot = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'policy_bot', password: 'policy-bot-password' }) });
+  const target = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'policy_target', password: 'policy-target-password' }) });
+  const owner = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'policy_owner', password: 'policy-owner-password' }) });
+  const botAuth = { authorization: `Bearer ${bot.body.token}` };
+  const targetAuth = { authorization: `Bearer ${target.body.token}` };
+  const ownerAuth = { authorization: `Bearer ${owner.body.token}` };
+
+  const tokenResult = await api('/api/admin/bot/tokens', {
+    method: 'POST', headers: adminAuth, body: JSON.stringify({ user_id: bot.body.user.id, name: 'Policy test' })
+  });
+  assert.equal(tokenResult.response.status, 201);
+  const socket = await openSocket(`${base.replace('http:', 'ws:')}/api/onebot/ws?token=${encodeURIComponent(tokenResult.body.token.token)}`);
+
+  const privateRoom = await api('/api/rooms', { method: 'POST', headers: ownerAuth, body: JSON.stringify({ name: 'OneBot私密测试', is_private: true }) });
+  const secret = await api(`/api/rooms/${privateRoom.body.room.id}/messages`, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ content: '不可越权读取' }) });
+  const deniedRead = await onebotAction(socket, 'get_msg', { message_id: secret.body.message.id });
+  assert.equal(deniedRead.status, 'failed');
+  assert.equal(deniedRead.retcode, 403);
+  const deniedGroupSend = await onebotAction(socket, 'send_group_msg', { group_id: privateRoom.body.room.id, message: '不可写入' });
+  assert.equal(deniedGroupSend.status, 'failed');
+  const deniedHistory = await onebotAction(socket, 'get_group_msg_history', { group_id: privateRoom.body.room.id });
+  assert.equal(deniedHistory.status, 'failed');
+
+  const deniedDm = await onebotAction(socket, 'send_private_msg', { user_id: target.body.user.id, message: '非好友消息' });
+  assert.equal(deniedDm.status, 'failed');
+  assert.equal(deniedDm.retcode, 403);
+  assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM dm_members a JOIN dm_members b ON b.conversation_id = a.conversation_id
+    WHERE a.user_id = ? AND b.user_id = ?`).get(bot.body.user.id, target.body.user.id).count, 0);
+
+  await api('/api/friends/request', { method: 'POST', headers: botAuth, body: JSON.stringify({ username: 'policy_target' }) });
+  await api(`/api/friends/${bot.body.user.id}/accept`, { method: 'POST', headers: targetAuth });
+  const allowedDm = await onebotAction(socket, 'send_private_msg', { user_id: target.body.user.id, message: '好友消息' });
+  assert.equal(allowedDm.status, 'ok');
+
+  await api(`/api/admin/users/${bot.body.user.id}/mute`, { method: 'PUT', headers: adminAuth, body: JSON.stringify({ duration_hours: 1 }) });
+  const muted = await onebotAction(socket, 'send_group_msg', { group_id: 1, message: '禁言消息' });
+  assert.equal(muted.status, 'failed');
+  assert.equal(muted.retcode, 403);
+  await api(`/api/admin/users/${bot.body.user.id}/unmute`, { method: 'PUT', headers: adminAuth });
+
+  const disconnected = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('封禁后 OneBot 连接未断开')), 2000);
+    socket.addEventListener('close', () => { clearTimeout(timer); resolve(); }, { once: true });
+  });
+  await api(`/api/admin/users/${bot.body.user.id}/ban`, { method: 'PUT', headers: adminAuth, body: JSON.stringify({ duration_hours: 1 }) });
+  await disconnected;
 });

@@ -2,7 +2,7 @@
 
 ![PolyChat icon](assets/polychat-icon.png)
 
-PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet 桌面 GUI 和 curses 终端 TUI 客户端。服务端只依赖 Node.js 内置模块，数据保存在 SQLite 中。
+PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet 桌面 GUI 和 curses 终端 TUI 客户端。服务端基于 Node.js，使用 `ws` 和 `web-push` 提供实时通信与离线通知，数据保存在 SQLite 中。
 
 ## 功能
 
@@ -54,7 +54,7 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 - Python 3.10 或更高版本
 - GUI 需要 Python 与 Flet；TUI 需要类 Unix 终端的 curses
 
-不需要 `npm install`，也不需要另行安装数据库。
+首次运行需要执行 `npm install` 安装 Node.js 依赖，不需要另行安装数据库。
 
 ## 环境变量
 
@@ -121,6 +121,7 @@ npm run web:build
 
 ```bash
 cd /home/zhe/polychat
+npm install # 首次运行
 ./run-server.sh
 ```
 
