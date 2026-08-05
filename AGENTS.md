@@ -97,6 +97,13 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 - All server Node tests pass (15/15); web-client builds cleanly.
 - OneBot security fixes are committed and deployed; the current bot configuration UX changes remain uncommitted.
 
+### This session (P2P 大文件直传)
+- 私信间 WebRTC P2P 直传（`simple-peer` 封装，STUN 打洞，可选 TURN），文件字节不经过服务器，失败自动回退分片上传。
+- 服务端：`p2p_transfers` 表 + `messages.p2p_transfer_id` 列；`/api/p2p/config`、`/api/p2p/transfers`（create/get/accept/reject/cancel/complete/fail）；WS `p2p_signal` 仅向传输双方转发且需已接受；`sendToUser()`/`userOnline()` 辅助函数。
+- 客户端：`web-client/src/p2p.js`（simple-peer 引擎 + IndexedDB 存储 + 64KB 分块/流控/SHA-256）；`App.vue` 集成发送路径（≥`P2P_MIN_SIZE` 且对方在线先试 P2P）、接收确认弹窗、进度条、`p2p_transfer_id` 消息卡片（下载/删除本机副本）。
+- Web DM 文件发送统一改用分片上传（`uploadFileChunked`），修复了此前 >10 MB 文件无法从 Web 发送的问题。
+- 新增 3 个 P2P 测试（配置/生命周期/完成消息、WS 信令权限、取消/拒绝/活跃上限）；18/18 测试通过，`web:build` 干净。
+
 ### This session (bot configuration UX)
 - Admin bot workspace shows the forward OneBot endpoint, request history, issued tokens, and copy/revoke actions.
 - Approval notifications provide one-click Token, WebSocket URL, and configuration JSON copying.

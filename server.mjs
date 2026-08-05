@@ -41,6 +41,13 @@ const MAX_AVATAR_SIZE = 2 * 1024 * 1024;
 const BACKUP_DIR = process.env.BACKUP_DIR || join(dirname(DB_PATH), 'backups');
 const BACKUP_INTERVAL_HOURS = Number(process.env.BACKUP_INTERVAL_HOURS || 24);
 const BACKUP_ENABLED = process.env.BACKUP_ENABLED !== 'false';
+const P2P_MIN_SIZE = Number(process.env.P2P_MIN_SIZE || 5 * 1024 * 1024);
+const P2P_ACTIVE_LIMIT = 10;
+const P2P_TTL_MS = 15 * 60 * 1000;
+const P2P_CONNECT_TIMEOUT_MS = 30_000;
+const TURN_URL = process.env.TURN_URL || '';
+const TURN_USERNAME = process.env.TURN_USERNAME || '';
+const TURN_CREDENTIAL = process.env.TURN_CREDENTIAL || '';
 
 mkdirSync(join(ROOT, 'data'), { recursive: true });
 mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -201,6 +208,21 @@ db.exec(`
     last_read_id INTEGER,
     PRIMARY KEY(conversation_id, user_id)
   );
+  CREATE TABLE IF NOT EXISTS p2p_transfers (
+    id TEXT PRIMARY KEY,
+    conversation_id INTEGER NOT NULL REFERENCES dm_conversations(id) ON DELETE CASCADE,
+    sender_id INTEGER NOT NULL REFERENCES users(id),
+    receiver_id INTEGER NOT NULL REFERENCES users(id),
+    name TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    content TEXT NOT NULL DEFAULT '',
+    reply_to INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+    sha256 TEXT,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'accepted', 'completed', 'rejected', 'canceled', 'expired', 'failed')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 db.exec(`CREATE TABLE IF NOT EXISTS bot_tokens (
   token TEXT PRIMARY KEY,
@@ -256,6 +278,9 @@ if (db.prepare("SELECT \"notnull\" FROM pragma_table_info('messages') WHERE name
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('CREATE INDEX IF NOT EXISTS idx_messages_room_id ON messages(room_id, id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id)');
+}
+if (!db.prepare('PRAGMA table_info(messages)').all().some(column => column.name === 'p2p_transfer_id')) {
+  db.exec('ALTER TABLE messages ADD COLUMN p2p_transfer_id INTEGER REFERENCES p2p_transfers(id)');
 }
 if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_messages_dm_id'").get()) {
   db.exec('CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id)');
@@ -576,6 +601,53 @@ function onlineUsers() {
   const users = new Map();
   for (const socket of sockets) users.set(socket.user.id, { id: socket.user.id, username: socket.user.username });
   return [...users.values()];
+}
+function sendToUser(userId, event) {
+  const payload = JSON.stringify(event);
+  for (const socket of sockets) {
+    if (socket.readyState === 1 && socket.user.id === userId) socket.send(payload);
+  }
+}
+function userOnline(userId) {
+  return [...sockets].some(socket => socket.readyState === 1 && socket.user.id === userId);
+}
+function p2pTransfer(id) {
+  return db.prepare('SELECT * FROM p2p_transfers WHERE id = ?').get(id);
+}
+function isDmMember(conversationId, userId) {
+  return Boolean(db.prepare('SELECT 1 FROM dm_members WHERE conversation_id = ? AND user_id = ?').get(conversationId, userId));
+}
+function dmPeerOf(conversationId, userId) {
+  return db.prepare('SELECT user_id FROM dm_members WHERE conversation_id = ? AND user_id != ?').get(conversationId, userId)?.user_id || null;
+}
+function expireStaleTransfers() {
+  db.prepare(`UPDATE p2p_transfers SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+    WHERE status IN ('pending', 'accepted') AND (julianday('now') - julianday(created_at)) * 86400000 > ?`).run(P2P_TTL_MS);
+}
+function p2pIceServers() {
+  const servers = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
+  if (TURN_URL) {
+    const turn = { urls: TURN_URL };
+    if (TURN_USERNAME) turn.username = TURN_USERNAME;
+    if (TURN_CREDENTIAL) turn.credential = TURN_CREDENTIAL;
+    servers.push(turn);
+  }
+  return servers;
+}
+function publicP2p(transfer, peerOnline = false) {
+  return {
+    id: transfer.id,
+    conversation_id: transfer.conversation_id,
+    sender_id: transfer.sender_id,
+    receiver_id: transfer.receiver_id,
+    name: transfer.name,
+    type: transfer.mime_type,
+    size: transfer.size,
+    status: transfer.status,
+    sha256: transfer.sha256 || null,
+    created_at: transfer.created_at,
+    peer_online: peerOnline
+  };
 }
 async function pushMessage(roomId, senderId, message) {
   const room = db.prepare('SELECT name, is_private FROM rooms WHERE id = ?').get(roomId);
@@ -1401,9 +1473,13 @@ async function api(req, res, url) {
     const messageId = Number(singleMessageMatch[1]);
     const row = db.prepare(`SELECT messages.id, messages.room_id, messages.content, messages.created_at, messages.reply_to, messages.thread_root, messages.edited_at, messages.deleted_at,
       users.id AS user_id, users.username, users.avatar_updated_at, parent.content AS reply_content, parent_user.username AS reply_username,
-      attachments.id AS attachment_id, attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type, attachments.size AS attachment_size
+      attachments.id AS attachment_id, attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type, attachments.size AS attachment_size,
+      p2p_transfers.id AS p2p_transfer_id, p2p_transfers.sender_id AS p2p_sender_id, p2p_transfers.receiver_id AS p2p_receiver_id,
+      p2p_transfers.name AS p2p_name, p2p_transfers.mime_type AS p2p_type, p2p_transfers.size AS p2p_size,
+      p2p_transfers.sha256 AS p2p_sha256, p2p_transfers.status AS p2p_status
       FROM messages JOIN users ON users.id = messages.user_id LEFT JOIN messages AS parent ON parent.id = messages.reply_to
-      LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id LEFT JOIN attachments ON attachments.id = messages.attachment_id WHERE messages.id = ?`).get(messageId);
+      LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id LEFT JOIN attachments ON attachments.id = messages.attachment_id
+      LEFT JOIN p2p_transfers ON p2p_transfers.id = messages.p2p_transfer_id WHERE messages.id = ?`).get(messageId);
     if (!row) return json(res, 404, { error: '消息不存在' });
     const context = requireRoomAccess(req, res, row.room_id); if (!context) return;
     return json(res, 200, { message: hydrateMessages([row], context.user.id)[0] });
@@ -1447,7 +1523,10 @@ async function api(req, res, url) {
 
   const dmMessageColumns = `messages.id, messages.content, messages.created_at, messages.reply_to, messages.thread_root, messages.edited_at, messages.deleted_at,
     users.id AS user_id, users.username, users.avatar_updated_at, parent.content AS reply_content, parent_user.username AS reply_username, attachments.id AS attachment_id,
-    attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type, attachments.size AS attachment_size`;
+    attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type, attachments.size AS attachment_size,
+    p2p_transfers.id AS p2p_transfer_id, p2p_transfers.sender_id AS p2p_sender_id, p2p_transfers.receiver_id AS p2p_receiver_id,
+    p2p_transfers.name AS p2p_name, p2p_transfers.mime_type AS p2p_type, p2p_transfers.size AS p2p_size,
+    p2p_transfers.sha256 AS p2p_sha256, p2p_transfers.status AS p2p_status`;
 
   if (req.method === 'GET' && url.pathname === '/api/dm/conversations') {
     const user = requireUser(req, res); if (!user) return;
@@ -1461,7 +1540,7 @@ async function api(req, res, url) {
         JOIN users ON users.id = dm_members.user_id WHERE dm_members.conversation_id = ? AND dm_members.user_id != ?`).get(conversation.id, user.id);
       const lastMessage = conversation.last_message_id ? db.prepare(`SELECT ${dmMessageColumns} FROM messages JOIN users ON users.id = messages.user_id
         LEFT JOIN messages AS parent ON parent.id = messages.reply_to LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id
-        LEFT JOIN attachments ON attachments.id = messages.attachment_id WHERE messages.id = ?`).get(conversation.last_message_id) : null;
+        LEFT JOIN attachments ON attachments.id = messages.attachment_id LEFT JOIN p2p_transfers ON p2p_transfers.id = messages.p2p_transfer_id WHERE messages.id = ?`).get(conversation.last_message_id) : null;
       const unread = db.prepare(`SELECT COUNT(*) AS count FROM messages
         WHERE dm_id = ? AND id > COALESCE((SELECT last_read_id FROM dm_members WHERE conversation_id = ? AND user_id = ?), 0) AND user_id != ?`).get(conversation.id, conversation.id, user.id, user.id).count;
       result.push({
@@ -1494,6 +1573,90 @@ async function api(req, res, url) {
     return json(res, 201, { conversation: { id, peer: publicUser(target) } });
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/p2p/config') {
+    const user = requireUser(req, res); if (!user) return;
+    return json(res, 200, { ice_servers: p2pIceServers(), min_size: P2P_MIN_SIZE, connect_timeout_ms: P2P_CONNECT_TIMEOUT_MS });
+  }
+
+  const p2pTransfersMatch = url.pathname.match(/^\/api\/p2p\/transfers$/);
+  if (p2pTransfersMatch && req.method === 'POST') {
+    const user = requireUser(req, res); if (!user) return;
+    expireStaleTransfers();
+    if (isUserMuted(user)) return json(res, 403, { error: '你已被禁言，无法发送文件', muted_until: user.muted_until });
+    const { conversation_id, name = '', type = '', size = 0, content = '', reply_to = null } = await readBody(req);
+    const convId = Number(conversation_id);
+    if (!convId || !isDmMember(convId, user.id)) return json(res, 403, { error: '无权访问该会话' });
+    const cleanName = String(name).trim().replace(/[\r\n]/g, '').slice(0, 255);
+    if (!cleanName) return json(res, 400, { error: '文件名不能为空' });
+    const fileSize = Number(size);
+    if (!Number.isInteger(fileSize) || fileSize < 1 || fileSize > MAX_FILE_SIZE) return json(res, 400, { error: `文件大小需在 1 字节到 ${MAX_FILE_SIZE} 字节之间` });
+    const receiverId = dmPeerOf(convId, user.id);
+    if (!receiverId) return json(res, 400, { error: '会话中没有其他成员' });
+    const mime = String(type).match(/^[\w.+-]+\/[\w.+-]+$/) ? String(type) : 'application/octet-stream';
+    const text = String(content).trim().slice(0, 10_000);
+    const replyId = reply_to == null ? null : Number(reply_to);
+    if (replyId && !db.prepare('SELECT id FROM messages WHERE id = ? AND dm_id = ?').get(replyId, convId)) return json(res, 400, { error: '回复目标不存在或不在当前会话' });
+    const activeCount = db.prepare("SELECT COUNT(*) AS count FROM p2p_transfers WHERE (sender_id = ? OR receiver_id = ?) AND status IN ('pending', 'accepted')").get(user.id, user.id).count;
+    if (activeCount >= P2P_ACTIVE_LIMIT) return json(res, 429, { error: '进行中的直传过多，请稍后再试' });
+    const id = randomBytes(24).toString('base64url');
+    db.prepare('INSERT INTO p2p_transfers(id, conversation_id, sender_id, receiver_id, name, mime_type, size, content, reply_to) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, convId, user.id, receiverId, cleanName, mime, fileSize, text, replyId);
+    const transfer = p2pTransfer(id);
+    const peerOnline = userOnline(receiverId);
+    sendToUser(receiverId, { type: 'p2p_invite', transfer: publicP2p(transfer), sender_username: user.username });
+    return json(res, 201, { transfer: publicP2p(transfer, peerOnline) });
+  }
+
+  const p2pTransferMatch = url.pathname.match(/^\/api\/p2p\/transfers\/([A-Za-z0-9_-]+)$/);
+  if (p2pTransferMatch && req.method === 'GET') {
+    const user = requireUser(req, res); if (!user) return;
+    const transfer = p2pTransfer(p2pTransferMatch[1]);
+    if (!transfer || !isDmMember(transfer.conversation_id, user.id)) return json(res, 404, { error: '直传不存在' });
+    const peerId = user.id === transfer.sender_id ? transfer.receiver_id : transfer.sender_id;
+    return json(res, 200, { transfer: publicP2p(transfer, userOnline(peerId)) });
+  }
+
+  const p2pActionMatch = url.pathname.match(/^\/api\/p2p\/transfers\/([A-Za-z0-9_-]+)\/(accept|reject|cancel|complete|fail)$/);
+  if (p2pActionMatch && req.method === 'POST') {
+    const user = requireUser(req, res); if (!user) return;
+    expireStaleTransfers();
+    const transfer = p2pTransfer(p2pActionMatch[1]);
+    const action = p2pActionMatch[2];
+    if (!transfer || !isDmMember(transfer.conversation_id, user.id)) return json(res, 404, { error: '直传不存在' });
+    const isSender = user.id === transfer.sender_id;
+    const isReceiver = user.id === transfer.receiver_id;
+    if (action === 'accept' || action === 'reject') {
+      if (!isReceiver) return json(res, 403, { error: '只有接收者可以处理直传请求' });
+      if (transfer.status !== 'pending') return json(res, 409, { error: '直传状态不允许该操作' });
+      const newStatus = action === 'accept' ? 'accepted' : 'rejected';
+      db.prepare('UPDATE p2p_transfers SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newStatus, transfer.id);
+      sendToUser(transfer.sender_id, { type: action === 'accept' ? 'p2p_accepted' : 'p2p_rejected', transfer_id: transfer.id });
+      return json(res, 200, { transfer: publicP2p(p2pTransfer(transfer.id)) });
+    }
+    if (action === 'cancel') {
+      if (transfer.status !== 'pending' && transfer.status !== 'accepted') return json(res, 409, { error: '直传已结束，无法取消' });
+      db.prepare("UPDATE p2p_transfers SET status = 'canceled', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(transfer.id);
+      sendToUser(isSender ? transfer.receiver_id : transfer.sender_id, { type: 'p2p_canceled', transfer_id: transfer.id });
+      return json(res, 200, { transfer: publicP2p(p2pTransfer(transfer.id)) });
+    }
+    if (action === 'complete' || action === 'fail') {
+      if (transfer.status !== 'accepted') return json(res, 409, { error: '直传状态不允许该操作' });
+      const { sha256 = null } = await readBody(req);
+      const digest = typeof sha256 === 'string' && /^[a-f0-9]{64}$/.test(sha256) ? sha256 : null;
+      const newStatus = action === 'complete' ? 'completed' : 'failed';
+      db.prepare('UPDATE p2p_transfers SET status = ?, sha256 = COALESCE(?, sha256), updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newStatus, digest, transfer.id);
+      if (action === 'fail') return json(res, 200, { transfer: publicP2p(p2pTransfer(transfer.id)) });
+      const result = db.prepare('INSERT INTO messages(dm_id, user_id, content, p2p_transfer_id, reply_to) VALUES (?, ?, ?, ?, ?)').run(transfer.conversation_id, transfer.sender_id, transfer.content, transfer.id, transfer.reply_to);
+      const message = db.prepare(`SELECT ${dmMessageColumns} FROM messages JOIN users ON users.id = messages.user_id
+        LEFT JOIN messages AS parent ON parent.id = messages.reply_to LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id
+        LEFT JOIN attachments ON attachments.id = messages.attachment_id LEFT JOIN p2p_transfers ON p2p_transfers.id = messages.p2p_transfer_id
+        WHERE messages.id = ?`).get(result.lastInsertRowid);
+      const hydrated = hydrateMessages([message], user.id)[0];
+      broadcastDm(transfer.conversation_id, { type: 'dm_message', conversation_id: transfer.conversation_id, message: hydrated });
+      eventBus.emit('dm:sent', { conversationId: transfer.conversation_id, message: hydrated, sender: user });
+      return json(res, 201, { transfer: publicP2p(p2pTransfer(transfer.id)), message: hydrated });
+    }
+  }
+
   const dmMessagesMatch = url.pathname.match(/^\/api\/dm\/conversations\/(\d+)\/messages$/);
   if (dmMessagesMatch && req.method === 'GET') {
     const convId = Number(dmMessagesMatch[1]);
@@ -1505,13 +1668,13 @@ async function api(req, res, url) {
     if (before > 0) {
       const rows = db.prepare(`SELECT ${dmMessageColumns} FROM messages JOIN users ON users.id = messages.user_id
         LEFT JOIN messages AS parent ON parent.id = messages.reply_to LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id
-        LEFT JOIN attachments ON attachments.id = messages.attachment_id WHERE messages.dm_id = ? AND messages.id < ? ORDER BY messages.id DESC LIMIT ?`).all(convId, before, limit + 1);
+        LEFT JOIN attachments ON attachments.id = messages.attachment_id LEFT JOIN p2p_transfers ON p2p_transfers.id = messages.p2p_transfer_id WHERE messages.dm_id = ? AND messages.id < ? ORDER BY messages.id DESC LIMIT ?`).all(convId, before, limit + 1);
       const hasMore = rows.length > limit;
       return json(res, 200, { messages: hydrateMessages(rows.slice(0, limit).reverse(), user.id), has_more: hasMore });
     }
     const rows = db.prepare(`SELECT ${dmMessageColumns} FROM messages JOIN users ON users.id = messages.user_id
       LEFT JOIN messages AS parent ON parent.id = messages.reply_to LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id
-      LEFT JOIN attachments ON attachments.id = messages.attachment_id WHERE messages.dm_id = ? AND messages.id > ? ORDER BY messages.id LIMIT ?`).all(convId, after, limit + 1);
+      LEFT JOIN attachments ON attachments.id = messages.attachment_id LEFT JOIN p2p_transfers ON p2p_transfers.id = messages.p2p_transfer_id WHERE messages.dm_id = ? AND messages.id > ? ORDER BY messages.id LIMIT ?`).all(convId, after, limit + 1);
     const hasMore = rows.length > limit;
     return json(res, 200, { messages: hydrateMessages(rows.slice(0, limit), user.id), has_more: hasMore });
   }
@@ -1536,7 +1699,7 @@ async function api(req, res, url) {
     const result = db.prepare('INSERT INTO messages(dm_id, user_id, content, attachment_id, reply_to) VALUES (?, ?, ?, ?, ?)').run(convId, user.id, text, attachmentId, replyId);
     const message = db.prepare(`SELECT ${dmMessageColumns} FROM messages JOIN users ON users.id = messages.user_id
       LEFT JOIN messages AS parent ON parent.id = messages.reply_to LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id
-      LEFT JOIN attachments ON attachments.id = messages.attachment_id WHERE messages.id = ?`).get(result.lastInsertRowid);
+      LEFT JOIN attachments ON attachments.id = messages.attachment_id LEFT JOIN p2p_transfers ON p2p_transfers.id = messages.p2p_transfer_id WHERE messages.id = ?`).get(result.lastInsertRowid);
     const hydrated = hydrateMessages([message], user.id)[0];
     broadcastDm(convId, { type: 'dm_message', conversation_id: convId, message: hydrated });
     eventBus.emit('dm:sent', { conversationId: convId, message: hydrated, sender: user });
@@ -1567,7 +1730,7 @@ async function api(req, res, url) {
       if (!text || text.length > 10_000) return json(res, 400, { error: '消息需为 1–10000 个字符' });
       db.prepare('UPDATE messages SET content = ?, edited_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').run(text, message.id);
       broadcastDm(message.dm_id, { type: 'dm_message_update', conversation_id: message.dm_id, message_id: message.id });
-      return json(res, 200, { ok: true, message: hydrateMessages([db.prepare(`SELECT ${dmMessageColumns} FROM messages JOIN users ON users.id = messages.user_id LEFT JOIN messages AS parent ON parent.id = messages.reply_to LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id LEFT JOIN attachments ON attachments.id = messages.attachment_id WHERE messages.id = ?`).get(message.id)], user.id)[0] });
+      return json(res, 200, { ok: true, message: hydrateMessages([db.prepare(`SELECT ${dmMessageColumns} FROM messages JOIN users ON users.id = messages.user_id LEFT JOIN messages AS parent ON parent.id = messages.reply_to LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id LEFT JOIN attachments ON attachments.id = messages.attachment_id LEFT JOIN p2p_transfers ON p2p_transfers.id = messages.p2p_transfer_id WHERE messages.id = ?`).get(message.id)], user.id)[0] });
     }
     if (message.user_id !== user.id && !user.is_admin) return json(res, 403, { error: '没有撤回此消息的权限' });
     db.prepare("UPDATE messages SET content = '', attachment_id = NULL, deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(message.id);
@@ -1769,11 +1932,22 @@ server.on('upgrade', (req, socket, head) => {
     client.on('message', raw => {
       try {
         const event = JSON.parse(String(raw));
-        if (event.type !== 'typing') return;
-        const roomId = Number(event.room_id);
-        if (!roomId || !socketCanAccess(client, roomId)) return;
-        const payload = JSON.stringify({ type: 'typing', room_id: roomId, user_id: user.id, username: user.username, typing: Boolean(event.typing) });
-        for (const peer of sockets) if (peer !== client && peer.readyState === 1 && socketCanAccess(peer, roomId)) peer.send(payload);
+        if (event.type === 'typing') {
+          const roomId = Number(event.room_id);
+          if (!roomId || !socketCanAccess(client, roomId)) return;
+          const payload = JSON.stringify({ type: 'typing', room_id: roomId, user_id: user.id, username: user.username, typing: Boolean(event.typing) });
+          for (const peer of sockets) if (peer !== client && peer.readyState === 1 && socketCanAccess(peer, roomId)) peer.send(payload);
+          return;
+        }
+        if (event.type === 'p2p_signal') {
+          expireStaleTransfers();
+          const transfer = p2pTransfer(String(event.transfer_id || ''));
+          if (!transfer || transfer.status !== 'accepted') return;
+          const targetId = Number(event.to_user_id);
+          if (targetId !== transfer.sender_id && targetId !== transfer.receiver_id) return;
+          if (user.id !== transfer.sender_id && user.id !== transfer.receiver_id) return;
+          sendToUser(targetId, { type: 'p2p_signal', transfer_id: transfer.id, from_user_id: user.id, data: event.data });
+        }
       } catch { /* ignore malformed client messages */ }
     });
     client.on('close', () => {

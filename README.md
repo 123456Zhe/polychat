@@ -23,6 +23,7 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 ### 文件与媒体
 - 登录用户可传输文件；附件持久化保存、鉴权下载，单文件上限 100 MB（可通过 `MAX_FILE_SIZE` 配置）
 - 支持大文件分片上传（1 MB 分片）
+- **P2P 大文件直传**：私信间通过 WebRTC（STUN 打洞）直连传输，文件字节不经过服务器；打洞失败自动回退服务器分片上传
 - Web 端支持多文件选择、拖拽上传和粘贴图片
 - 发送前显示图片缩略图预览
 - Web 消息框支持直接粘贴截图或剪贴板图片
@@ -43,6 +44,16 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 ### 运行监控
 - `/api/health` 健康检查端点
 - 可选自动备份 SQLite 数据库
+
+### P2P 大文件直传
+
+私信中发送超过 `P2P_MIN_SIZE`（默认 5 MB）的文件时，Web 端会优先尝试**点对点直传**：
+
+- **打洞原理**：浏览器端基于 WebRTC DataChannel（`simple-peer` 库），通过 STUN 服务器完成 UDP 打洞，ICE 协商后双方浏览器直接互联，**文件字节不经过服务器**。
+- **信令**：offer/answer/ICE 候选通过现有 `/ws` 连接转发（仅传输双方可见），服务器不中转文件内容。
+- **完成**：接收方校验 SHA-256 完整性后把文件保存到浏览器 IndexedDB（键为传输 ID），可随时下载；聊天记录中生成带 `p2p_transfer_id` 的直传消息。
+- **回退**：接收者离线、拒绝或打洞失败（如对称 NAT 且未配置 TURN）时，自动回退到普通分片上传，文件照常以附件消息发送，始终可达。
+- **局限**：P2P 文件仅到达接收者的当前设备；发送方其他设备、OneBot 机器人只能看到直传消息元数据（服务器不存储文件字节）。数据清理可在消息卡片的「删除本机副本」完成。
 
 ### 客户端
 - Flet GUI 原生渲染 Markdown 与 LaTeX，消息区显示每位用户的头像
@@ -67,6 +78,10 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 | `UPLOAD_DIR` | `data/uploads` | 文件上传目录 |
 | `AVATAR_DIR` | `data/avatars` | 头像存储目录 |
 | `MAX_FILE_SIZE` | `104857600` (100 MB) | 最大文件大小（字节） |
+| `P2P_MIN_SIZE` | `5242880` (5 MB) | 达到该字节数的私信文件尝试 P2P 直传 |
+| `TURN_URL` | 空 | TURN 服务器地址（如 `turn:turn.example.com:3478`），对称 NAT 兜底 |
+| `TURN_USERNAME` | 空 | TURN 用户名（可选） |
+| `TURN_CREDENTIAL` | 空 | TURN 密码（可选） |
 | `BACKUP_ENABLED` | `true` | 启用自动备份 |
 | `BACKUP_DIR` | `data/backups` | 备份目录 |
 | `BACKUP_INTERVAL_HOURS` | `24` | 备份间隔（小时） |
@@ -313,6 +328,14 @@ curl -I http://127.0.0.1:3000/
 | DELETE | `/api/dm/messages/:id` | 撤回私信 |
 | POST | `/api/dm/messages/:id/reactions` | 私信添加表情 |
 | POST | `/api/dm/conversations/:id/read` | 标记私信已读 |
+| GET | `/api/p2p/config` | P2P 配置（ICE/STUN、TURN、最小直传阈值） |
+| POST | `/api/p2p/transfers` | 发起 P2P 直传请求 |
+| GET | `/api/p2p/transfers/:id` | 查询直传状态 |
+| POST | `/api/p2p/transfers/:id/accept` | 接收者接受直传 |
+| POST | `/api/p2p/transfers/:id/reject` | 接收者拒绝直传 |
+| POST | `/api/p2p/transfers/:id/cancel` | 取消直传 |
+| POST | `/api/p2p/transfers/:id/complete` | 标记完成（校验 SHA-256 后生成直传消息） |
+| POST | `/api/p2p/transfers/:id/fail` | 标记失败 |
 | POST | `/api/files` | 上传 Base64 文件 |
 | POST | `/api/uploads` | 创建分片上传会话 |
 | GET | `/api/uploads/:id` | 获取上传会话状态 |

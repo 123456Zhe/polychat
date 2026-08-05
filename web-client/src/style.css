@@ -529,3 +529,23 @@ button { cursor: pointer; }
   .bot-request-form { grid-template-columns: 1fr; }
   .bot-connect { align-items: stretch; flex-direction: column; }
 }
+
+/* P2P 大文件直传（WebRTC 打洞） */
+.p2p-modal .hint { color: #7a8494; font-size: 13px; line-height: 1.6; }
+.p2p-strip { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.p2p-progress { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border: 1px solid var(--warm-300); border-radius: 9px; background: var(--white); }
+.p2p-dir { flex: none; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; color: #fff; font-size: 12px; background: linear-gradient(135deg, var(--blue-700), var(--violet-700)); }
+.p2p-info { min-width: 0; flex: 1; display: grid; gap: 4px; }
+.p2p-info b { overflow: hidden; color: #475569; font-size: 12px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.p2p-info small { color: #8c94a1; font-size: 11px; }
+.p2p-bar { height: 5px; overflow: hidden; border-radius: 3px; background: var(--warm-200); }
+.p2p-bar i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--blue-600), var(--violet-600)); transition: width .15s ease; }
+.p2p-card { display: flex; align-items: flex-start; gap: 9px; margin-top: 10px; padding: 10px 13px; border: 1px solid #d9d5d5; border-radius: 10px; background: #f5f3f2; }
+.p2p-card > span { color: var(--blue-700); font-size: 20px; line-height: 1; }
+.p2p-card > div { display: grid; gap: 2px; }
+.p2p-card b { color: #3b4353; font-size: 13px; }
+.p2p-card small { color: #8c94a1; font-size: 11px; }
+.p2p-card-actions { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
+.p2p-card-actions button { padding: 4px 9px; border: 1px solid #d6d1d1; border-radius: 7px; color: #475569; background: #fff; font-size: 11px; }
+.p2p-card-actions button.danger { color: #b42318; border-color: #fecaca; }
+.p2p-note { font-size: 11px; }

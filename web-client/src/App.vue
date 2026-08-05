@@ -4,6 +4,7 @@ import DOMPurify from 'dompurify';
 import katex from 'katex';
 import { marked } from 'marked';
 import icon from '../../assets/polychat-icon.png';
+import { createReceiver, createSender, p2pGetFile, p2pListFiles, p2pDeleteFile, downloadBlob } from './p2p.js';
 
 const location = window.location;
 const user = ref(null), rooms = ref([]), room = ref(null), messages = ref([]), content = ref('');
@@ -29,6 +30,9 @@ const botTokens = ref([]);
 let dmLastId = 0, dmOldestId = 0;
 const friendsOpen = ref(false), friendList = ref({ accepted: [], incoming: [], outgoing: [] }), friendSearchQuery = ref(''), friendSearchResults = ref([]);
 const dmTypeahead = ref(''), dmInput = ref(''), dmReplyTarget = ref(null), dmFiles = ref([]);
+const p2pIncoming = ref(null), p2pProgress = ref({}), p2pLocalIds = ref(new Set());
+let p2pConfig = null;
+const p2pActive = new Map();
 const totalDmUnread = computed(() => Object.values(dmUnread.value).reduce((total, count) => total + count, 0));
 const atOpen = ref(false), atQuery = ref(''), atResults = ref([]), atStartPos = ref(-1), atTarget = ref('content');
 let messageTimer, roomTimer, eventTimer, dmTimer, friendTimer, lastId = 0, oldestId = 0, eventCursor = null;
@@ -127,7 +131,7 @@ function avatar(member) { return member?.avatar_url || (member?.avatar_updated_a
 function clearTimers() { clearTimeout(messageTimer); clearInterval(roomTimer); clearInterval(eventTimer); activeMessageRequest?.abort(); }
 function toggleSidebar() { sidebarOpen.value = !sidebarOpen.value; }
 function closeSidebar() { if (isMobile.value) sidebarOpen.value = false; }
-function shutdownRealtime() { clearTimers(); clearTimeout(reconnectTimer); clearInterval(dmTimer); clearInterval(friendTimer); if (socket) { socket.onclose = null; socket.close(); socket = null; } }
+function shutdownRealtime() { clearTimers(); clearTimeout(reconnectTimer); clearInterval(dmTimer); clearInterval(friendTimer); cancelP2pAll(); if (socket) { socket.onclose = null; socket.close(); socket = null; } }
 function sendSocket(event) { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event)); }
 function stopTyping() { clearTimeout(typingTimer); if (typingRoomId) sendSocket({ type: 'typing', room_id: typingRoomId, typing: false }); typingRoomId = null; }
 function sendTyping() {
@@ -240,9 +244,33 @@ async function handleSocketEvent(event) {
     return;
   }
   if (event.type === 'dm_message') {
+    if (event.message?.p2p_transfer_id) {
+      const entry = p2pActive.get(event.message.p2p_transfer_id);
+      if (entry?.role === 'sender') { cleanupSenderEntry(entry); entry.settle(true); }
+    }
     if (conversation.value?.id === event.conversation_id) { appendDmUnique([event.message]); dmLastId = event.message.id || dmLastId; await nextTick(); messageList.value?.scrollTo({ top: messageList.value.scrollHeight, behavior: 'smooth' }); }
     if (event.message?.user_id !== user.value.id) { dmUnread.value[event.conversation_id] = (dmUnread.value[event.conversation_id] || 0) + 1; if (conversation.value?.id === event.conversation_id) markConversationRead(); }
     loadConversations();
+    return;
+  }
+  if (event.type === 'p2p_invite') { p2pIncoming.value = { transfer: event.transfer, sender_username: event.sender_username }; return; }
+  if (event.type === 'p2p_accepted') {
+    const entry = p2pActive.get(event.transfer_id);
+    if (!entry || entry.role !== 'sender' || entry.engine) return;
+    setP2pProgress(entry.transferId, { status: 'connecting' });
+    entry.engine = createSender({ transferId: entry.transferId, file: entry.file, iceServers: p2pConfig?.ice_servers || [], sendSignal: data => sendP2pSignal(entry.transferId, entry.peerId, data), onProgress: ratio => setP2pProgress(entry.transferId, { ratio, status: 'transferring' }), onState: state => { if (state === 'sent') setP2pProgress(entry.transferId, { ratio: 1, status: 'sent' }); }, onError: reason => { setP2pProgress(entry.transferId, { status: 'failed', error: reason }); cleanupSenderEntry(entry); entry.settle(false); } });
+    return;
+  }
+  if (event.type === 'p2p_rejected' || event.type === 'p2p_canceled') {
+    const entry = p2pActive.get(event.transfer_id);
+    if (entry?.role === 'sender') { setP2pProgress(entry.transferId, { status: 'failed', error: event.type === 'p2p_rejected' ? '对方拒绝了直传' : '对方取消了直传' }); cleanupSenderEntry(entry); entry.settle(false); }
+    return;
+  }
+  if (event.type === 'p2p_signal') {
+    const entry = p2pActive.get(event.transfer_id);
+    if (!entry) return;
+    ensureReceiverEngine(entry);
+    entry.engine?.signal(event.data);
     return;
   }
   if (event.type === 'dm_message_update') { if (conversation.value?.id === event.conversation_id) await refreshDmMessage(event.message_id); return; }
@@ -507,7 +535,106 @@ async function loadConversations() { try { const result = await api('/api/dm/con
 async function openDm(peer) { try { const result = await api('/api/dm/conversations', { method: 'POST', body: JSON.stringify({ username: peer.username }) }); await loadConversations(); await selectConversation(result.conversation); } catch (e) { notify(e.message); } }
 async function selectConversation(conv) { conversation.value = conv; dmMessages.value = []; dmLastId = 0; dmOldestId = 0; dmReplyTarget.value = null; dmInput.value = ''; view.value = 'dm'; room.value = null; roomPins.value = []; friendsOpen.value = false; try { const result = await api(`/api/dm/conversations/${conv.id}/messages?before=9007199254740991&limit=60`); dmMessages.value = result.messages; dmLastId = dmMessages.value.at(-1)?.id || 0; dmOldestId = dmMessages.value[0]?.id || 0; await nextTick(); messageList.value?.scrollTo({ top: messageList.value.scrollHeight }); } catch (e) { notify(e.message); } await markConversationRead(); }
 async function markConversationRead() { if (!conversation.value) return; const last = dmLastId || (dmMessages.value.at(-1)?.id || 0); if (!last) return; try { await api(`/api/dm/conversations/${conversation.value.id}/read`, { method: 'POST', body: JSON.stringify({ message_id: last }) }); dmUnread.value[conversation.value.id] = 0; } catch { /* ignore */ } }
-async function sendDm() { if (!conversation.value || (!dmInput.value.trim() && !dmFiles.value.length)) return; try { const text = dmInput.value; const filesToSend = [...dmFiles.value]; const replyTo = dmReplyTarget.value?.id || null; dmInput.value = ''; dmFiles.value = []; dmReplyTarget.value = null; if (filesToSend.length === 0) { const result = await api(`/api/dm/conversations/${conversation.value.id}/messages`, { method: 'POST', body: JSON.stringify({ content: text, reply_to: replyTo }) }); dmMessages.value = appendUnique(dmMessages.value, [result.message]); dmLastId = result.message.id; } else { for (let i = 0; i < filesToSend.length; i++) { const file = filesToSend[i]; const uploaded = await api('/api/files', { method: 'POST', body: JSON.stringify({ name: file.name, type: file.type || 'application/octet-stream', data: await fileData(file) }) }); const result = await api(`/api/dm/conversations/${conversation.value.id}/messages`, { method: 'POST', body: JSON.stringify({ content: i === 0 ? text : '', attachment_id: uploaded.file.id, reply_to: i === 0 ? replyTo : null }) }); dmMessages.value = appendUnique(dmMessages.value, [result.message]); dmLastId = result.message.id; } } await nextTick(); messageList.value?.scrollTo({ top: messageList.value.scrollHeight, behavior: 'smooth' }); await loadConversations(); } catch (e) { notify(e.message); } }
+// ---------- P2P 大文件直传（WebRTC 打洞 + 服务器信令，失败自动回退分片上传） ----------
+async function loadP2pConfig() { try { p2pConfig = await api('/api/p2p/config'); } catch { p2pConfig = null; } }
+function setP2pProgress(transferId, patch) { p2pProgress.value = { ...p2pProgress.value, [transferId]: { ...(p2pProgress.value[transferId] || {}), ...patch } }; }
+function removeP2pProgress(transferId) { const copy = { ...p2pProgress.value }; delete copy[transferId]; p2pProgress.value = copy; }
+function sendP2pSignal(transferId, toUserId, data) { sendSocket({ type: 'p2p_signal', transfer_id: transferId, to_user_id: toUserId, data }); }
+function p2pStatusText(p) {
+  if (p.status === 'waiting') return p.direction === 'send' ? '等待对方接受…' : '等待连接…';
+  if (p.status === 'connecting') return '正在打洞连接…';
+  if (p.status === 'transferring') return `传输中 ${Math.round(p.ratio * 100)}%`;
+  if (p.status === 'received') return '已接收并保存到本机';
+  if (p.status === 'sent') return '直传完成';
+  if (p.status === 'failed') return `直传失败${p.error ? `：${p.error}` : ''}`;
+  return p.status;
+}
+async function uploadFileChunked(file) {
+  const init = await api('/api/uploads', { method: 'POST', body: JSON.stringify({ name: file.name, type: file.type || 'application/octet-stream', size: file.size }) });
+  const upload = init.upload;
+  let offset = 0;
+  while (offset < file.size) {
+    const part = file.slice(offset, Math.min(offset + upload.chunk_size, file.size));
+    const data = await fileData(part);
+    const result = await api(`/api/uploads/${upload.id}/chunks`, { method: 'PUT', body: JSON.stringify({ offset, data }) });
+    offset += part.size;
+    if (result.completed) return result;
+  }
+  throw new Error('文件上传失败');
+}
+function cleanupSenderEntry(entry) {
+  clearTimeout(entry.fallbackTimeout);
+  if (entry.engine) { try { entry.engine.cancel(); } catch { /* already closed */ } }
+  removeP2pProgress(entry.transferId);
+  p2pActive.delete(entry.transferId);
+}
+function tryP2pSend(conv, file, content, replyTo) {
+  return new Promise(resolve => {
+    let settled = false;
+    const settle = value => { if (settled) return; settled = true; resolve(value); };
+    api('/api/p2p/transfers', { method: 'POST', body: JSON.stringify({ conversation_id: conv.id, name: file.name, type: file.type || 'application/octet-stream', size: file.size, content, reply_to: replyTo }) })
+      .then(created => {
+        const transferId = created.transfer.id;
+        if (!created.transfer.peer_online) { settle(false); return; }
+        const entry = { role: 'sender', transferId, file, peerId: conv.peer?.id, engine: null, settle, fallbackTimeout: null };
+        p2pActive.set(transferId, entry);
+        setP2pProgress(transferId, { name: file.name, size: file.size, direction: 'send', ratio: 0, status: 'waiting' });
+        entry.fallbackTimeout = setTimeout(() => { setP2pProgress(transferId, { status: 'failed', error: '对方未响应' }); cleanupSenderEntry(entry); settle(false); }, 60_000);
+      })
+      .catch(() => settle(false));
+  });
+}
+async function acceptP2p() {
+  const invite = p2pIncoming.value;
+  if (!invite) return;
+  p2pIncoming.value = null;
+  const transfer = invite.transfer;
+  p2pActive.set(transfer.id, { role: 'receiver', transferId: transfer.id, peerId: transfer.sender_id, engine: null });
+  setP2pProgress(transfer.id, { name: transfer.name, size: transfer.size, direction: 'recv', ratio: 0, status: 'waiting' });
+  try { await api(`/api/p2p/transfers/${transfer.id}/accept`, { method: 'POST' }); }
+  catch (e) { p2pActive.delete(transfer.id); removeP2pProgress(transfer.id); notify(e.message); }
+}
+async function rejectP2p() {
+  const invite = p2pIncoming.value;
+  if (!invite) return;
+  p2pIncoming.value = null;
+  try { await api(`/api/p2p/transfers/${invite.transfer.id}/reject`, { method: 'POST' }); } catch { /* ignore */ }
+}
+function ensureReceiverEngine(entry) {
+  if (entry.role !== 'receiver' || entry.engine) return;
+  entry.engine = createReceiver({
+    transferId: entry.transferId,
+    iceServers: p2pConfig?.ice_servers || [],
+    sendSignal: data => sendP2pSignal(entry.transferId, entry.peerId, data),
+    onProgress: ratio => setP2pProgress(entry.transferId, { ratio, status: 'transferring' }),
+    onState: () => {},
+    onComplete: ({ sha256 }) => { void finalizeReceiver(entry, sha256); },
+    onError: reason => { setP2pProgress(entry.transferId, { status: 'failed', error: reason }); p2pActive.delete(entry.transferId); notify(`直传失败：${reason}`); },
+  });
+}
+async function finalizeReceiver(entry, sha256) {
+  setP2pProgress(entry.transferId, { status: 'received', ratio: 1 });
+  try { await api(`/api/p2p/transfers/${entry.transferId}/complete`, { method: 'POST', body: JSON.stringify({ sha256 }) }); }
+  catch (e) {
+    setP2pProgress(entry.transferId, { status: 'failed', error: e.message });
+    await api(`/api/p2p/transfers/${entry.transferId}/fail`, { method: 'POST' }).catch(() => {});
+  }
+  finally { p2pActive.delete(entry.transferId); }
+}
+async function downloadP2p(message) {
+  try {
+    const stored = await p2pGetFile(message.p2p_transfer_id);
+    if (!stored) { notify('本机没有该文件的副本'); return; }
+    downloadBlob(stored.blob, stored.meta?.name || message.p2p_name || 'p2p-file');
+  } catch (e) { notify(e.message); }
+}
+async function deleteLocalP2p(message) {
+  if (!confirm('删除本机保存的 P2P 文件副本？')) return;
+  try { await p2pDeleteFile(message.p2p_transfer_id); p2pLocalIds.value.delete(message.p2p_transfer_id); notify('已删除本机副本'); }
+  catch (e) { notify(e.message); }
+}
+function cancelP2pAll() { for (const entry of p2pActive.values()) { try { entry.engine?.cancel(); } catch { /* ignore */ } } p2pActive.clear(); p2pProgress.value = {}; p2pIncoming.value = null; }
+async function sendDm() { if (!conversation.value || (!dmInput.value.trim() && !dmFiles.value.length)) return; try { const text = dmInput.value; const filesToSend = [...dmFiles.value]; const replyTo = dmReplyTarget.value?.id || null; const conv = conversation.value; dmInput.value = ''; dmFiles.value = []; dmReplyTarget.value = null; if (filesToSend.length === 0) { const result = await api(`/api/dm/conversations/${conv.id}/messages`, { method: 'POST', body: JSON.stringify({ content: text, reply_to: replyTo }) }); dmMessages.value = appendUnique(dmMessages.value, [result.message]); dmLastId = result.message.id; } else { for (let i = 0; i < filesToSend.length; i++) { const file = filesToSend[i]; const msgContent = i === 0 ? text : ''; const msgReplyTo = i === 0 ? replyTo : null; const p2pEligible = p2pConfig && file.size >= p2pConfig.min_size && onlineIds.value.has(conv.peer?.id); if (p2pEligible && await tryP2pSend(conv, file, msgContent, msgReplyTo)) continue; const uploaded = await uploadFileChunked(file); const result = await api(`/api/dm/conversations/${conv.id}/messages`, { method: 'POST', body: JSON.stringify({ content: msgContent, attachment_id: uploaded.file.id, reply_to: msgReplyTo }) }); dmMessages.value = appendUnique(dmMessages.value, [result.message]); dmLastId = result.message.id; } } await nextTick(); messageList.value?.scrollTo({ top: messageList.value.scrollHeight, behavior: 'smooth' }); await loadConversations(); } catch (e) { notify(e.message); } }
 function selectRooms() { view.value = 'rooms'; conversation.value = null; }
 async function selectDmView() { await loadConversations(); if (conversations.value.length) await selectConversation(conversations.value[0]); else { view.value = 'rooms'; openFriends(); } }
 function dmAvatar(member) { return member?.avatar_url || (member?.avatar_updated_at ? `/api/users/${member.user_id ?? member.id}/avatar?v=${member.avatar_updated_at}` : ''); }
@@ -522,6 +649,8 @@ onMounted(async () => {
   isMobile.value = window.innerWidth <= 700;
   window.addEventListener('resize', () => { isMobile.value = window.innerWidth <= 700; if (!isMobile.value) sidebarOpen.value = false; });
   try { user.value = (await api('/api/me')).user; await enter(); } catch {}
+  loadP2pConfig();
+  p2pListFiles().then(files => { for (const f of files) p2pLocalIds.value.add(f.id); }).catch(() => {});
 });
 onBeforeUnmount(() => { shutdownRealtime(); document.removeEventListener('visibilitychange', handleVisibility); });
 </script>
@@ -561,13 +690,13 @@ onBeforeUnmount(() => { shutdownRealtime(); document.removeEventListener('visibi
       <div ref="messageList" class="messages-scroll" @scroll.passive="maybeLoadOlderMessages">
         <template v-if="view === 'dm' && conversation">
           <div v-if="!dmMessages.length" class="empty"><img :src="icon"><h3>与 {{ conversation.peer?.username }} 的私信</h3><p>只有互为好友才能私信，消息仅双方可见。</p></div>
-          <article v-for="message in dmMessages" :key="message.id"><div class="avatar"><img v-if="dmAvatar(message)" :src="dmAvatar(message)"><b v-else>{{ message.username[0] }}</b></div><div class="bubble"><header><strong>{{ message.username }}<small class="user-number">#{{ message.user_id }}</small><i v-if="onlineIds.has(message.user_id)" class="online-dot" title="在线"></i></strong><small>{{ time(message.created_at) }}{{ message.edited_at ? ' · 已编辑' : '' }}</small><button class="message-menu-trigger" @click="openMessageActions = openMessageActions === message.id ? null : message.id">•••</button><div v-if="openMessageActions === message.id" class="message-menu"><button @click="startDmReply(message); openMessageActions = null">回复</button><button @click="copy(message); openMessageActions = null">复制 Markdown</button><button v-if="message.user_id === user.id && !message.deleted_at" @click="beginEdit(message); openMessageActions = null">编辑</button><button v-if="message.user_id === user.id || isAdmin" class="danger" @click="retractDm(message); openMessageActions = null">撤回</button></div></header><blockquote v-if="message.reply_to" class="reply-reference">回复 {{ message.reply_username || '消息' }}：{{ message.reply_content || '已撤回的消息' }}</blockquote><p v-if="message.deleted_at" class="retracted">此消息已撤回</p><div v-else-if="message.content" class="markdown" @click="previewMarkdownImage" v-html="markdown(message.content, message.mentions)"></div><template v-if="message.attachment_id"><img v-if="imageTypes.has(message.attachment_type)" class="attachment-image previewable" :src="`/api/files/${message.attachment_id}?inline=1`" :alt="message.attachment_name" @click="previewImage(`/api/files/${message.attachment_id}?inline=1`)"><a v-else class="attachment-file" :href="`/api/files/${message.attachment_id}`" :download="message.attachment_name">{{ message.attachment_name }}</a></template><div class="reactions" v-if="message.reactions && message.reactions.length"><button v-for="reaction in message.reactions" :key="reaction.emoji" @click="toggleDmReaction(message, reaction.emoji)">{{ reaction.emoji }} {{ reaction.count }}</button></div></div></article>
+          <article v-for="message in dmMessages" :key="message.id"><div class="avatar"><img v-if="dmAvatar(message)" :src="dmAvatar(message)"><b v-else>{{ message.username[0] }}</b></div><div class="bubble"><header><strong>{{ message.username }}<small class="user-number">#{{ message.user_id }}</small><i v-if="onlineIds.has(message.user_id)" class="online-dot" title="在线"></i></strong><small>{{ time(message.created_at) }}{{ message.edited_at ? ' · 已编辑' : '' }}</small><button class="message-menu-trigger" @click="openMessageActions = openMessageActions === message.id ? null : message.id">•••</button><div v-if="openMessageActions === message.id" class="message-menu"><button @click="startDmReply(message); openMessageActions = null">回复</button><button @click="copy(message); openMessageActions = null">复制 Markdown</button><button v-if="message.user_id === user.id && !message.deleted_at" @click="beginEdit(message); openMessageActions = null">编辑</button><button v-if="message.user_id === user.id || isAdmin" class="danger" @click="retractDm(message); openMessageActions = null">撤回</button></div></header><blockquote v-if="message.reply_to" class="reply-reference">回复 {{ message.reply_username || '消息' }}：{{ message.reply_content || '已撤回的消息' }}</blockquote><p v-if="message.deleted_at" class="retracted">此消息已撤回</p><div v-else-if="message.content" class="markdown" @click="previewMarkdownImage" v-html="markdown(message.content, message.mentions)"></div><template v-if="message.attachment_id"><img v-if="imageTypes.has(message.attachment_type)" class="attachment-image previewable" :src="`/api/files/${message.attachment_id}?inline=1`" :alt="message.attachment_name" @click="previewImage(`/api/files/${message.attachment_id}?inline=1`)"><a v-else class="attachment-file" :href="`/api/files/${message.attachment_id}`" :download="message.attachment_name">{{ message.attachment_name }}</a></template><template v-if="message.p2p_transfer_id && !message.deleted_at"><div class="p2p-card"><span>📦</span><div><b>{{ message.p2p_name }}</b><small>{{ size(message.p2p_size) }} · P2P 直传</small><div class="p2p-card-actions"><template v-if="p2pLocalIds.has(message.p2p_transfer_id)"><button @click="downloadP2p(message)">下载</button><button class="danger" @click="deleteLocalP2p(message)">删除本机副本</button></template><small v-else-if="message.p2p_sender_id === user.id">已通过 P2P 直传</small><small v-else class="p2p-note">文件仅到达接收设备</small></div></div></div></template><div class="reactions" v-if="message.reactions && message.reactions.length"><button v-for="reaction in message.reactions" :key="reaction.emoji" @click="toggleDmReaction(message, reaction.emoji)">{{ reaction.emoji }} {{ reaction.count }}</button></div></div></article>
         </template>
         <template v-else>
         <p v-if="loadingOlderMessages" class="history-loading">正在加载更早消息…</p><p v-else-if="hasOlderMessages" class="history-hint">向上滚动加载更早消息</p><div v-if="!messages.length" class="empty"><img :src="icon"><h3>开始一段新对话</h3><p>发送 Markdown、公式、图片或文件。</p></div>
         <article v-for="message in messages" :key="message.id"><div class="avatar"><img v-if="avatar(message)" :src="avatar(message)"><b v-else>{{ message.username[0] }}</b></div><div class="bubble"><header><strong>{{ message.username }}<small class="user-number">#{{ message.user_id }}</small><i v-if="onlineIds.has(message.user_id)" class="online-dot" title="在线"></i></strong><small>{{ time(message.created_at) }}{{ message.edited_at ? ' · 已编辑' : '' }}</small><button class="message-menu-trigger" @click="openMessageActions = openMessageActions === message.id ? null : message.id">•••</button><div v-if="openMessageActions === message.id" class="message-menu"><button @click="startReply(message); openMessageActions = null">回复</button><button @click="openThread(message); openMessageActions = null">打开话题</button><button @click="copy(message); openMessageActions = null">复制 Markdown</button><button v-if="isAdmin || room?.role === 'owner' || room?.role === 'admin'" @click="pinMessage(message); openMessageActions = null">置顶消息</button><button v-if="message.user_id === user.id && !message.deleted_at" @click="beginEdit(message); openMessageActions = null">编辑</button><button v-if="message.user_id === user.id || isAdmin || room?.role === 'owner' || room?.role === 'admin'" class="danger" @click="retract(message); openMessageActions = null">撤回</button></div></header><blockquote v-if="message.reply_to" class="reply-reference">回复 {{ message.reply_username || '消息' }}：{{ message.reply_content || '已撤回的消息' }}</blockquote><p v-if="message.deleted_at" class="retracted">此消息已撤回</p><div v-else-if="message.content" class="markdown" @click="previewMarkdownImage" v-html="markdown(message.content, message.mentions)"></div><template v-if="message.attachment_id"><img v-if="imageTypes.has(message.attachment_type)" class="attachment-image previewable" :src="`/api/files/${message.attachment_id}?inline=1`" :alt="message.attachment_name" @click="previewImage(`/api/files/${message.attachment_id}?inline=1`)"><a v-else class="attachment-file" :href="`/api/files/${message.attachment_id}`"><span>↓</span><div><b>{{ message.attachment_name }}</b><small>{{ size(message.attachment_size) }}</small></div></a></template><div v-if="!message.deleted_at" class="reactions"><button v-for="reaction in message.reactions" :key="reaction.emoji" :class="{active: reaction.reacted}" @click="toggleReaction(message, reaction.emoji)">{{ reaction.emoji }} {{ reaction.count }}</button><button class="reaction-add" @click="reactionPickerFor = reactionPickerFor === message.id ? null : message.id">☺</button><div v-if="reactionPickerFor === message.id" class="reaction-picker"><button v-for="emoji in emojiGroups['常用']" :key="emoji" @click="toggleReaction(message, emoji)">{{ emoji }}</button></div></div></div></article></template>
       </div>
-      <form v-if="view === 'dm' && conversation" class="composer" @submit.prevent="sendDm"><div v-if="dmReplyTarget" class="file-chip">↳ 回复 {{ dmReplyTarget.username }}：{{ dmReplyTarget.content?.slice(0, 80) }}<button type="button" @click="dmReplyTarget = null">×</button></div><div v-if="dmFiles.length" class="file-chips"><div v-for="(f, index) in dmFiles" :key="index" class="file-chip"><img v-if="imageTypes.has(f.type)" :src="filePreview(f)" class="file-preview"><span>{{ imageTypes.has(f.type) ? '图片' : '文件' }}</span>{{ f.name }}<button type="button" @click="dmFiles.splice(index, 1)">×</button></div></div><div class="compose-row"><label class="attach" title="添加文件">＋<input ref="dmFileInput" type="file" multiple @change="dmFiles = [...dmFiles, ...Array.from($event.target.files)]"></label><button type="button" class="attach emoji-trigger" title="表情" @click="emojiOpen = !emojiOpen">☺</button><div class="at-wrapper"><textarea v-model="dmInput" rows="1" :placeholder="'私信给 ' + (conversation.peer?.username || '好友') + '…'" @input="handleAtInput($event, 'dm')" @keydown.esc="atOpen = false" @keydown.enter.exact.prevent="sendDm"></textarea><div v-if="atOpen && atTarget === 'dm'" class="at-suggestions"><button v-for="u in atResults" :key="u.id" @click="selectAtMention(u)"><small>#{{ u.id }}</small> {{ u.username }}</button></div></div><button class="send" title="发送">发送</button></div><div v-if="emojiOpen" class="emoji-picker"><nav><button v-for="(_, category) in emojiGroups" :key="category" :class="{active: emojiCategory === category}" type="button" @click="emojiCategory = category">{{ category }}</button></nav><div><button v-for="emoji in emojiGroups[emojiCategory]" :key="emoji" type="button" :title="emoji" @click="dmInput += emoji; emojiOpen = false">{{ emoji }}</button></div></div><small>Enter 发送 · Shift + Enter 换行 · 私信仅双方可见</small></form>
+      <form v-if="view === 'dm' && conversation" class="composer" @submit.prevent="sendDm"><div v-if="dmReplyTarget" class="file-chip">↳ 回复 {{ dmReplyTarget.username }}：{{ dmReplyTarget.content?.slice(0, 80) }}<button type="button" @click="dmReplyTarget = null">×</button></div><div v-if="dmFiles.length" class="file-chips"><div v-for="(f, index) in dmFiles" :key="index" class="file-chip"><img v-if="imageTypes.has(f.type)" :src="filePreview(f)" class="file-preview"><span>{{ imageTypes.has(f.type) ? '图片' : '文件' }}</span>{{ f.name }}<button type="button" @click="dmFiles.splice(index, 1)">×</button></div></div><div v-if="Object.keys(p2pProgress).length" class="p2p-strip"><div v-for="(p, id) in p2pProgress" :key="id" class="p2p-progress"><span class="p2p-dir">{{ p.direction === 'send' ? '↑' : '↓' }}</span><div class="p2p-info"><b>{{ p.name }}</b><small>{{ p2pStatusText(p) }}</small><div class="p2p-bar"><i :style="{ width: Math.round((p.ratio || 0) * 100) + '%' }"></i></div></div></div></div><div class="compose-row"><label class="attach" title="添加文件">＋<input ref="dmFileInput" type="file" multiple @change="dmFiles = [...dmFiles, ...Array.from($event.target.files)]"></label><button type="button" class="attach emoji-trigger" title="表情" @click="emojiOpen = !emojiOpen">☺</button><div class="at-wrapper"><textarea v-model="dmInput" rows="1" :placeholder="'私信给 ' + (conversation.peer?.username || '好友') + '…'" @input="handleAtInput($event, 'dm')" @keydown.esc="atOpen = false" @keydown.enter.exact.prevent="sendDm"></textarea><div v-if="atOpen && atTarget === 'dm'" class="at-suggestions"><button v-for="u in atResults" :key="u.id" @click="selectAtMention(u)"><small>#{{ u.id }}</small> {{ u.username }}</button></div></div><button class="send" title="发送">发送</button></div><div v-if="emojiOpen" class="emoji-picker"><nav><button v-for="(_, category) in emojiGroups" :key="category" :class="{active: emojiCategory === category}" type="button" @click="emojiCategory = category">{{ category }}</button></nav><div><button v-for="emoji in emojiGroups[emojiCategory]" :key="emoji" type="button" :title="emoji" @click="dmInput += emoji; emojiOpen = false">{{ emoji }}</button></div></div><small>Enter 发送 · Shift + Enter 换行 · 私信仅双方可见</small></form>
       <form v-else class="composer" @submit.prevent="send" @dragover.prevent="handleDragOver" @dragleave="handleDragLeave" @drop.prevent="handleDrop"><div v-if="replyTarget" class="file-chip">↳ 回复 {{ replyTarget.username }}：{{ replyTarget.content?.slice(0, 80) }}<button type="button" @click="cancelReply">×</button></div><div v-if="files.length" class="file-chips"><div v-for="(f, index) in files" :key="index" class="file-chip"><img v-if="imageTypes.has(f.type)" :src="filePreview(f)" class="file-preview"><span>{{ imageTypes.has(f.type) ? '图片' : '文件' }}</span>{{ f.name }}<button type="button" @click="removeFile(index)">×</button></div></div><div class="compose-row"><label class="attach" title="添加文件（支持多选）">＋<input ref="fileInput" type="file" multiple @change="selectFile"></label><button type="button" class="attach emoji-trigger" title="EmojiAll 表情" @click="emojiOpen = !emojiOpen">☺</button><div class="at-wrapper"><textarea v-model="content" rows="1" placeholder="输入消息，粘贴图片、拖拽文件或使用 Markdown…" @input="sendTyping; handleAtInput($event, 'content')" @paste="paste" @keydown.esc="atOpen = false" @keydown.enter.exact.prevent="send"></textarea><div v-if="atOpen && atTarget === 'content'" class="at-suggestions"><button v-for="u in atResults" :key="u.id" @click="selectAtMention(u)"><small>#{{ u.id }}</small> {{ u.username }}</button></div></div><button class="send" title="发送消息">发送</button></div><div v-if="emojiOpen" class="emoji-picker"><nav><button v-for="(_, category) in emojiGroups" :key="category" :class="{active: emojiCategory === category}" type="button" @click="emojiCategory = category">{{ category }}</button></nav><div><button v-for="emoji in emojiGroups[emojiCategory]" :key="emoji" type="button" :title="emoji" @click="insertEmoji(emoji)">{{ emoji }}</button></div></div><small><span v-if="typingText">{{ typingText }}</span><span v-else>Enter 发送 · Shift + Enter 换行 · 拖拽文件到此处上传</span></small></form>
     </section></main>
   <div v-if="profileOpen" class="modal"><section class="profile-modal"><button class="close" @click="profileOpen = false">×</button><p>YOUR PROFILE</p><h2>个人资料</h2><div class="avatar-preview"><img v-if="avatar(user)" :src="avatar(user)"><b v-else>{{ user.username[0] }}</b></div><h3>{{ user.username }}</h3><p class="hint">支持 PNG、JPEG、WebP、GIF，最大 2 MB</p><input ref="avatarInput" class="hidden-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" @change="setAvatar($event.target.files[0])"><div class="profile-actions"><button class="primary" @click="avatarInput.click()">选择新头像</button><button v-if="avatar(user)" @click="removeAvatar">移除头像</button></div><div class="data-actions"><h3>数据管理</h3><button @click="exportData">导出聊天记录</button><button class="danger-button" @click="deleteAccount">删除账号</button><p class="hint">删除账号将永久移除所有消息和文件</p></div></section></div>
@@ -590,6 +719,7 @@ onBeforeUnmount(() => { shutdownRealtime(); document.removeEventListener('visibi
     <div class="friend-section"><h3>我的好友 ({{ friendList.accepted.length }})</h3><div v-for="f in friendList.accepted" :key="f.id" class="member"><span><img v-if="f.avatar_url" :src="f.avatar_url" class="friend-avatar"><b v-else class="friend-avatar">{{ f.username[0] }}</b> {{ f.username }}</span><div class="member-actions"><button @click="openDm(f)">私信</button><button @click="removeFriend(f.id)">删除</button></div></div><p v-if="!friendList.accepted.length" class="hint">还没有好友，搜索并发送好友请求吧。</p></div>
     <div v-if="friendList.outgoing.length" class="friend-section"><h3>等待接受</h3><div v-for="f in friendList.outgoing" :key="f.id" class="member"><span>{{ f.username }}</span><small>已发送请求</small></div></div>
   </section></div>
+  <div v-if="p2pIncoming" class="modal"><section class="p2p-modal"><button class="close" @click="rejectP2p">×</button><p>P2P DIRECT TRANSFER</p><h2>收到直传请求</h2><p class="hint">{{ p2pIncoming.sender_username }} 想直传「{{ p2pIncoming.transfer.name }}」（{{ size(p2pIncoming.transfer.size) }}），文件不经过服务器，仅到达本设备。</p><div class="theme-actions"><button class="primary" @click="acceptP2p">接收</button><button @click="rejectP2p">拒绝</button></div></section></div>
   <div v-if="toast" class="toast">{{ toast }}</div>
   <div v-if="notifOpen" class="notif-dropdown">
     <header><h3>通知</h3><button v-if="notifUnreadCount" @click="markAllNotifRead">全部标为已读</button><button class="notif-close" @click="notifOpen = false">×</button></header>

@@ -541,3 +541,172 @@ test('OneBot 遵守消息权限、好友限制和账号处罚状态', async () =
   await api(`/api/admin/users/${bot.body.user.id}/ban`, { method: 'PUT', headers: adminAuth, body: JSON.stringify({ duration_hours: 1 }) });
   await disconnected;
 });
+
+test('P2P 直传：配置、创建、审批、信令转发与完成消息', async () => {
+  const alice = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'p2p_alice', password: 'p2p-password-1' }) });
+  const bob = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'p2p_bob', password: 'p2p-password-2' }) });
+  const charlie = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'p2p_charlie', password: 'p2p-password-3' }) });
+  const aliceAuth = { authorization: `Bearer ${alice.body.token}` };
+  const bobAuth = { authorization: `Bearer ${bob.body.token}` };
+  const charlieAuth = { authorization: `Bearer ${charlie.body.token}` };
+
+  await api('/api/friends/request', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ username: 'p2p_bob' }) });
+  await api(`/api/friends/${alice.body.user.id}/accept`, { method: 'POST', headers: bobAuth });
+  const conv = await api('/api/dm/conversations', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ username: 'p2p_bob' }) });
+  const convId = conv.body.conversation.id;
+
+  // /api/p2p/config 需要登录，且返回 STUN 列表与 P2P 阈值
+  const cfg = await api('/api/p2p/config');
+  assert.equal(cfg.response.status, 401);
+  const cfg2 = await api('/api/p2p/config', { headers: aliceAuth });
+  assert.equal(cfg2.response.status, 200);
+  assert.ok(cfg2.body.ice_servers.length >= 1);
+  assert.equal(cfg2.body.ice_servers[0].urls.includes('stun:stun.l.google.com:19302'), true);
+  assert.equal(typeof cfg2.body.min_size, 'number');
+
+  // 非会话成员不能创建直传
+  const nonMember = await api('/api/p2p/transfers', { method: 'POST', headers: charlieAuth, body: JSON.stringify({ conversation_id: convId, name: 'x.bin', size: 1024, type: 'application/octet-stream' }) });
+  assert.equal(nonMember.response.status, 403);
+
+  // 接收者离线时 peer_online=false，状态 pending，并携带文字内容
+  const created = await api('/api/p2p/transfers', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ conversation_id: convId, name: 'big.iso', size: 6 * 1024 * 1024, type: 'application/octet-stream', content: '测试直传' }) });
+  assert.equal(created.response.status, 201);
+  const transferId = created.body.transfer.id;
+  assert.equal(created.body.transfer.peer_online, false);
+  assert.equal(created.body.transfer.status, 'pending');
+  assert.equal(created.body.transfer.name, 'big.iso');
+
+  // 非成员不能查看
+  const getForbidden = await api(`/api/p2p/transfers/${transferId}`, { headers: charlieAuth });
+  assert.equal(getForbidden.response.status, 404);
+
+  // 只有接收者可以 accept，且只能在 pending 状态
+  const senderAccept = await api(`/api/p2p/transfers/${transferId}/accept`, { method: 'POST', headers: aliceAuth });
+  assert.equal(senderAccept.response.status, 403);
+  const accepted = await api(`/api/p2p/transfers/${transferId}/accept`, { method: 'POST', headers: bobAuth });
+  assert.equal(accepted.response.status, 200);
+  assert.equal(accepted.body.transfer.status, 'accepted');
+  const acceptTwice = await api(`/api/p2p/transfers/${transferId}/accept`, { method: 'POST', headers: bobAuth });
+  assert.equal(acceptTwice.response.status, 409);
+
+  // complete 由任意成员调用：仅接受合法 sha256，原子插入带 p2p_transfer_id 的 DM 消息
+  const complete = await api(`/api/p2p/transfers/${transferId}/complete`, { method: 'POST', headers: bobAuth, body: JSON.stringify({ sha256: 'abc' }) });
+  assert.equal(complete.response.status, 201);
+  assert.equal(complete.body.transfer.status, 'completed');
+  assert.equal(complete.body.transfer.sha256, null); // 非法 sha256 被忽略
+  assert.equal(complete.body.message.p2p_transfer_id, transferId);
+  assert.equal(complete.body.message.content, '测试直传');
+  assert.equal(complete.body.message.user_id, alice.body.user.id);
+  assert.equal(complete.body.message.p2p_name, 'big.iso');
+  assert.equal(complete.body.message.p2p_size, 6 * 1024 * 1024);
+
+  // 会话历史中能看到该 P2P 消息（双方可见）
+  const bobHistory = await api(`/api/dm/conversations/${convId}/messages`, { headers: bobAuth });
+  assert.equal(bobHistory.body.messages.some(m => m.p2p_transfer_id === transferId), true);
+
+  // 已完成后不能再次 complete
+  const completeAgain = await api(`/api/p2p/transfers/${transferId}/complete`, { method: 'POST', headers: bobAuth, body: JSON.stringify({ sha256: 'a'.repeat(64) }) });
+  assert.equal(completeAgain.response.status, 409);
+});
+
+test('P2P 直传：WebSocket 信令仅转发给传输双方且需已接受', async () => {
+  const alice = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'p2p_ws_alice', password: 'p2p-ws-password-1' }) });
+  const bob = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'p2p_ws_bob', password: 'p2p-ws-password-2' }) });
+  const charlie = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'p2p_ws_charlie', password: 'p2p-ws-password-3' }) });
+  const aliceAuth = { authorization: `Bearer ${alice.body.token}` };
+  const bobAuth = { authorization: `Bearer ${bob.body.token}` };
+  const charlieAuth = { authorization: `Bearer ${charlie.body.token}` };
+
+  await api('/api/friends/request', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ username: 'p2p_ws_bob' }) });
+  await api(`/api/friends/${alice.body.user.id}/accept`, { method: 'POST', headers: bobAuth });
+  const conv = await api('/api/dm/conversations', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ username: 'p2p_ws_bob' }) });
+  const convId = conv.body.conversation.id;
+
+  const wsUrl = `${base.replace('http:', 'ws:')}/ws?token=`;
+  const aliceSocket = await openSocket(wsUrl + encodeURIComponent(alice.body.token));
+  const bobSocket = await openSocket(wsUrl + encodeURIComponent(bob.body.token));
+  const charlieSocket = await openSocket(wsUrl + encodeURIComponent(charlie.body.token));
+
+  const nextEvent = (socket, type, ms = 2000) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`未收到 ${type} 事件`)), ms);
+    const listener = event => {
+      const payload = JSON.parse(event.data);
+      if (payload.type !== type) return;
+      clearTimeout(timer);
+      socket.removeEventListener('message', listener);
+      resolve(payload);
+    };
+    socket.addEventListener('message', listener);
+  });
+
+  // pending 状态下信令不转发（Bob 不应收到）
+  const pendingCreated = await api('/api/p2p/transfers', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ conversation_id: convId, name: 'sig.bin', size: 2048, type: 'application/octet-stream' }) });
+  const pendingId = pendingCreated.body.transfer.id;
+  aliceSocket.send(JSON.stringify({ type: 'p2p_signal', transfer_id: pendingId, to_user_id: bob.body.user.id, data: { hello: 'early' } }));
+  const early = await Promise.race([
+    nextEvent(bobSocket, 'p2p_signal', 400).then(() => 'received').catch(() => 'quiet'),
+    new Promise(resolve => setTimeout(() => resolve('quiet'), 450)),
+  ]);
+  assert.equal(early, 'quiet');
+
+  // 接受后发送方收到 p2p_accepted
+  const inviteAccepted = nextEvent(aliceSocket, 'p2p_accepted');
+  await api(`/api/p2p/transfers/${pendingId}/accept`, { method: 'POST', headers: bobAuth });
+  assert.equal((await inviteAccepted).transfer_id, pendingId);
+
+  // 创建第二个传输，接受后发送信令验证转发到 Bob
+  const created2 = await api('/api/p2p/transfers', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ conversation_id: convId, name: 'sig2.bin', size: 2048, type: 'application/octet-stream' }) });
+  const id2 = created2.body.transfer.id;
+  await api(`/api/p2p/transfers/${id2}/accept`, { method: 'POST', headers: bobAuth });
+  const bobSignal = nextEvent(bobSocket, 'p2p_signal');
+  aliceSocket.send(JSON.stringify({ type: 'p2p_signal', transfer_id: id2, to_user_id: bob.body.user.id, data: { offer: 'sdp' } }));
+  const got = await bobSignal;
+  assert.equal(got.transfer_id, id2);
+  assert.equal(got.from_user_id, alice.body.user.id);
+  assert.equal(got.data.offer, 'sdp');
+
+  // 非成员（charlie）发送信令被服务器丢弃：Bob 收不到，且无法把信令发给非成员
+  const charlieSent = nextEvent(bobSocket, 'p2p_signal', 300).then(() => 'received').catch(() => 'quiet');
+  charlieSocket.send(JSON.stringify({ type: 'p2p_signal', transfer_id: id2, to_user_id: bob.body.user.id, data: { evil: true } }));
+  assert.equal(await charlieSent, 'quiet');
+
+  const aliceGotFromCharlie = nextEvent(aliceSocket, 'p2p_signal', 300).then(() => 'received').catch(() => 'quiet');
+  aliceSocket.send(JSON.stringify({ type: 'p2p_signal', transfer_id: id2, to_user_id: charlie.body.user.id, data: { leak: true } }));
+  assert.equal(await aliceGotFromCharlie, 'quiet');
+
+  aliceSocket.close(); bobSocket.close(); charlieSocket.close();
+});
+
+test('P2P 直传：取消、拒绝与活跃数量上限', async () => {
+  const alice = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'p2p_lim_alice', password: 'p2p-lim-password-1' }) });
+  const bob = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'p2p_lim_bob', password: 'p2p-lim-password-2' }) });
+  const aliceAuth = { authorization: `Bearer ${alice.body.token}` };
+  const bobAuth = { authorization: `Bearer ${bob.body.token}` };
+
+  await api('/api/friends/request', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ username: 'p2p_lim_bob' }) });
+  await api(`/api/friends/${alice.body.user.id}/accept`, { method: 'POST', headers: bobAuth });
+  const conv = await api('/api/dm/conversations', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ username: 'p2p_lim_bob' }) });
+  const convId = conv.body.conversation.id;
+
+  // 拒绝流程
+  const r = await api('/api/p2p/transfers', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ conversation_id: convId, name: 'r.bin', size: 1024, type: 'application/octet-stream' }) });
+  const rejected = await api(`/api/p2p/transfers/${r.body.transfer.id}/reject`, { method: 'POST', headers: bobAuth });
+  assert.equal(rejected.body.transfer.status, 'rejected');
+
+  // 取消流程（任一方）
+  const c = await api('/api/p2p/transfers', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ conversation_id: convId, name: 'c.bin', size: 1024, type: 'application/octet-stream' }) });
+  const canceled = await api(`/api/p2p/transfers/${c.body.transfer.id}/cancel`, { method: 'POST', headers: aliceAuth });
+  assert.equal(canceled.body.transfer.status, 'canceled');
+  const cancelDone = await api(`/api/p2p/transfers/${c.body.transfer.id}/cancel`, { method: 'POST', headers: aliceAuth });
+  assert.equal(cancelDone.response.status, 409);
+
+  // 每用户活跃（pending/accepted）上限 10
+  const ids = [];
+  for (let i = 0; i < 10; i++) {
+    const res = await api('/api/p2p/transfers', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ conversation_id: convId, name: `limit-${i}.bin`, size: 1024, type: 'application/octet-stream' }) });
+    assert.equal(res.response.status, 201);
+    ids.push(res.body.transfer.id);
+  }
+  const over = await api('/api/p2p/transfers', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ conversation_id: convId, name: 'over.bin', size: 1024, type: 'application/octet-stream' }) });
+  assert.equal(over.response.status, 429);
+});
