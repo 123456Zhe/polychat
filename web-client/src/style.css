@@ -549,3 +549,111 @@ button { cursor: pointer; }
 .p2p-card-actions button { padding: 4px 9px; border: 1px solid #d6d1d1; border-radius: 7px; color: #475569; background: #fff; font-size: 11px; }
 .p2p-card-actions button.danger { color: #b42318; border-color: #fecaca; }
 .p2p-note { font-size: 11px; }
+
+/* ============ 移动端全新 UI（≤768px，手机优先） ============ */
+@media (max-width: 768px) {
+  * { -webkit-tap-highlight-color: transparent; }
+  body { overscroll-behavior: none; }
+  .m-app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; color: inherit; background: var(--warm-100); }
+
+  /* ---- 聊天页顶栏 ---- */
+  .m-topbar { flex: none; display: flex; align-items: center; gap: 6px; min-height: 52px; padding: env(safe-area-inset-top) 6px 6px; border-bottom: 1px solid var(--warm-200); background: color-mix(in srgb, var(--white) 92%, transparent); backdrop-filter: blur(16px); }
+  .m-back, .m-more { flex: none; display: grid; place-items: center; width: 42px; height: 42px; border: 0; border-radius: 12px; color: inherit; font-size: 24px; line-height: 1; background: transparent; }
+  .m-back { font-size: 28px; padding-bottom: 3px; }
+  .m-more { font-size: 16px; letter-spacing: 1px; }
+  .m-topbar-title { min-width: 0; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px; }
+  .m-topbar-title h2 { margin: 0; overflow: hidden; color: inherit; font-size: 16px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+  .m-topbar-title h2 small { font-size: 10px; }
+  .m-topbar-title > small { display: flex; align-items: center; gap: 4px; color: #8b94a2; font-size: 11px; }
+
+  /* ---- 移动端消息区（复用 .bubble/.markdown/.avatar 类名以兼容主题） ---- */
+  .m-messages { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 10px calc(12px + env(safe-area-inset-bottom)); -webkit-overflow-scrolling: touch; }
+  .m-messages article { display: flex; align-items: flex-start; gap: 8px; margin: 0 auto 18px; }
+  .m-messages article .avatar { flex: none; width: 34px; height: 34px; border-radius: 10px; }
+  .m-messages article .bubble { flex: 1; min-width: 0; padding: 9px 12px 11px; border-radius: 3px 14px 14px; }
+  .m-messages article .bubble.own { flex: 0 1 auto; max-width: 86%; margin-left: auto; background: color-mix(in srgb, var(--blue-600) 14%, var(--white)); border-color: color-mix(in srgb, var(--blue-600) 45%, var(--warm-300)); border-radius: 14px 3px 14px 14px; }
+  .m-messages .bubble > header button { opacity: 1; }
+  .m-messages .message-menu-trigger { min-width: 40px; min-height: 40px; padding: 6px 9px; font-size: 13px; margin: -8px -6px -8px 4px; }
+  .m-messages .empty { height: 100%; }
+
+  /* 消息操作菜单 → 底部 action sheet */
+  .m-messages .message-menu { position: fixed; left: 0; right: 0; bottom: 0; top: auto; z-index: 56; display: grid; width: 100%; min-width: 0; margin: 0; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); border: 0; border-radius: 18px 18px 0 0; background: var(--white); box-shadow: 0 0 0 100vmax rgba(20, 26, 40, .45); }
+  .m-messages .message-menu button { min-height: 46px; padding: 12px 14px; border-radius: 12px; color: inherit; font-size: 15px; }
+  .m-messages .message-menu button:active { background: var(--warm-100); }
+  .m-messages .reactions button { min-width: 36px; min-height: 36px; }
+
+  /* ---- 底部 sheet（房间/私信操作） ---- */
+  .m-sheet-backdrop { position: fixed; inset: 0; z-index: 55; background: rgba(20, 26, 40, .5); }
+  .m-sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 56; display: grid; gap: 4px; padding: 14px 12px calc(14px + env(safe-area-inset-bottom)); border-radius: 18px 18px 0 0; background: var(--white); box-shadow: 0 -10px 40px rgba(0,0,0,.2); }
+  .m-sheet h3 { margin: 2px 4px 6px; color: #8b94a2; font-size: 11px; font-weight: 700; letter-spacing: .1em; }
+  .m-sheet button { min-height: 48px; padding: 12px 16px; border: 0; border-radius: 12px; color: inherit; font-size: 16px; text-align: left; background: var(--warm-100); }
+  .m-sheet button:active { background: var(--warm-200); }
+  .m-sheet .m-sheet-cancel { margin-top: 6px; color: #c2413a; text-align: center; background: var(--warm-100); }
+
+  /* ---- 首页布局 ---- */
+  .m-home-top { flex: none; display: flex; align-items: center; justify-content: space-between; padding: env(safe-area-inset-top) 14px 8px; }
+  .m-home-top h1 { display: flex; align-items: center; gap: 9px; margin: 0; color: inherit; font-size: 19px; }
+  .m-home-top h1 img { width: 28px; height: 28px; border-radius: 8px; }
+  .m-new { display: grid; place-items: center; width: 42px; height: 42px; border: 0; border-radius: 13px; color: #fff; font-size: 22px; background: linear-gradient(135deg, var(--blue-600), var(--violet-600)); box-shadow: 0 6px 16px rgba(111,141,168,.35); }
+  .m-home-body { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 10px 14px; -webkit-overflow-scrolling: touch; }
+  .m-list-label { display: flex; align-items: center; gap: 6px; margin: 14px 6px 4px; color: #8b94a2; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+  .m-nav-add { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--warm-300); border-radius: 9px; color: var(--blue-700); font-size: 16px; background: var(--white); }
+  .m-list-item { display: flex; align-items: center; gap: 11px; width: 100%; min-height: 62px; margin-bottom: 6px; padding: 8px 12px; border: 1px solid var(--warm-200); border-radius: 15px; color: inherit; text-align: left; background: var(--white); }
+  .m-list-item:active { background: var(--warm-100); }
+  .m-badge { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 14px; color: #fff; font-size: 20px; font-weight: 800; background: linear-gradient(135deg, var(--blue-700), var(--violet-700)); }
+  .m-avatar { flex: none; position: relative; display: grid; place-items: center; width: 44px; height: 44px; overflow: hidden; border-radius: 50%; color: #fff; font-weight: 700; background: linear-gradient(135deg, var(--blue-600), var(--violet-600)); }
+  .m-avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .m-list-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+  .m-list-main b { overflow: hidden; color: inherit; font-size: 15px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+  .m-list-main small { color: #8b94a2; font-size: 12px; }
+  .m-list-item .unread { flex: none; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: #dc2626; color: #fff; font-size: 11px; line-height: 20px; text-align: center; }
+  .m-empty { padding: 36px 20px; color: #8b94a2; font-size: 13px; text-align: center; }
+
+  /* ---- 联系人页 ---- */
+  .m-search { display: flex; gap: 8px; margin: 2px 0 4px; padding: 0 6px; }
+  .m-search input { min-width: 0; flex: 1; height: 44px; padding: 0 14px; border: 1px solid var(--warm-300); border-radius: 12px; color: inherit; font-size: 16px; /* prevents iOS zoom */ background: var(--white); outline: none; }
+  .m-search input:focus { border-color: var(--blue-600); box-shadow: 0 0 0 3px rgba(111,141,168,.14); }
+  .m-search button { flex: none; height: 44px; padding: 0 18px; border: 0; border-radius: 12px; color: #fff; font-size: 15px; background: linear-gradient(135deg, var(--blue-600), var(--violet-600)); }
+  .m-search-results { margin: 2px 6px 6px; padding: 6px; border: 1px solid var(--warm-200); border-radius: 13px; background: var(--white); }
+  .m-friend-row { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 8px 12px; border-bottom: 1px solid var(--warm-200); }
+  .m-friend-row:last-child { border-bottom: 0; }
+  .m-friend-row b { min-width: 0; flex: 1; overflow: hidden; color: inherit; font-size: 15px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+  .m-friend-actions { display: flex; gap: 8px; }
+  .m-friend-actions button { min-height: 38px; padding: 0 15px; border: 1px solid var(--warm-300); border-radius: 10px; color: inherit; font-size: 14px; background: var(--white); }
+  .m-friend-actions button.primary { border: 0; color: #fff; background: linear-gradient(135deg, var(--blue-600), var(--violet-600)); }
+  .m-dm-hint { flex: none; color: var(--blue-700); font-size: 12px; }
+
+  /* ---- 我的页 ---- */
+  .m-me-profile { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; padding: 16px 14px; border: 1px solid var(--warm-200); border-radius: 16px; background: var(--white); }
+  .m-me-profile .m-avatar { width: 58px; height: 58px; font-size: 22px; }
+  .m-me-profile h2 { margin: 0; color: inherit; font-size: 19px; }
+  .m-me-profile p { margin: 4px 0 0; color: #8b94a2; font-size: 12px; }
+  .m-menu-item { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; margin-bottom: 8px; padding: 0 16px; border: 1px solid var(--warm-200); border-radius: 14px; color: inherit; font-size: 15px; text-align: left; background: var(--white); }
+  .m-menu-item:active { background: var(--warm-100); }
+  .m-menu-item > span { width: 24px; font-size: 17px; text-align: center; }
+  .m-menu-item .unread { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: #dc2626; color: #fff; font-size: 11px; line-height: 20px; text-align: center; }
+  .m-menu-item.danger { color: #c2413a; }
+
+  /* ---- 底部 Tab 栏 ---- */
+  .m-tabbar { flex: none; display: grid; grid-template-columns: repeat(3, 1fr); padding-bottom: env(safe-area-inset-bottom); border-top: 1px solid var(--warm-200); background: color-mix(in srgb, var(--white) 94%, transparent); backdrop-filter: blur(16px); }
+  .m-tabbar button { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 54px; padding: 7px 0 6px; border: 0; color: #8b94a2; font-size: 10px; background: transparent; }
+  .m-tabbar button span { font-size: 20px; line-height: 1; }
+  .m-tabbar button.active { color: var(--blue-700); }
+  .m-tabbar button .unread { position: absolute; top: 4px; left: calc(50% + 8px); min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9px; background: #dc2626; color: #fff; font-size: 10px; line-height: 17px; text-align: center; }
+
+  /* ---- 全局浮层移动端化：底部 sheet ---- */
+  .modal { place-items: end center; padding: 0; background: rgba(20, 26, 40, .5); }
+  .modal > section { width: 100%; max-width: 100%; max-height: 92dvh; margin: 0; padding: 22px 20px calc(22px + env(safe-area-inset-bottom)); border-radius: 20px 20px 0 0; }
+  .thread-panel { width: 100vw; max-width: 100vw; border-left: 0; }
+  .notif-dropdown { position: fixed; top: auto; right: 0; bottom: 0; left: 0; z-index: 60; width: 100%; max-width: 100%; max-height: 72vh; border-radius: 18px 18px 0 0; padding-bottom: env(safe-area-inset-bottom); overflow-y: auto; }
+  .at-suggestions { max-height: 40vh; }
+
+  /* ---- 移动端 composer 兼容现有主题（复用 .composer 类） ---- */
+  .m-app .composer { padding: 8px 10px calc(9px + env(safe-area-inset-bottom)); }
+  .m-app .composer .compose-row { gap: 6px; }
+  .m-app .composer textarea { min-height: 40px; max-height: 110px; padding: 10px 12px; font-size: 16px; /* prevents iOS zoom */ }
+  .m-app .composer .attach, .m-app .composer .send { min-width: 40px; min-height: 40px; }
+  .m-app .pinned-area { margin: 0; }
+  .m-app .announcement-bar, .m-app .pinned-bar { margin: 0; }
+  .m-app .pinned-bar { max-height: 36vh; overflow-y: auto; }
+}

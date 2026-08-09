@@ -116,3 +116,14 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 - style.css: `notif-bell` / `notif-dropdown` / `notif-item`, `admin-tabs`, `bot-request` styles.
 - OneBot `modules/onebot/ws.js`: now also accepts standard `/api` path; sends `heartbeat` meta_event on connect.
 - End-to-end verified: register → submit bot-request (201) → auth-gated notification/bot-request endpoints return 401 without token → OneBot WS returns 401 for bad/missing token.
+
+### This session (移动端全新 UI)
+- 手机（≤768px）切换到一套全新的原生 App 风格 UI，桌面端（>768px）保持现状，逻辑层（script setup）零改动。
+- 模板：`App.vue` 按 `isMobile` 分支渲染 `<main class="chat">`（桌面）vs `<main class="m-app">`（移动端）；`isMobile` 断点 700→768。
+- 移动端信息架构：底部 Tab 栏（聊天/联系人/我的）+ 聊天列表页 → 全屏聊天页（无 Tab，带 ‹ 返回）；聊天页顶栏只留 返回/标题/•••，房间/私信操作收进底部 sheet（`roomActionsOpen`）。
+- 消息操作：`message-menu` 在移动端由气泡内下拉 → `position:fixed` 底部 action sheet（box-shadow 100vmax 伪遮罩）；`.bubble.own` 自己的消息靠右 + 主题色底（`color-mix`）。
+- 弹层移动端化：`.modal`/`.notif-dropdown`/`.thread-panel` 统一转底部 sheet（顶部圆角 + safe-area）。
+- 样式：`style.css` 末尾新增 `@media (max-width:768px)` 块（约 160 行），移动端复用 `.bubble`/`.composer`/`.markdown`/`.modal` 等现有类名 → 5 套主题预设的硬编码 CSS 覆盖自动命中；新增 `.m-*` 布局类文字用 `color:inherit`（跟随 :root，深色主题自动适配）。
+- 修复：`index.html` viewport 加 `viewport-fit=cover`（激活 safe-area env()）、新增 `manifest.json` + icon-192/512（iOS 可安装 PWA → Web Push 生效）。
+- 新增状态：`mobileTab`（'chats'|'contacts'|'me'）、`roomActionsOpen`、`backToMobileHome()`/`switchMobileTab()`。
+- 验证：`web:build` 干净、18/18 Node 测试通过、移动视口（390/750/1280）浏览器实测——登录/注册、Tab 切换、进房间/发消息（带回复引用）、emoji 插入、••• 底部菜单、深色主题颜色、好友搜索加好友、通知中心、退出登录全流程通过。
