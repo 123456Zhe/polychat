@@ -1,5 +1,6 @@
 package com.polychat.app.data.model
 
+import kotlinx.serialization.Contextual
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 
@@ -11,7 +12,7 @@ data class NotificationItem(
     val content: String = "",
     val link: String? = null,
     val data: JsonElement? = null,
-    val is_read: Boolean = false,
+    @Contextual val is_read: Boolean = false,
     val created_at: String? = null
 )
 
@@ -57,7 +58,7 @@ data class ExportMessage(
     val attachment: String? = null,
     val created_at: String? = null,
     val edited_at: String? = null,
-    val is_deleted: Boolean = false
+    @Contextual val is_deleted: Boolean = false
 )
 
 @Serializable

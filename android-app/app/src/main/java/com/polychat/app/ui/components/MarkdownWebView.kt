@@ -22,6 +22,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.polychat.app.data.model.Mention
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 import kotlin.math.roundToInt
 
 /**
@@ -36,13 +39,15 @@ import kotlin.math.roundToInt
 @Composable
 fun MarkdownWebView(
     content: String,
-    mentions: List<com.polychat.app.data.model.Mention>,
+    mentions: List<Mention>,
     bubbleColor: Color,
     modifier: Modifier = Modifier
 ) {
     val density = LocalDensity.current.density
     var heightDp by remember(content) { mutableIntStateOf(20) }
     var webView by remember { mutableStateOf<WebView?>(null) }
+    var pageReady by remember { mutableStateOf(false) }
+    var mode by remember { mutableStateOf("light") }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -51,30 +56,26 @@ fun MarkdownWebView(
         }
     }
 
-    // Render whenever content changes.
-    LaunchedEffect(content, mentions) {
+    // Render whenever content changes (after the page is loaded).
+    LaunchedEffect(content, mentions, pageReady) {
         val wv = webView ?: return@LaunchedEffect
+        if (!pageReady) return@LaunchedEffect
         val escaped = content
             .replace("\\", "\\\\")
             .replace("'", "\\'")
             .replace("\n", "\\n")
             .replace("\r", "")
         val mentionsJson = runCatching {
-            kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.encodeToString(
-                kotlinx.serialization.builtins.ListSerializer(
-                    com.polychat.app.data.model.Mention.serializer()
-                ),
-                mentions
-            )
+            Json { ignoreUnknownKeys = true }.encodeToString(ListSerializer(Mention.serializer()), mentions)
         }.getOrDefault("[]")
         wv.evaluateJavascript("renderMessage('$escaped', $mentionsJson);", null)
     }
 
     // Adjust text color for dark bubbles.
     LaunchedEffect(bubbleColor) {
-        val wv = webView ?: return@LaunchedEffect
         val lum = 0.299 * bubbleColor.red + 0.587 * bubbleColor.green + 0.114 * bubbleColor.blue
-        wv.evaluateJavascript("setMode('${if (lum < 0.5f) "dark" else "light"}');", null)
+        mode = if (lum < 0.5f) "dark" else "light"
+        if (pageReady) webView?.evaluateJavascript("setMode('$mode');", null)
     }
 
     AndroidView(
@@ -94,7 +95,8 @@ fun MarkdownWebView(
             wv.addJavascriptInterface(Bridge { px -> heightDp = (px / density).roundToInt() }, "PolyChatBridge")
             wv.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, url: String?) {
-                    view.evaluateJavascript("setMode('light');", null)
+                    pageReady = true
+                    view.evaluateJavascript("setMode('$mode');", null)
                 }
             }
             wv.loadUrl("file:///android_asset/markdown.html")

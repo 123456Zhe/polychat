@@ -35,7 +35,12 @@ import kotlin.math.min
 class ChatWebSocketClient @Inject constructor(
     private val prefs: PreferencesStore
 ) {
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = Json {
+        ignoreUnknownKeys = true
+        serializersModule = kotlinx.serialization.modules.SerializersModule {
+            contextual(Boolean::class, com.polychat.app.data.api.LenientBooleanSerializer)
+        }
+    }
 
     private val _events = MutableSharedFlow<WsEvent>(extraBufferCapacity = 128)
     val events: SharedFlow<WsEvent> = _events

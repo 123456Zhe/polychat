@@ -1,5 +1,6 @@
 package com.polychat.app.data.model
 
+import kotlinx.serialization.Contextual
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -13,7 +14,7 @@ data class Mention(
 data class Reaction(
     val emoji: String,
     val count: Long = 0,
-    val reacted: Boolean = false
+    @Contextual val reacted: Boolean = false
 )
 
 @Serializable
@@ -44,24 +45,24 @@ data class Message(
     val p2p_size: Long? = null,
     val p2p_sha256: String? = null,
     val p2p_status: String? = null,
-    val is_deleted: Boolean = false,
+    @Contextual val is_deleted: Boolean = false,
     val reactions: List<Reaction> = emptyList(),
     val mentions: List<Mention> = emptyList()
 ) {
-    val isRetracted: Boolean get() = deleted_at != null || is_deleted
-    val isOwn: Boolean get() = false // filled by view layer with current user id
+    @Contextual val isRetracted: Boolean get() = deleted_at != null || is_deleted
+    @Contextual val isOwn: Boolean get() = false // filled by view layer with current user id
 }
 
 @Serializable
 data class MessagesResponse(
     val messages: List<Message>,
-    val has_more: Boolean = false
+    @Contextual val has_more: Boolean = false
 )
 
 @Serializable
 data class MessageResponse(
     val message: Message,
-    val ok: Boolean? = null
+    @Contextual val ok: Boolean? = null
 )
 
 @Serializable

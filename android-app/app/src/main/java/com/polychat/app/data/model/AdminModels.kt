@@ -1,5 +1,6 @@
 package com.polychat.app.data.model
 
+import kotlinx.serialization.Contextual
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -14,7 +15,7 @@ data class AdminStats(
 data class AdminUser(
     val id: Long,
     val username: String,
-    val is_admin: Boolean = false,
+    @Contextual val is_admin: Boolean = false,
     val banned_until: Long? = null,
     val muted_until: Long? = null,
     val last_ip: String? = null,
@@ -30,7 +31,7 @@ data class AdminOverview(
 
 @Serializable
 data class AdminSetRequest(
-    val is_admin: Boolean = false
+    @Contextual val is_admin: Boolean = false
 )
 
 @Serializable

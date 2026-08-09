@@ -1,5 +1,6 @@
 package com.polychat.app.data.model
 
+import kotlinx.serialization.Contextual
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -10,7 +11,7 @@ data class AuthResponse(
 
 @Serializable
 data class OkResponse(
-    val ok: Boolean = true
+    @Contextual val ok: Boolean = true
 )
 
 @Serializable
@@ -25,7 +26,7 @@ data class User(
     val id: Long,
     val number: Long = id,
     val username: String,
-    val is_admin: Boolean = false,
+    @Contextual val is_admin: Boolean = false,
     val avatar_updated_at: Long? = null,
     val avatar_url: String? = null,
     val banned_until: Long? = null,

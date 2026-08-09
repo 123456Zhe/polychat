@@ -1,5 +1,6 @@
 package com.polychat.app.data.model
 
+import kotlinx.serialization.Contextual
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 
@@ -15,14 +16,14 @@ sealed class WsEvent {
     data class Presence(
         val user_id: Long,
         val username: String,
-        val online: Boolean
+        @Contextual val online: Boolean
     ) : WsEvent()
 
     data class Typing(
         val room_id: Long,
         val user_id: Long,
         val username: String,
-        val typing: Boolean
+        @Contextual val typing: Boolean
     ) : WsEvent()
 
     data class Rooms(val type: String = "rooms") : WsEvent()

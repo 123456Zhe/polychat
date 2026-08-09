@@ -1,5 +1,6 @@
 package com.polychat.app.data.model
 
+import kotlinx.serialization.Contextual
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -7,7 +8,7 @@ data class Room(
     val id: Long,
     val name: String,
     val created_at: String? = null,
-    val is_private: Boolean = false,
+    @Contextual val is_private: Boolean = false,
     val role: String? = null,
     val announcement: String? = null,
     val announcement_by: Long? = null,
@@ -29,7 +30,7 @@ data class RoomResponse(
 @Serializable
 data class CreateRoomRequest(
     val name: String,
-    val is_private: Boolean = false
+    @Contextual val is_private: Boolean = false
 )
 
 @Serializable
@@ -78,7 +79,7 @@ data class InviteCodeResponse(
 
 @Serializable
 data class JoinInviteResponse(
-    val ok: Boolean,
+    @Contextual val ok: Boolean,
     val room: Room
 )
 

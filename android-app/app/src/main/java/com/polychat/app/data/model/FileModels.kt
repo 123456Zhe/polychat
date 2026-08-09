@@ -1,5 +1,6 @@
 package com.polychat.app.data.model
 
+import kotlinx.serialization.Contextual
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -42,7 +43,7 @@ data class UploadFile(
 
 @Serializable
 data class UploadComplete(
-    val completed: Boolean = false,
+    @Contextual val completed: Boolean = false,
     val file: UploadFile? = null,
     val upload: UploadState? = null
 )
@@ -78,7 +79,7 @@ data class P2pTransfer(
     val status: String = "pending",
     val sha256: String? = null,
     val created_at: String? = null,
-    val peer_online: Boolean = false
+    @Contextual val peer_online: Boolean = false
 )
 
 @Serializable

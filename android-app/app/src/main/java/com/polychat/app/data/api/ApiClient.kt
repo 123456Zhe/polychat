@@ -2,6 +2,13 @@ package com.polychat.app.data.api
 
 import com.polychat.app.data.local.PreferencesStore
 import com.polychat.app.data.model.ErrorResponse
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.Serializer
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.Json
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
@@ -17,6 +24,28 @@ import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/**
+ * Lenient Boolean decoder: the server stores booleans in SQLite as 0/1 ints,
+ * so JSON may contain `0`, `1`, `true`, or `false`. kotlinx-serialization's
+ * strict Boolean decoding crashes on `0`/`1`. This serializer accepts all four.
+ */
+@Serializer(forClass = Boolean::class)
+object LenientBooleanSerializer : KSerializer<Boolean> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("LenientBoolean", PrimitiveKind.BOOLEAN)
+
+    override fun deserialize(decoder: Decoder): Boolean {
+        val jsonDecoder = decoder as kotlinx.serialization.json.JsonDecoder
+        val element = jsonDecoder.decodeJsonElement()
+        val text = element.toString()
+        return text == "true" || text == "1"
+    }
+
+    override fun serialize(encoder: Encoder, value: Boolean) {
+        encoder.encodeBoolean(value)
+    }
+}
 
 /** Thrown when an API call fails; carries a human-readable message and optional upload offset. */
 class ApiException(message: String, val code: Int = 0, val offset: Long? = null) : Exception(message)
@@ -60,6 +89,9 @@ class ApiClient @Inject constructor(
     val json = Json {
         ignoreUnknownKeys = true
         explicitNulls = false
+        serializersModule = kotlinx.serialization.modules.SerializersModule {
+            contextual(Boolean::class, LenientBooleanSerializer)
+        }
     }
 
     /** Rebuilds the Retrofit service using the current server URL. */
