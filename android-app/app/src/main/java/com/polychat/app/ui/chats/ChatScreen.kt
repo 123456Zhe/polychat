@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.polychat.app.data.model.Message
+import com.polychat.app.data.repo.AuthRepository
 import com.polychat.app.data.repo.ChatRepository
 import com.polychat.app.ui.components.MessageBubble
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -157,7 +158,7 @@ fun ChatScreen(
                 OutlinedTextField(
                     value = draft,
                     onValueChange = { draft = it },
-                    placeholder = { Text("输入消息，支持 Markdown 与 $公式$") },
+                    placeholder = { Text("输入消息，支持 Markdown 与 \$公式\$") },
                     maxLines = 5,
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                     modifier = Modifier.weight(1f)

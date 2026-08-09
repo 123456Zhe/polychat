@@ -7,7 +7,6 @@ import com.polychat.app.data.model.WsEvent
 import com.polychat.app.data.repo.AuthRepository
 import com.polychat.app.data.repo.ChatRepository
 import com.polychat.app.data.repo.NotificationsRepository
-import com.polychat.app.ui.SessionViewModel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,8 +19,7 @@ class MainViewModel @Inject constructor(
     val chatRepo: ChatRepository,
     val notifRepo: NotificationsRepository,
     private val authRepo: AuthRepository,
-    private val prefsFlow: com.polychat.app.data.local.PreferencesStore,
-    private val sessionVm: SessionViewModel
+    private val prefsFlow: com.polychat.app.data.local.PreferencesStore
 ) : ViewModel() {
 
     private val _currentUser = MutableStateFlow<User?>(null)
@@ -66,7 +64,8 @@ class MainViewModel @Inject constructor(
             is WsEvent.Rooms -> viewModelScope.launch { runCatching { chatRepo.loadRooms() } }
             is WsEvent.Announcement -> viewModelScope.launch { runCatching { chatRepo.loadRooms() } }
             is WsEvent.Message -> {
-                event.message?.let { chatRepo.appendRoomMessage(event.room_id, it) }
+                val msg: com.polychat.app.data.model.Message? = event.message
+                msg?.let { chatRepo.appendRoomMessage(event.room_id, it) }
             }
             is WsEvent.ThreadMessage -> {
                 // Threads are loaded on demand; ignore stream for v1.
@@ -77,7 +76,8 @@ class MainViewModel @Inject constructor(
             }
             is WsEvent.Pins -> { /* chat screen refreshes pins */ }
             is WsEvent.DmMessage -> {
-                chatRepo.appendDmMessage(event.conversation_id, event.message)
+                val msg: com.polychat.app.data.model.Message = event.message
+                chatRepo.appendDmMessage(event.conversation_id, msg)
                 viewModelScope.launch { runCatching { chatRepo.loadConversations() } }
             }
             is WsEvent.DmMessageUpdate -> viewModelScope.launch { runCatching { chatRepo.loadConversations() } }
@@ -166,8 +166,8 @@ class MainViewModel @Inject constructor(
     }
 
     // ---- Profile / settings actions ----
-    val theme: kotlinx.coroutines.flow.StateFlow<String?> get() = prefsFlow.theme
-    val darkMode: kotlinx.coroutines.flow.StateFlow<String?> get() = prefsFlow.darkMode
+    val theme: kotlinx.coroutines.flow.Flow<String?> get() = prefsFlow.theme
+    val darkMode: kotlinx.coroutines.flow.Flow<String?> get() = prefsFlow.darkMode
 
     fun serverUrl(): String = chatRepo.serverUrlOrDefault()
 
@@ -199,7 +199,7 @@ class MainViewModel @Inject constructor(
     fun deleteAccount(password: String) {
         viewModelScope.launch {
             runCatching { authRepo.deleteAccount(password) }
-                .onSuccess { sessionVm.onLoggedOut() }
+                .onSuccess { showToast("账号已删除") }
                 .onFailure { showToast("删除失败，请检查密码") }
         }
     }
@@ -207,7 +207,7 @@ class MainViewModel @Inject constructor(
     fun logout() {
         viewModelScope.launch {
             runCatching { authRepo.logout() }
-            sessionVm.onLoggedOut()
+            showToast("已退出登录")
         }
     }
 

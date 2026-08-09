@@ -44,7 +44,7 @@ fun ProfileScreen(
     modifier: Modifier = Modifier
 ) {
     val currentUser by viewModel.currentUser.collectAsState()
-    val theme by viewModel.theme.collectAsState()
+    val theme by viewModel.theme.collectAsState(initial = null)
     var showThemePicker by remember { mutableStateOf(false) }
     var showServerDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }

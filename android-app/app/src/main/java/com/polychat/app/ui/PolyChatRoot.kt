@@ -29,8 +29,8 @@ import javax.inject.Inject
 @Composable
 fun PolyChatRoot(viewModel: SessionViewModel = hiltViewModel()) {
     val session by viewModel.session.collectAsState()
-    val themeId by viewModel.themeId.collectAsState()
-    val darkMode by viewModel.darkMode.collectAsState()
+    val themeId by viewModel.themeId.collectAsState(initial = null)
+    val darkMode by viewModel.darkMode.collectAsState(initial = null)
 
     PolyChatTheme(themeId = themeId, darkMode = darkMode) {
         Surface(modifier = Modifier.fillMaxSize()) {
@@ -62,10 +62,18 @@ class SessionViewModel @Inject constructor(
     private val _session = MutableStateFlow(SessionState.Loading)
     val session: StateFlow<SessionState> = _session.asStateFlow()
 
-    val themeId: StateFlow<String?> = prefs.theme
-    val darkMode: StateFlow<String?> = prefs.darkMode
+    val themeId: kotlinx.coroutines.flow.Flow<String?> = prefs.theme
+    val darkMode: kotlinx.coroutines.flow.Flow<String?> = prefs.darkMode
 
     init {
+        viewModelScope.launch {
+            // If the token is cleared elsewhere (logout / account deletion), switch to LoggedOut.
+            authRepo.token.collect { token ->
+                if (token == null && _session.value == SessionState.LoggedIn) {
+                    _session.value = SessionState.LoggedOut
+                }
+            }
+        }
         viewModelScope.launch {
             val has = authRepo.hasSession()
             if (has) {
