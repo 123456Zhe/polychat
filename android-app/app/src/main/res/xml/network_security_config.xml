@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Allow cleartext HTTP to the default PolyChat server and any user-configured host.
+     Server address is configurable in the Settings screen. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

@@ -135,3 +135,12 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 - 修复：`index.html` viewport 加 `viewport-fit=cover`（激活 safe-area env()）、新增 `manifest.json` + icon-192/512（iOS 可安装 PWA → Web Push 生效）。
 - 新增状态：`mobileTab`（'chats'|'contacts'|'me'）、`roomActionsOpen`、`backToMobileHome()`/`switchMobileTab()`。
 - 验证：`web:build` 干净、18/18 Node 测试通过、移动视口（390/750/1280）浏览器实测——登录/注册、Tab 切换、进房间/发消息（带回复引用）、emoji 插入、••• 底部菜单、深色主题颜色、好友搜索加好友、通知中心、退出登录全流程通过。
+
+### This session (原生 Android App 重写)
+- 放弃 Capacitor 壳（原壳连登录都不可用：无 server.url 导致 /api 请求打到设备 localhost），用 Kotlin + Jetpack Compose + Material 3 原生重写。
+- 工程：`android-app/` 独立 Gradle 工程（AGP 8.5.2 / Kotlin 2.0.21 / Compose BOM 2024.10 / minSdk 24 / targetSdk 36），32 个 Kotlin 文件约 4150 行，Hilt DI + Retrofit(kotlinx-serialization) + OkHttp WebSocket + DataStore + Coil。
+- 功能：认证/房间/DM/好友/分片上传/图片预览/**Markdown+LaTeX 渲染**/通知中心/在线+typing/5 套主题/管理面板。P2P 与 OneBot 面板延后（P2P 消息只读提示）。
+- **LaTeX 渲染方案**：消息正文用 WebView 加载 `assets/markdown.html`（内联 marked+KaTeX+DOMPurify，vendor 1MB 含全部字体），JS bridge 回传高度驱动 Compose；气泡外壳（头像/时间/附件/菜单）仍是原生 Compose。公式/表格/@提及/XSS 消毒已在 Node 环境验证通过。
+- 服务器地址可配置（默认 `http://68.64.177.154:3000`，network_security_config 放行明文）；认证用 Bearer token（不依赖 cookie）；WS 用 `?token=`。
+- 构建：本机无 Android SDK，`./gradlew assembleDebug` 需在 Android Studio 或 GitHub Actions（workflow 已改为纯 Gradle，去掉 npm/Capacitor 步骤）。
+- 清理：删除 Capacitor 的 `package.json`/`capacitor.config.json`/旧 README；`.gitignore` 改为忽略 `.gradle/`/`build/`/`local.properties`（原生源码提交）；`build-android.sh`/根 README 已更新。

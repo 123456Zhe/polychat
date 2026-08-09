@@ -13,5 +13,9 @@ dist/
 *.build/
 *.dist/
 *.onefile-build/
-android-app/android/
+android-app/.gradle/
+android-app/local.properties
+android-app/**/build/
+android-app/.idea/
+android-app/captures/
 .zcode/

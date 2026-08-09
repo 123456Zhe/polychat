@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="poly_primary">#58789A</color>
+    <color name="poly_surface">#F2F0EF</color>
+    <color name="splash_bg">#111827</color>
+</resources>

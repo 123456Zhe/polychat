@@ -249,6 +249,19 @@ chmod +x build-gui.sh
 
 GUI 采用 Flet，头像以圆形图片显示，消息区使用 Flet Markdown 组件渲染 Markdown 与 LaTeX，附件可点击下载。`build-gui.sh` 会自动创建项目内的 `.venv-gui` 虚拟环境并安装 Flet，因此不需要向系统 Python 安装任何包。Linux 下构建产物位于 `dist/PolyChat-GUI/`，保留运行所需的多个文件；Linux、Windows 与 macOS 需分别在对应系统上构建。
 
+## 构建 Android
+
+Android 客户端是独立的原生工程（Kotlin + Jetpack Compose + Material 3），位于 `android-app/`。构建需要 JDK 17+ 和 Android SDK：
+
+```bash
+./build-android.sh        # 或 cd android-app && ./gradlew assembleDebug
+# APK 输出: android-app/app/build/outputs/apk/debug/app-debug.apk
+```
+
+也可直接用 Android Studio 打开 `android-app/` 目录运行。推送到 GitHub 后 CI（`.github/workflows/build-android.yml`）会自动构建并上传 APK artifact。
+
+Android 端支持与 Web 端一致的核心功能（房间/DM/好友/文件/Markdown+LaTeX 渲染/通知中心/5 套主题/管理面板），默认连接 `http://68.64.177.154:3000`，可在「我的 → 服务器地址」中修改。详见 `android-app/README.md`。
+
 ## Docker Compose 部署
 
 服务端、Web 和持久化数据可直接用 Compose 部署：

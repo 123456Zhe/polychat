@@ -1,82 +1,45 @@
 #!/bin/bash
 # PolyChat Android Build Script
-# This script helps set up and build the Android app using Capacitor
+# Native Kotlin + Jetpack Compose app (no Capacitor).
+# Requires: JDK 17+, Android SDK (ANDROID_HOME / ANDROID_SDK_ROOT), and Gradle.
 
 set -e
 
 echo "=== PolyChat Android Build ==="
 echo ""
 
-# Check if Node.js is available
-if ! command -v node &> /dev/null; then
-    echo "Error: Node.js is required. Please install Node.js 18+"
-    exit 1
-fi
-
-# Check if Java/JDK is available
+# Check Java
 if ! command -v java &> /dev/null; then
-    echo "Error: Java JDK 17+ is required for Android builds"
+    echo "Error: Java is required. Install JDK 17+"
     echo "Install with: sudo apt install openjdk-17-jdk"
     exit 1
 fi
+JAVA_MAJOR=$(java -version 2>&1 | awk -F[\".] '/version/ {print $2}')
+echo "Java version: $(java -version 2>&1 | head -1)"
+if [ "$JAVA_MAJOR" -lt 17 ]; then
+    echo "Warning: Gradle 8.8 requires JDK 17+; found $JAVA_MAJOR"
+fi
 
-# Check if Android SDK is available
+# Check Android SDK
 if [ -z "$ANDROID_HOME" ] && [ -z "$ANDROID_SDK_ROOT" ]; then
     echo "Warning: Android SDK not found"
-    echo "Install Android Studio or set ANDROID_HOME environment variable"
-    echo ""
+    echo "Install Android Studio or set ANDROID_HOME / ANDROID_SDK_ROOT"
 fi
 
-# Navigate to project root
-cd "$(dirname "$0")/.."
+# Navigate to android-app
+cd "$(dirname "$0")/android-app"
 
-# Step 1: Build web assets
-echo "Step 1: Building web assets..."
-npm run web:build
-echo "✓ Web assets built to web/"
+# Build with Gradle wrapper (downloads Gradle 8.8 on first run)
+echo "Step 1: Building debug APK..."
+./gradlew assembleDebug --no-daemon
+
 echo ""
-
-# Step 2: Navigate to android-app directory
-cd android-app
-
-# Step 3: Install dependencies if needed
-if [ ! -d "node_modules" ]; then
-    echo "Step 2: Installing Capacitor dependencies..."
-    npm install
-    echo ""
-fi
-
-# Step 4: Initialize Capacitor (if not already done)
-if [ ! -f "capacitor.config.ts" ]; then
-    echo "Step 3: Initializing Capacitor..."
-    npx cap init polychat com.polychat.app --web-dir ../web
-    echo ""
-fi
-
-# Step 5: Add Android platform (if not already added)
-if [ ! -d "android" ]; then
-    echo "Step 4: Adding Android platform..."
-    npx cap add android
-    echo ""
-fi
-
-# Step 6: Sync web assets
-echo "Step 5: Syncing web assets to Android..."
-npx cap sync android
-echo ""
-
-# Step 7: Open in Android Studio (if available)
-if command -v npx &> /dev/null; then
-    echo "Step 6: Opening Android Studio..."
-    echo "Run manually: npx cap open android"
-    echo ""
-fi
-
 echo "=== Build Complete ==="
 echo ""
-echo "Next steps:"
-echo "1. Open Android Studio: npx cap open android"
-echo "2. Build and run from Android Studio"
-echo "3. Or build APK: cd android && ./gradlew assembleDebug"
+echo "APK output: app/build/outputs/apk/debug/app-debug.apk"
 echo ""
-echo "APK output: android/app/build/outputs/apk/debug/app-debug.apk"
+echo "Next steps:"
+echo "1. Install on device: adb install app/build/outputs/apk/debug/app-debug.apk"
+echo "2. Or open in Android Studio: android-app/ (then Run ▶)"
+echo ""
+echo "Release builds require a signing config; push to GitHub to build via CI."

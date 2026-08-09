@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="vendor/katex.min.js"></script>
+<script src="vendor/marked.min.js"></script>
+<script src="vendor/purify.min.js"></script>
+<link rel="stylesheet" href="vendor/katex.min.css">
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    background: transparent;
+    overflow: hidden;
+    -webkit-text-size-adjust: 100%;
+  }
+  /* Bubble content uses a compact markdown style matching the web client */
+  body { color: #364258; font-size: 14px; line-height: 1.62; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", "PingFang SC", sans-serif; }
+  body.dark { color: #cbd5e1; }
+  body.accent { color: #ffffff; }
+  body.accent a { color: #dbe7ff; }
+  #root { word-break: break-word; }
+  #root > :first-child { margin-top: 0; }
+  #root > :last-child { margin-bottom: 0; }
+  #root p { margin: .55em 0; }
+  #root h1, #root h2, #root h3 { margin: .9em 0 .4em; line-height: 1.3; font-size: 1.15em; }
+  #root h1 { font-size: 1.35em; }
+  #root h3 { font-size: 1.05em; }
+  #root ul, #root ol { margin: .5em 0; padding-left: 1.4em; }
+  #root blockquote { margin: .6em 0; padding: 2px 10px; border-left: 3px solid #58789a; color: #697589; background: rgba(88,120,154,.08); border-radius: 2px; }
+  body.dark #root blockquote { border-left-color: #6366f1; color: #a5b4fc; background: rgba(99,102,241,.12); }
+  #root code { padding: .15em .35em; border-radius: 4px; color: #574c72; background: #eeebef; font-family: "SFMono-Regular", Consolas, "Roboto Mono", monospace; font-size: .9em; }
+  body.dark #root code { color: #c4b5fd; background: #312e81; }
+  body.accent #root code { color: #e9e4ff; background: rgba(255,255,255,.18); }
+  #root pre { margin: .7em 0; padding: 10px 12px; border-radius: 8px; overflow-x: auto; color: #e5e9ef; background: #35445f; }
+  body.dark #root pre { background: #0f172a; }
+  #root pre code { padding: 0; background: transparent; color: inherit; }
+  #root a { color: #58789a; }
+  body.dark #root a { color: #93b4e3; }
+  #root table { border-collapse: collapse; margin: .6em 0; }
+  #root th, #root td { border: 1px solid #c9c2c1; padding: 4px 9px; font-size: 13px; }
+  body.dark #root th, body.dark #root td { border-color: #34425c; }
+  #root img { max-width: 100%; border-radius: 8px; }
+  .mention { display: inline-block; padding: 0 5px; border-radius: 5px; color: #4f46e5; background: #e0e7ff; font-weight: 600; }
+  body.dark .mention { color: #a5b4fc; background: #312e81; }
+  body.accent .mention { color: #ffffff; background: rgba(255,255,255,.22); }
+  .math { overflow-x: auto; }
+  .math-block { margin: .6em 0; overflow-x: auto; }
+  .katex-display { margin: .4em 0; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+  'use strict';
+
+  // Marked extensions for LaTeX — identical to the web client (App.vue)
+  marked.use({
+    gfm: true,
+    breaks: true,
+    extensions: [
+      {
+        name: 'blockMath', level: 'block',
+        start: function (src) { return src.indexOf('$$'); },
+        tokenizer: function (src) {
+          var match = /^\$\$\s*\n?([\s\S]+?)\n?\s*\$\$(?:\n|$)/.exec(src);
+          return match ? { type: 'blockMath', raw: match[0], text: match[1] } : undefined;
+        },
+        renderer: function (token) {
+          return '<div class="math math-block">' + katex.renderToString(token.text, { displayMode: true, throwOnError: false }) + '</div>';
+        }
+      },
+      {
+        name: 'inlineMath', level: 'inline',
+        start: function (src) { return src.indexOf('$'); },
+        tokenizer: function (src) {
+          var match = /^\$([^$\n]+?)\$/.exec(src);
+          return match ? { type: 'inlineMath', raw: match[0], text: match[1] } : undefined;
+        },
+        renderer: function (token) {
+          return katex.renderToString(token.text, { throwOnError: false });
+        }
+      }
+    ]
+  });
+
+  function renderMessage(source, mentions) {
+    var html = DOMPurify.sanitize(marked.parse(source || ''), { USE_PROFILES: { html: true } });
+    if (Array.isArray(mentions)) {
+      for (var i = 0; i < mentions.length; i++) {
+        var m = mentions[i];
+        if (!m || !m.id) continue;
+        html = html.split('[at:' + m.id + ']').join('<span class="mention" data-user-id="' + m.id + '">@' + m.username + '</span>');
+      }
+    }
+    html = html.replace(/\[at:(\d+)\]/g, function (_, id) { return '<span class="mention">@用户' + id + '</span>'; });
+    html = html.replace(/(^|[\s>])@([\p{L}\p{N}_-]{2,24})/gu, '$1<span class="mention">@$2</span>');
+    document.getElementById('root').innerHTML = html;
+    notifyHeight();
+  }
+
+  function notifyHeight() {
+    var h = document.body.scrollHeight;
+    window.PolyChatBridge && window.PolyChatBridge.onHeightChanged(h);
+  }
+
+  // Called from Kotlin via evaluateJavascript to set theme class
+  function setMode(mode) {
+    document.body.className = mode || '';
+    notifyHeight();
+  }
+
+  window.renderMessage = renderMessage;
+  window.setMode = setMode;
+</script>
+</body>
+</html>
