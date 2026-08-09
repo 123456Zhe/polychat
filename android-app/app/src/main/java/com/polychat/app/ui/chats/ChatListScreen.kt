@@ -79,13 +79,13 @@ fun ChatListScreen(
         ) {
             if (rooms.isNotEmpty()) {
                 item { SectionLabel("聊天室") }
-                items(rooms, key = { it.id }) { room ->
+                items(rooms, key = { "room_${it.id}" }) { room ->
                     RoomRow(room, unread = roomUnread[room.id] ?: 0, onClick = { onOpenRoom(room.id) })
                 }
             }
             if (conversations.isNotEmpty()) {
                 item { SectionLabel("私信") }
-                items(conversations, key = { it.id }) { conv ->
+                items(conversations, key = { "dm_${it.id}" }) { conv ->
                     DmRow(conv, unread = dmUnread[conv.id] ?: 0, onClick = { onOpenDm(conv.id) })
                 }
             }

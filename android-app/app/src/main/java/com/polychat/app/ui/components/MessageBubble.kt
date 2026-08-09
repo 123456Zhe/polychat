@@ -184,8 +184,9 @@ private fun formatTime(iso: String?): String {
     if (iso.isNullOrBlank()) return ""
     return try {
         // Server returns "YYYY-MM-DD HH:MM:SS" in UTC.
-        val normalized = iso.replace(" ", "T") + "Z"
-        val date = java.time.Instant.parse(normalized).let { Date.from(it) }
+        val parser = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+        val date = parser.parse(iso)
+        if (date == null) return iso
         SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(date)
     } catch (_: Exception) {
         iso
