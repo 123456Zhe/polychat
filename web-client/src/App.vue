@@ -34,6 +34,9 @@ const dmTypeahead = ref(''), dmInput = ref(''), dmReplyTarget = ref(null), dmFil
 const p2pIncoming = ref(null), p2pProgress = ref({}), p2pLocalIds = ref(new Set());
 let p2pConfig = null;
 const p2pActive = new Map();
+const helpOpen = ref(false), tourOpen = ref(false), tourStep = ref(0);
+const tourHighlight = ref(null), tourHasTarget = ref(true), tourTipAtTop = ref(false);
+const TOUR_DONE_KEY = 'polychat.tour-done';
 const totalDmUnread = computed(() => Object.values(dmUnread.value).reduce((total, count) => total + count, 0));
 const atOpen = ref(false), atQuery = ref(''), atResults = ref([]), atStartPos = ref(-1), atTarget = ref('content');
 let messageTimer, roomTimer, eventTimer, dmTimer, friendTimer, lastId = 0, oldestId = 0, eventCursor = null;
@@ -55,6 +58,55 @@ const emojiGroups = {
   '物品': '📱 💻 ⌨️ 🖥️ 🖨️ 💡 🔦 📷 🎥 📺 📚 📝 ✏️ 📌 📎 🔒 🔑 🔧 🧰 💊 🩹 🧪 💎 💰 🛒'.split(' '),
   '符号': '❤️ 🧡 💛 💚 💙 💜 🖤 🤍 💔 ❣️ 💯 ✅ ❌ ⚠️ ❓ ❗ ♻️ 🔞 🚫 ⬆️ ⬇️ ⬅️ ➡️ 🔔 📌'.split(' ')
 };
+// 功能指南：分类列出 PolyChat 的全部功能；action 为「去试试」快捷入口（见 featureActions）
+const featureGroups = [
+  { title: '聊天与消息', icon: '💬', features: [
+    { icon: '#', title: 'Markdown 富文本', desc: '支持标题、加粗、斜体、删除线、引用、代码块、链接与表格，输入即渲染。' },
+    { icon: '∑', title: 'LaTeX 公式', desc: '行内公式 $E=mc^2$，块级公式 $$\\int_0^1 x^2\\,dx$$，由 KaTeX 渲染。' },
+    { icon: '●', title: '在线与输入状态', desc: '绿色圆点表示在线，输入消息时对方实时看到「正在输入…」。' },
+    { icon: '😄', title: '表情反应', desc: '悬停消息，点击气泡下方 ☺ 为任意消息添加表情。' },
+    { icon: '↩', title: '回复消息', desc: '在消息 ••• 菜单中选择「回复」，引用原消息继续讨论。' },
+    { icon: '🧵', title: '话题串', desc: '「••• → 打开话题」围绕一条消息展开独立的子讨论。' },
+    { icon: '📌', title: '置顶消息', desc: '房主/管理员可把重要消息置顶到房间顶部，随时查看。' },
+    { icon: '@', title: '@提及', desc: '输入 @ 呼出成员列表选择，被 @ 的人会看到红色提醒。' },
+    { icon: '⌕', title: '搜索消息', desc: '顶栏搜索可跨房间按关键词检索历史消息。' },
+    { icon: '✎', title: '编辑与撤回', desc: '自己的消息可随时在 ••• 菜单中编辑或撤回。' },
+    { icon: '🔍', title: '图片预览', desc: '点击聊天中的图片可全屏放大查看。' },
+  ]},
+  { title: '文件与直传', icon: '📁', features: [
+    { icon: '＋', title: '发送文件', desc: '点击输入框左侧 ＋ 多选文件/图片，也可直接拖拽到输入框或粘贴截图。' },
+    { icon: '🖼', title: '发送前预览', desc: '图片发送前即显示缩略图，确认无误再发送。' },
+    { icon: '📦', title: '大文件分片上传', desc: '超大文件自动分片上传，单文件上限 100 MB。' },
+    { icon: '⚡', title: 'P2P 大文件直传', desc: '私信发送 ≥5MB 文件时优先 WebRTC 点对点直传，文件不经过服务器，打洞失败自动回退上传。' },
+  ]},
+  { title: '好友与私信', icon: '👥', features: [
+    { icon: '＋', title: '加好友', desc: '顶栏 👥 搜索用户名发送好友请求，对方接受后成为双向好友。', action: 'friends' },
+    { icon: '✉', title: '私信（DM）', desc: '互为好友后即可私信，支持编辑、撤回、表情、未读计数与已读回执。', action: 'dm' },
+  ]},
+  { title: '房间管理', icon: '🏠', features: [
+    { icon: '＋', title: '新建聊天室', desc: '创建公开房间，或勾选「私有」创建仅受邀成员可见的房间。', action: 'newRoom' },
+    { icon: '📢', title: '房间公告', desc: '房主/管理员可发布公告，展示在房间顶部。' },
+    { icon: '♙', title: '成员管理', desc: '私有房间可邀请成员、设置管理员角色或移除成员。' },
+    { icon: '🔗', title: '邀请码与链接', desc: '生成一次性/限时邀请码，分享链接即可加入私有房间。' },
+    { icon: '⚙', title: '房间设置', desc: '重命名或删除房间。' },
+  ]},
+  { title: '个性化与通知', icon: '🎨', features: [
+    { icon: '◐', title: '主题与自定义 CSS', desc: '5 套预设主题一键切换，还可用自定义 CSS 深度定制界面。', action: 'theme' },
+    { icon: '🔔', title: '桌面与离线通知', desc: '浏览器桌面通知 + Web Push 离线推送，离开页面也能收到消息提醒。' },
+    { icon: '🔔', title: '通知中心', desc: '顶部铃铛汇总系统通知（好友请求、机器人审批结果等）。' },
+  ]},
+  { title: '账户与数据', icon: '👤', features: [
+    { icon: '🖼', title: '头像', desc: '在个人资料中上传或移除头像（PNG/JPEG/WebP/GIF，≤2MB）。', action: 'profile' },
+    { icon: '↓', title: '导出聊天记录', desc: '一键把全部聊天记录导出为 JSON 文件。', action: 'export' },
+    { icon: '✕', title: '删除账号', desc: '删除账号及所有个人数据（需密码确认，不可恢复）。' },
+  ]},
+  { title: '管理员（仅管理员可见）', icon: '🛡', adminOnly: true, features: [
+    { icon: '🔨', title: '用户管理', desc: '封禁/解封、禁言/解除、设置管理员，支持时长设置。' },
+    { icon: '🛡', title: '安全防护', desc: '按 IP 或设备指纹封禁，登录限速与审计日志。' },
+    { icon: '🤖', title: '机器人接入', desc: '审批 OneBot v11 机器人申请，复制 Token / WebSocket 地址 / 配置。' },
+  ]},
+];
+
 const themes = [
   { id: 'mist', name: '雾蓝', note: '当前默认的低饱和蓝灰', colors: ['#435675', '#6f8da8', '#5d527c', '#f2f0ef'], css: '' },
   { id: 'midnight', name: '午夜靛蓝', note: '深色专注，蓝紫强调', colors: ['#111827', '#312e81', '#818cf8', '#e0e7ff'], css: `:root { --slate-950:#0f172a; --slate-900:#172554; --slate-800:#1e3a8a; --blue-700:#4f46e5; --blue-600:#6366f1; --blue-400:#a5b4fc; --violet-700:#7c3aed; --violet-600:#8b5cf6; --warm-100:#111827; --warm-200:#243047; --warm-300:#34425c; --white:#1e293b; color:#e5e7eb; background:#111827; } body { background:#111827; } .chat { background:#111827; } .topbar, .composer { background:rgba(15,23,42,.92); border-color:#243047; } .topbar h2, .bubble > header strong, .markdown h1, .markdown h2, .markdown h3 { color:#eef2ff; } .topbar small, .markdown, .composer textarea { color:#cbd5e1; } .bubble { border-color:#29364d; background:#1e293b; } .composer textarea, .attach { border-color:#334155; background:#172033; color:#e5e7eb; } .auth { background:#111827; } .auth > section, .modal > section { background:#1e293b; border-color:#334155; color:#e5e7eb; } .tabs, .stats span { background:#172033; } .auth input { color:#e5e7eb; border-color:#334155; background:#172033; }` },
@@ -645,17 +697,72 @@ async function toggleDmReaction(message, emoji) { try { const result = await api
 function appendDmUnique(incoming) { const known = new Set(dmMessages.value.map(message => message.id)); const fresh = incoming.filter(message => !known.has(message.id)); if (fresh.length) dmMessages.value = [...dmMessages.value, ...fresh]; }
 function backToMobileHome() { room.value = null; conversation.value = null; view.value = 'rooms'; roomActionsOpen.value = false; }
 function switchMobileTab(tab) { backToMobileHome(); mobileTab.value = tab; }
+// ---------- 功能指南与首次使用引导 ----------
+const featureActions = {
+  newRoom: () => newRoom(),
+  friends: () => openFriends(),
+  dm: () => selectDmView(),
+  theme: () => { themeOpen.value = true; },
+  profile: () => { profileOpen.value = true; },
+  export: () => exportData(),
+};
+function runFeatureAction(key) { if (!featureActions[key]) return; helpOpen.value = false; featureActions[key](); }
+function getTourSteps() {
+  if (isMobile.value) return [
+    { selector: null, title: '欢迎使用 PolyChat 📱', desc: '手机版同样支持聊天、私信与全部功能。我们快速带你熟悉一下界面。' },
+    { selector: '.m-tabbar', title: '底部导航', desc: '三个标签页：💬 聊天列表、👥 联系人与好友、👤 我的（设置与数据）。' },
+    { selector: '.m-new', title: '新建聊天室', desc: '点击右上角 ＋ 创建公开或私有聊天室。' },
+    { selector: null, title: '消息支持 Markdown 与公式', desc: '输入 **加粗**、`代码`、行内 $E=mc^2$ 或 $$ 块级公式 $$，还支持 @提及、emoji 表情与拖拽/粘贴图片。' },
+    { selector: null, title: '消息与房间操作', desc: '点消息旁 ••• 可回复、打开话题、编辑、撤回；聊天页顶部 ••• 管理房间、成员与公告。' },
+    { selector: null, title: '好友与私信', desc: '联系人页搜索加好友、接受请求；好友间可私信，大文件支持 P2P 直传，不经过服务器。' },
+    { selector: null, title: '全部功能在这里', desc: '随时到「我的 → 功能指南」查看完整功能列表，或重新观看引导。开始聊天吧！' },
+  ];
+  return [
+    { selector: null, title: '欢迎使用 PolyChat 👋', desc: '一个支持 Markdown、LaTeX 公式、私信与大文件直传的聊天室。我们快速带你熟悉界面。' },
+    { selector: '.chat > aside .new', title: '新建聊天室', desc: '点击「新建聊天室」创建公开房间；勾选「私有」则创建仅受邀成员可见的房间。' },
+    { selector: '.chat > aside nav', title: '房间与私信列表', desc: '左侧列出聊天室与私信会话，未读消息显示红色数字角标，被 @ 提及显示红色 @。' },
+    { selector: '.topbar-actions', title: '顶栏工具栏', desc: '好友、私信、置顶、加入、搜索、公告、主题、通知与管理员面板都在这里。' },
+    { selector: '.composer .compose-row', title: '输入消息', desc: '支持 Markdown、LaTeX 公式、emoji、@提及，还可粘贴截图、拖拽文件、多文件同时发送。' },
+    { selector: '.bubble .message-menu-trigger', title: '消息操作', desc: '悬停消息点 ••• 可回复、打开话题、置顶、复制 Markdown、编辑或撤回；气泡下方 ☺ 可添加表情反应。' },
+    { selector: '.topbar-actions .toolbar-button[title="帮助"]', title: '全部功能指南', desc: '点击顶栏 ? 随时查看完整功能列表与操作提示，也可以重新观看这段引导。' },
+  ];
+}
+const tourHighlightStyle = computed(() => {
+  const box = tourHighlight.value;
+  return box ? { left: box.left + 'px', top: box.top + 'px', width: box.width + 'px', height: box.height + 'px' } : {};
+});
+function positionTour() {
+  const step = getTourSteps()[tourStep.value];
+  if (!step) { tourHighlight.value = null; tourHasTarget.value = false; tourTipAtTop.value = false; return; }
+  if (!step.selector) { tourHighlight.value = null; tourHasTarget.value = false; tourTipAtTop.value = false; return; }
+  const el = document.querySelector(step.selector);
+  if (!el) { tourHighlight.value = null; tourHasTarget.value = false; return; }
+  el.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+  const rect = el.getBoundingClientRect();
+  const pad = 6;
+  tourHighlight.value = { left: rect.left - pad, top: rect.top - pad, width: rect.width + pad * 2, height: rect.height + pad * 2 };
+  tourHasTarget.value = true;
+  // 移动端：高亮目标位于屏幕下半部时，把提示卡移到顶部，避免盖住目标
+  tourTipAtTop.value = isMobile.value && rect.top >= window.innerHeight * 0.45;
+}
+function onTourScroll() { if (tourOpen.value) positionTour(); }
+function startTour() { if (isMobile.value) backToMobileHome(); tourStep.value = 0; tourOpen.value = true; document.addEventListener('scroll', onTourScroll, true); nextTick(() => positionTour()); }
+function endTour() { tourOpen.value = false; tourHighlight.value = null; document.removeEventListener('scroll', onTourScroll, true); localStorage.setItem(TOUR_DONE_KEY, '1'); }
+function skipTour() { endTour(); }
+function tourNext() { if (tourStep.value >= getTourSteps().length - 1) return endTour(); tourStep.value += 1; nextTick(() => positionTour()); }
+function tourPrev() { if (tourStep.value <= 0) return; tourStep.value -= 1; nextTick(() => positionTour()); }
 onMounted(async () => {
   deviceFingerprint.value = generateFingerprint();
   renderThemeCss();
   document.addEventListener('visibilitychange', handleVisibility);
   isMobile.value = window.innerWidth <= 768;
-  window.addEventListener('resize', () => { isMobile.value = window.innerWidth <= 768; if (!isMobile.value) sidebarOpen.value = false; });
+  window.addEventListener('resize', () => { isMobile.value = window.innerWidth <= 768; if (!isMobile.value) sidebarOpen.value = false; if (tourOpen.value) positionTour(); });
   try { user.value = (await api('/api/me')).user; await enter(); } catch {}
   loadP2pConfig();
   p2pListFiles().then(files => { for (const f of files) p2pLocalIds.value.add(f.id); }).catch(() => {});
+  if (user.value && !localStorage.getItem(TOUR_DONE_KEY)) setTimeout(() => { if (user.value && !localStorage.getItem(TOUR_DONE_KEY)) startTour(); }, 900);
 });
-onBeforeUnmount(() => { shutdownRealtime(); document.removeEventListener('visibilitychange', handleVisibility); });
+onBeforeUnmount(() => { shutdownRealtime(); document.removeEventListener('visibilitychange', handleVisibility); document.removeEventListener('scroll', onTourScroll, true); });
 </script>
 
 <template>
@@ -672,18 +779,19 @@ onBeforeUnmount(() => { shutdownRealtime(); document.removeEventListener('visibi
         <div v-if="view === 'dm' && conversation"><button class="toolbar-button" @click="selectRooms">← 返回</button><h2><span>✉</span> {{ conversation.peer?.username }} <small>私信</small></h2></div>
         <div v-else><h2><span>#</span> {{ room?.name || '大厅' }} <small v-if="room?.is_private">🔒 私有</small></h2><small><i class="online-dot"></i>{{ onlineUsers.length }} 人在线<span v-if="typingText"> · {{ typingText }}</span></small></div>
         <div class="topbar-actions">
-          <button class="toolbar-button" @click="openFriends"><span>👥</span><em>好友</em><small v-if="totalDmUnread || friendList.incoming.length" class="unread">{{ (totalDmUnread + friendList.incoming.length) > 99 ? '99+' : (totalDmUnread + friendList.incoming.length) }}</small></button>
-          <button class="toolbar-button" @click="selectDmView()" v-if="view !== 'dm'"><span>✉</span><em>私信</em><small v-if="totalDmUnread" class="unread">{{ totalDmUnread > 99 ? '99+' : totalDmUnread }}</small></button>
-          <button class="toolbar-button" @click="loadPins">⌖ <em>置顶</em></button>
-          <button class="toolbar-button" @click="openInviteCodePrompt">🔗 <em>加入</em></button>
-          <button class="toolbar-button" @click="searchOpen = true">⌕ <em>搜索</em></button>
-          <button v-if="room?.is_private && (room?.role === 'owner' || room?.role === 'admin' || isAdmin)" class="toolbar-button" @click="loadMembers">♙ <em>成员</em></button>
-          <button v-if="isAdmin || room?.role === 'owner' || room?.role === 'admin'" class="toolbar-button" @click="openAnnouncement">📢 <em>公告</em></button>
-          <button v-if="isAdmin || room?.role === 'owner' || room?.role === 'admin'" class="toolbar-button" @click="openRoomManage">⚙ <em>房间</em></button>
+          <button class="toolbar-button" title="好友与私信" @click="openFriends"><span>👥</span><em>好友</em><small v-if="totalDmUnread || friendList.incoming.length" class="unread">{{ (totalDmUnread + friendList.incoming.length) > 99 ? '99+' : (totalDmUnread + friendList.incoming.length) }}</small></button>
+          <button class="toolbar-button" title="私信" @click="selectDmView()" v-if="view !== 'dm'"><span>✉</span><em>私信</em><small v-if="totalDmUnread" class="unread">{{ totalDmUnread > 99 ? '99+' : totalDmUnread }}</small></button>
+          <button class="toolbar-button" title="置顶消息" @click="loadPins">⌖ <em>置顶</em></button>
+          <button class="toolbar-button" title="通过邀请码加入" @click="openInviteCodePrompt">🔗 <em>加入</em></button>
+          <button class="toolbar-button" title="搜索消息" @click="searchOpen = true">⌕ <em>搜索</em></button>
+          <button v-if="room?.is_private && (room?.role === 'owner' || room?.role === 'admin' || isAdmin)" class="toolbar-button" title="成员管理" @click="loadMembers">♙ <em>成员</em></button>
+          <button v-if="isAdmin || room?.role === 'owner' || room?.role === 'admin'" class="toolbar-button" title="房间公告" @click="openAnnouncement">📢 <em>公告</em></button>
+          <button v-if="isAdmin || room?.role === 'owner' || room?.role === 'admin'" class="toolbar-button" title="房间设置" @click="openRoomManage">⚙ <em>房间</em></button>
           <button class="toolbar-button" title="主题与自定义 CSS" @click="themeOpen = true"><span>◐</span><em>主题</em></button>
-          <button v-if="isAdmin" class="toolbar-button" @click="adminOpen = true; loadAdmin(); loadBannedIps(); loadBannedFingerprints(); loadBotRequests(); loadBotTokens(); adminTab = 'users'">管理面板</button>
+          <button v-if="isAdmin" class="toolbar-button" title="管理面板" @click="adminOpen = true; loadAdmin(); loadBannedIps(); loadBannedFingerprints(); loadBotRequests(); loadBotTokens(); adminTab = 'users'">管理面板</button>
           <button class="toolbar-button notification" :class="{on: notificationOn, blocked: notificationPermission === 'denied'}" :title="notificationLabel" @click="toggleNotifications"><span>{{ notificationOn ? '🔔' : '🔕' }}</span><em>{{ notificationButtonText }}</em></button>
           <button class="toolbar-button notif-bell" :class="{active: notifOpen}" title="通知" @click="openNotifications"><span>🔔</span><small v-if="notifUnreadCount" class="unread">{{ notifUnreadCount > 99 ? '99+' : notifUnreadCount }}</small></button>
+          <button class="toolbar-button" title="帮助" @click="helpOpen = true"><span>?</span><em>帮助</em></button>
         </div>
       </header>
       <div class="pinned-area" :class="{hidden: view === 'dm' || (!room?.announcement && !roomPins.length)}">
@@ -745,6 +853,7 @@ onBeforeUnmount(() => { shutdownRealtime(); document.removeEventListener('visibi
         </div>
         <div v-else class="m-page">
           <div class="m-me-profile" @click="profileOpen = true"><span class="m-avatar m-avatar-lg"><img v-if="avatar(user)" :src="avatar(user)"><b v-else>{{ user.username[0] }}</b></span><div><h2>{{ user.username }}</h2><p>#{{ user.number || user.id }}{{ isAdmin ? ' · 管理员' : '' }}</p></div></div>
+          <button class="m-menu-item" @click="helpOpen = true"><span>❓</span> 功能指南</button>
           <button class="m-menu-item" @click="themeOpen = true"><span>◐</span> 主题与自定义 CSS</button>
           <button class="m-menu-item" @click="toggleNotifications"><span>{{ notificationOn ? '🔔' : '🔕' }}</span> {{ notificationButtonText }}</button>
           <button class="m-menu-item" @click="openNotifications"><span>🔔</span> 通知中心<small v-if="notifUnreadCount" class="unread">{{ notifUnreadCount > 99 ? '99+' : notifUnreadCount }}</small></button>
@@ -782,6 +891,17 @@ onBeforeUnmount(() => { shutdownRealtime(); document.removeEventListener('visibi
     <div v-if="friendList.outgoing.length" class="friend-section"><h3>等待接受</h3><div v-for="f in friendList.outgoing" :key="f.id" class="member"><span>{{ f.username }}</span><small>已发送请求</small></div></div>
   </section></div>
   <div v-if="p2pIncoming" class="modal"><section class="p2p-modal"><button class="close" @click="rejectP2p">×</button><p>P2P DIRECT TRANSFER</p><h2>收到直传请求</h2><p class="hint">{{ p2pIncoming.sender_username }} 想直传「{{ p2pIncoming.transfer.name }}」（{{ size(p2pIncoming.transfer.size) }}），文件不经过服务器，仅到达本设备。</p><div class="theme-actions"><button class="primary" @click="acceptP2p">接收</button><button @click="rejectP2p">拒绝</button></div></section></div>
+  <div v-if="helpOpen" class="modal"><section class="help-modal"><button class="close" @click="helpOpen = false">×</button><p>FEATURE GUIDE</p><h2>功能指南</h2><p class="hint">PolyChat 全部功能一览。部分功能支持「去试试」直接打开；也可重新观看首次使用引导。</p><div class="help-tour-entry"><button class="primary" @click="startTour(); helpOpen = false">▶ 重新观看引导</button></div><template v-for="group in featureGroups" :key="group.title"><div v-if="!group.adminOnly || isAdmin" class="feature-group"><h3><span>{{ group.icon }}</span>{{ group.title }}</h3><div class="feature-grid"><div v-for="feature in group.features" :key="feature.title" class="feature-item"><b class="feature-icon">{{ feature.icon }}</b><div class="feature-body"><b>{{ feature.title }}</b><small>{{ feature.desc }}</small></div><button v-if="feature.action" class="feature-action" @click="runFeatureAction(feature.action)">去试试</button></div></div></div></template></section></div>
+  <div v-if="tourOpen" class="tour-overlay">
+    <div v-if="!tourHasTarget" class="tour-dim"></div>
+    <div v-else class="tour-highlight" :style="tourHighlightStyle"></div>
+    <div class="tour-tip" :class="{top: tourTipAtTop}">
+      <div class="tour-progress"><span v-for="(_, i) in getTourSteps()" :key="i" class="tour-dot" :class="{active: i === tourStep}"></span><small>{{ tourStep + 1 }} / {{ getTourSteps().length }}</small></div>
+      <h3>{{ getTourSteps()[tourStep]?.title }}</h3>
+      <p>{{ getTourSteps()[tourStep]?.desc }}</p>
+      <div class="tour-actions"><button class="tour-skip" @click="skipTour">跳过</button><button v-if="tourStep > 0" class="tour-prev" @click="tourPrev">上一步</button><button class="primary" @click="tourNext">{{ tourStep >= getTourSteps().length - 1 ? '完成' : '下一步' }}</button></div>
+    </div>
+  </div>
   <div v-if="toast" class="toast">{{ toast }}</div>
   <div v-if="notifOpen" class="notif-dropdown">
     <header><h3>通知</h3><button v-if="notifUnreadCount" @click="markAllNotifRead">全部标为已读</button><button class="notif-close" @click="notifOpen = false">×</button></header>

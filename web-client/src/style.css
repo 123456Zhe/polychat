@@ -353,6 +353,60 @@ button { cursor: pointer; }
 }
 .toast { position: fixed; right: 20px; bottom: 20px; max-width: min(380px, calc(100% - 40px)); padding: 11px 15px; border: 1px solid rgba(255,255,255,.15); border-radius: 11px; color: #fff; background: var(--slate-950); box-shadow: var(--shadow); z-index: 20; }
 
+/* ============ 功能指南帮助面板 ============ */
+.help-modal { width: min(880px, 100%); }
+.help-modal > .hint { margin: -3px 0 14px; color: #7b8492; font-size: 12px; letter-spacing: 0; }
+.help-tour-entry { margin-bottom: 4px; }
+.help-tour-entry .primary { border: 0; border-radius: 9px; color: #fff; padding: 9px 15px; background: linear-gradient(135deg, var(--blue-700), var(--violet-700)); box-shadow: 0 6px 16px rgba(73,83,119,.18); }
+.feature-group { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--warm-200); }
+.feature-group h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 14px; color: var(--slate-900); }
+.feature-group h3 span { flex: none; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 7px; color: #fff; font-size: 12px; background: linear-gradient(135deg, var(--blue-600), var(--violet-600)); }
+.feature-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(238px, 1fr)); gap: 8px; }
+.feature-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 9px; padding: 11px 12px; border: 1px solid var(--warm-200); border-radius: 12px; background: var(--warm-100); }
+.feature-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; color: var(--blue-700); font-size: 15px; font-weight: 800; background: var(--white); box-shadow: 0 2px 8px rgba(52,68,95,.08); }
+.feature-body { min-width: 0; display: grid; gap: 3px; }
+.feature-body b { color: #3a4253; font-size: 13px; }
+.feature-body small { color: #7d8795; font-size: 11px; line-height: 1.5; }
+.feature-action { align-self: center; padding: 5px 10px; border: 1px solid var(--blue-400); border-radius: 8px; color: var(--blue-700); font-size: 11px; white-space: nowrap; background: var(--white); }
+.feature-action:hover { background: #eef4fb; }
+
+/* ============ 首次使用引导 Tour ============ */
+.tour-overlay { position: fixed; inset: 0; z-index: 100; pointer-events: none; }
+.tour-dim { position: fixed; inset: 0; background: rgba(15, 23, 42, .6); backdrop-filter: blur(2px); }
+.tour-highlight {
+  position: fixed;
+  z-index: 1;
+  border-radius: 14px;
+  background: transparent;
+  box-shadow: 0 0 0 9999px rgba(15, 23, 42, .6), 0 0 0 3px var(--blue-400), 0 16px 44px rgba(0, 0, 0, .35);
+  transition: left .18s ease, top .18s ease, width .18s ease, height .18s ease;
+}
+.tour-tip {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 2;
+  width: min(430px, calc(100vw - 28px));
+  transform: translate(-50%, -50%);
+  padding: 22px 22px 18px;
+  border: 1px solid var(--warm-300);
+  border-radius: 18px;
+  color: #26344b;
+  background: var(--white);
+  box-shadow: 0 22px 60px rgba(15, 23, 42, .35);
+  pointer-events: auto;
+}
+.tour-tip h3 { margin: 8px 0 7px; font-size: 17px; color: var(--slate-900); }
+.tour-tip p { margin: 0; font-size: 13px; line-height: 1.65; color: #5b6472; }
+.tour-progress { display: flex; align-items: center; gap: 6px; }
+.tour-progress small { margin-left: auto; color: #9aa3b1; font-size: 11px; }
+.tour-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warm-300); transition: background .15s, transform .15s; }
+.tour-dot.active { background: var(--blue-600); transform: scale(1.25); }
+.tour-actions { display: flex; align-items: center; gap: 8px; margin-top: 18px; }
+.tour-actions button { padding: 9px 15px; border: 1px solid #d6d1d1; border-radius: 10px; color: #586477; font-size: 13px; background: var(--white); }
+.tour-actions .primary { margin-left: auto; border: 0; color: #fff; background: linear-gradient(135deg, var(--blue-700), var(--violet-700)); }
+.tour-skip { color: #98a1ae !important; border-color: transparent !important; background: transparent !important; }
+
 .ip-badge { color: #8b94a2; font-size: 10px; font-family: monospace; }
 .fp-badge { color: #8b94a2; font-size: 10px; font-family: monospace; margin-left: 6px; }
 .ban-ip-form { display: flex; gap: 8px; margin: 10px 0; }
@@ -658,4 +712,11 @@ button { cursor: pointer; }
   .m-app .pinned-area { margin: 0; }
   .m-app .announcement-bar, .m-app .pinned-bar { margin: 0; }
   .m-app .pinned-bar { max-height: 36vh; overflow-y: auto; }
+
+  /* ---- 功能指南 & 引导移动端化：底部卡片 ---- */
+  .feature-grid { grid-template-columns: 1fr; }
+  .help-modal > .hint { line-height: 1.5; }
+  .tour-tip { left: 0; right: 0; top: auto; bottom: 0; transform: none; width: 100%; max-width: 100%; padding: 20px 18px calc(20px + env(safe-area-inset-bottom, 0px)); border: 0; border-radius: 20px 20px 0 0; box-shadow: 0 -12px 40px rgba(15, 23, 42, .4); }
+  .tour-tip.top { top: calc(env(safe-area-inset-top, 0px) + 10px); bottom: auto; border-radius: 0 0 20px 20px; box-shadow: 0 12px 40px rgba(15, 23, 42, .4); }
+  .tour-actions button { padding: 11px 16px; font-size: 15px; }
 }

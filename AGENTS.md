@@ -75,6 +75,14 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 
 ## Session work log
 
+### This session (功能提示与可视化引导)
+- 为 Web 端添加全面功能提示与可视化引导（`web-client/src/App.vue` + `style.css`，无新增依赖）：
+  - **首次使用引导 Tour**：登录后自动弹出可跳过的 spotlight 分步引导（localStorage `polychat.tour-done` 持久化，完成后不再自动弹出），桌面 7 步高亮「新建聊天室/房间与私信列表/顶栏/输入框/消息操作/帮助按钮」，移动端 7 步（启动时自动回到首页）高亮底部 Tab 与 ＋ 按钮。
+  - **功能指南面板**：顶栏新增 `?` 帮助按钮（移动端「我的」页新增「功能指南」入口），分类列出 7 组 31 项全部功能（聊天与消息、文件与直传、好友与私信、房间管理、个性化与通知、账户与数据、管理员），常用功能带「去试试」快捷按钮（建房/加好友/私信/主题/资料/导出），可一键重放引导。
+  - **Tooltip 增强**：为顶栏全部按钮补齐 `title` 提示。
+  - 引导实现细节：自研轻量 spotlight（`getBoundingClientRect` + box-shadow 挖孔 + 说明气泡）；`scrollIntoView({behavior:'instant'})` 规避 `.messages-scroll` 平滑滚动导致的高亮错位；引导期间监听 scroll 事件重定位；移动端提示卡自适应（目标在下半屏时提示卡移到顶部，避免遮挡）。
+- 验证：19/19 Node 测试通过，`web:build` 干净；桌面 + 移动视口（390×844）浏览器实测全流程（自动触发/跳过/上下一步/完成/重放/去试试/高亮与提示卡无重叠）。
+
 ### This session (OneBot modularization)
 - Extracted all OneBot/bot logic out of `server.mjs` into `modules/onebot/`:
   - `utils.js` — `onebotTS`, `onebotSegments`, `onebotMessageText`, `onebotGetOrCreateDm`
