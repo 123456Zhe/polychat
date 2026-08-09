@@ -15,13 +15,24 @@ export function onebotTextSegments(text) {
   return seg;
 }
 
-export function onebotSegments(message) {
+export function onebotSegments(message, origin = '') {
   const seg = [];
   if (message.content) seg.push(...onebotTextSegments(message.content));
-  if (message.attachment_id && message.attachment_type?.startsWith('image/')) {
-    seg.push({ type: 'image', data: { file: `/api/files/${message.attachment_id}` } });
+  const base = origin.replace(/\/+$/, '');
+  if (message.attachment_id && message.attachment_stored_name) {
+    // 免登录能力 URL：stored_name 不可枚举，机器人/LLM 可直接下载
+    const file = `${base}/api/public/files/${message.attachment_stored_name}`;
+    if (message.attachment_type?.startsWith('image/')) {
+      seg.push({ type: 'image', data: { file } });
+    } else {
+      seg.push({ type: 'file', data: { file, name: message.attachment_name || '' } });
+    }
   } else if (message.attachment_id) {
-    seg.push({ type: 'file', data: { file: `/api/files/${message.attachment_id}`, name: message.attachment_name || '' } });
+    if (message.attachment_type?.startsWith('image/')) {
+      seg.push({ type: 'image', data: { file: `/api/files/${message.attachment_id}` } });
+    } else {
+      seg.push({ type: 'file', data: { file: `/api/files/${message.attachment_id}`, name: message.attachment_name || '' } });
+    }
   }
   return seg;
 }

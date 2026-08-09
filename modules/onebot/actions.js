@@ -7,14 +7,14 @@ export function createOnebotActionHandler(ctx) {
     const cache = new Map();
     for (const s of botSockets) {
       if (s.readyState !== 1 || !socketCanAccess(s, roomId)) continue;
-      if (!cache.has(s.user.id)) cache.set(s.user.id, JSON.stringify({
+      if (!cache.has(s)) cache.set(s, JSON.stringify({
         time: onebotTS(), self_id: s.user.id, post_type: 'message',
         message_type: 'group', sub_type: 'normal',
         message_id: message.id, group_id: roomId, user_id: sender.id,
         sender: { user_id: sender.id, nickname: sender.username, sex: 'unknown', age: 0 },
-        message: onebotSegments(message), raw_message: message.content || '', font: 0
+        message: onebotSegments(message, s.origin), raw_message: message.content || '', font: 0
       }));
-      s.send(cache.get(s.user.id));
+      s.send(cache.get(s));
     }
   }
 
@@ -23,14 +23,14 @@ export function createOnebotActionHandler(ctx) {
     const cache = new Map();
     for (const s of botSockets) {
       if (s.readyState !== 1 || !mIds.has(s.user.id)) continue;
-      if (!cache.has(s.user.id)) cache.set(s.user.id, JSON.stringify({
+      if (!cache.has(s)) cache.set(s, JSON.stringify({
         time: onebotTS(), self_id: s.user.id, post_type: 'message',
         message_type: 'private', sub_type: 'friend',
         message_id: message.id, user_id: sender.id,
         sender: { user_id: sender.id, nickname: sender.username, sex: 'unknown', age: 0 },
-        message: onebotSegments(message), raw_message: message.content || '', font: 0
+        message: onebotSegments(message, s.origin), raw_message: message.content || '', font: 0
       }));
-      s.send(cache.get(s.user.id));
+      s.send(cache.get(s));
     }
   }
 
@@ -127,14 +127,17 @@ export function createOnebotActionHandler(ctx) {
         case 'get_msg': {
           const mid = Number(params.message_id);
           if (!mid) return respond(null, 'failed', 100, '缺少 message_id');
-          const message = db.prepare(`SELECT messages.*, users.username FROM messages JOIN users ON users.id = messages.user_id WHERE messages.id = ?`).get(mid);
+          const message = db.prepare(`SELECT messages.*, users.username,
+            attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type, attachments.stored_name AS attachment_stored_name
+            FROM messages JOIN users ON users.id = messages.user_id
+            LEFT JOIN attachments ON attachments.id = messages.attachment_id WHERE messages.id = ?`).get(mid);
           if (!message) return respond(null, 'failed', 100, '消息不存在');
           const canAccess = message.room_id
             ? socketCanAccess(client, message.room_id)
             : message.dm_id && db.prepare('SELECT 1 FROM dm_members WHERE conversation_id = ? AND user_id = ?').get(message.dm_id, user.id);
           if (!canAccess) return respond(null, 'failed', 403, '无权访问该消息');
           respond({
-            message_id: message.id, user_id: message.user_id, message: onebotSegments(message),
+            message_id: message.id, user_id: message.user_id, message: onebotSegments(message, client.origin),
             real_id: message.id, sender: { user_id: message.user_id, nickname: message.username },
             time: Math.floor(new Date(message.created_at).getTime() / 1000)
           });
@@ -189,15 +192,19 @@ export function createOnebotActionHandler(ctx) {
           const count = Math.min(Number(params.count) || 20, 100);
           const beforeId = Number(params.message_seq || params.message_id) || null;
           const rows = beforeId
-            ? db.prepare(`SELECT messages.*, users.username FROM messages JOIN users ON users.id = messages.user_id WHERE messages.room_id = ? AND messages.id < ? ORDER BY messages.id DESC LIMIT ?`).all(roomId, beforeId, count)
-            : db.prepare(`SELECT messages.*, users.username FROM messages JOIN users ON users.id = messages.user_id WHERE messages.room_id = ? ORDER BY messages.id DESC LIMIT ?`).all(roomId, count);
+            ? db.prepare(`SELECT messages.*, users.username, attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type, attachments.stored_name AS attachment_stored_name
+              FROM messages JOIN users ON users.id = messages.user_id LEFT JOIN attachments ON attachments.id = messages.attachment_id
+              WHERE messages.room_id = ? AND messages.id < ? ORDER BY messages.id DESC LIMIT ?`).all(roomId, beforeId, count)
+            : db.prepare(`SELECT messages.*, users.username, attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type, attachments.stored_name AS attachment_stored_name
+              FROM messages JOIN users ON users.id = messages.user_id LEFT JOIN attachments ON attachments.id = messages.attachment_id
+              WHERE messages.room_id = ? ORDER BY messages.id DESC LIMIT ?`).all(roomId, count);
           rows.reverse();
           respond({
             messages: rows.map(m => ({
               time: Math.floor(new Date(m.created_at).getTime() / 1000),
               message_type: 'group', message_id: m.id, real_id: m.id, group_id: roomId,
               user_id: m.user_id, sender: { user_id: m.user_id, nickname: m.username },
-              message: onebotSegments(m), raw_message: m.content || ''
+              message: onebotSegments(m, client.origin), raw_message: m.content || ''
             }))
           });
           break;

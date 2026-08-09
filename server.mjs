@@ -1457,7 +1457,7 @@ async function api(req, res, url) {
     const message = db.prepare(`SELECT messages.id, messages.content, messages.created_at, messages.reply_to, messages.thread_root, messages.edited_at, messages.deleted_at,
       users.id AS user_id, users.username, users.avatar_updated_at, parent.content AS reply_content, parent_user.username AS reply_username, attachments.id AS attachment_id,
       attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type,
-      attachments.size AS attachment_size
+      attachments.size AS attachment_size, attachments.stored_name AS attachment_stored_name
       FROM messages JOIN users ON users.id = messages.user_id
       LEFT JOIN messages AS parent ON parent.id = messages.reply_to LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id
       LEFT JOIN attachments ON attachments.id = messages.attachment_id WHERE messages.id = ?`).get(result.lastInsertRowid);
@@ -1523,7 +1523,7 @@ async function api(req, res, url) {
 
   const dmMessageColumns = `messages.id, messages.content, messages.created_at, messages.reply_to, messages.thread_root, messages.edited_at, messages.deleted_at,
     users.id AS user_id, users.username, users.avatar_updated_at, parent.content AS reply_content, parent_user.username AS reply_username, attachments.id AS attachment_id,
-    attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type, attachments.size AS attachment_size,
+    attachments.original_name AS attachment_name, attachments.mime_type AS attachment_type, attachments.size AS attachment_size, attachments.stored_name AS attachment_stored_name,
     p2p_transfers.id AS p2p_transfer_id, p2p_transfers.sender_id AS p2p_sender_id, p2p_transfers.receiver_id AS p2p_receiver_id,
     p2p_transfers.name AS p2p_name, p2p_transfers.mime_type AS p2p_type, p2p_transfers.size AS p2p_size,
     p2p_transfers.sha256 AS p2p_sha256, p2p_transfers.status AS p2p_status`;
@@ -1855,6 +1855,25 @@ async function api(req, res, url) {
     return json(res, 200, { ok: true });
   }
 
+  const publicFileMatch = url.pathname.match(/^\/api\/public\/files\/([A-Za-z0-9]+)$/);
+  if (publicFileMatch && req.method === 'GET') {
+    // 免登录能力 URL：stored_name 为 24 字节随机 hex（不可枚举），供 OneBot 机器人下载图片/附件
+    const file = db.prepare('SELECT * FROM attachments WHERE stored_name = ?').get(publicFileMatch[1]);
+    if (!file) return json(res, 404, { error: '文件不存在' });
+    try {
+      const bytes = readFileSync(join(UPLOAD_DIR, file.stored_name));
+      const inline = INLINE_IMAGE_TYPES.has(file.mime_type);
+      res.writeHead(200, {
+        'content-type': file.mime_type,
+        'content-length': bytes.length,
+        'content-disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(file.original_name)}`,
+        'cache-control': 'private, max-age=3600',
+        'x-content-type-options': 'nosniff'
+      });
+      return res.end(bytes);
+    } catch { return json(res, 404, { error: '文件数据不存在' }); }
+  }
+
   return json(res, 404, { error: '接口不存在' });
 }
 
@@ -1897,7 +1916,8 @@ export const server = http.createServer(async (req, res) => {
   }
 });
 
-const onebot = setupOnebot({ db, eventBus, roomForUser, validateMentions, hydrateMessages, broadcast, conversationMembers, socketCanAccess, isUserBanned, isUserMuted });
+const publicBaseUrl = (process.env.PUBLIC_URL || `http://${HOST}:${PORT}`).replace(/\/+$/, '');
+const onebot = setupOnebot({ db, eventBus, roomForUser, validateMentions, hydrateMessages, broadcast, conversationMembers, socketCanAccess, isUserBanned, isUserMuted, publicBaseUrl });
 onebot.attach(server);
 if (process.env.NODE_ENV !== 'test') onebot.startReverse();
 

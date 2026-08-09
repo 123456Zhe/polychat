@@ -4,14 +4,14 @@ import { createOnebotReverse } from './reverse.js';
 import { registerOnebotEventListeners } from './events.js';
 
 export function setupOnebot(ctx) {
-  const { db, roomForUser, validateMentions, hydrateMessages, broadcast, conversationMembers, socketCanAccess, isUserBanned, isUserMuted, eventBus } = ctx;
+  const { db, roomForUser, validateMentions, hydrateMessages, broadcast, conversationMembers, socketCanAccess, isUserBanned, isUserMuted, eventBus, publicBaseUrl = '' } = ctx;
 
   const botSockets = new Set();
   const handleAction = createOnebotActionHandler({ db, roomForUser, validateMentions, hydrateMessages, broadcast, conversationMembers, socketCanAccess, isUserBanned, isUserMuted, botSockets });
 
-  const { attach, heartbeat: wsHeartbeat } = createOnebotWs({ db, isUserBanned, botSockets, handleAction });
+  const { attach, heartbeat: wsHeartbeat } = createOnebotWs({ db, isUserBanned, botSockets, handleAction, publicBaseUrl });
 
-  const reverse = createOnebotReverse({ db, isUserBanned, botSockets, handleAction });
+  const reverse = createOnebotReverse({ db, isUserBanned, botSockets, handleAction, publicBaseUrl });
 
   registerOnebotEventListeners({ eventBus, botSockets, conversationMembers, socketCanAccess });
 

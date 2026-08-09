@@ -542,6 +542,92 @@ test('OneBot 遵守消息权限、好友限制和账号处罚状态', async () =
   await disconnected;
 });
 
+test('OneBot 机器人能读取图片和附件', async () => {
+  const adminLogin = await api('/api/login', { method: 'POST', body: JSON.stringify({ username: 'alice', password: 'correct-horse' }) });
+  const adminAuth = { authorization: `Bearer ${adminLogin.body.token}` };
+  const sender = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'img_sender', password: 'img-sender-password' }) });
+  const senderAuth = { authorization: `Bearer ${sender.body.token}` };
+  const bot = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'img_bot', password: 'img-bot-password' }) });
+
+  const tokenResult = await api('/api/admin/bot/tokens', {
+    method: 'POST', headers: adminAuth, body: JSON.stringify({ user_id: bot.body.user.id, name: 'Image bot' })
+  });
+  assert.equal(tokenResult.response.status, 201);
+  const socket = await openSocket(`${base.replace('http:', 'ws:')}/api/onebot/ws?token=${encodeURIComponent(tokenResult.body.token.token)}`);
+
+  const nextBotMessage = () => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('未收到机器人 message 事件')), 2000);
+    const listener = event => {
+      const payload = JSON.parse(event.data);
+      if (payload.post_type !== 'message' || payload.message_type !== 'group') return;
+      clearTimeout(timer); socket.removeEventListener('message', listener); resolve(payload);
+    };
+    socket.addEventListener('message', listener);
+  });
+
+  // 1) 实时推送：图片消息应转为 image 段，且 file 为可免登录下载的绝对能力 URL
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const uploaded = await api('/api/files', {
+    method: 'POST', headers: senderAuth,
+    body: JSON.stringify({ name: 'pixel.png', type: 'image/png', data: png.toString('base64') })
+  });
+  assert.equal(uploaded.response.status, 201);
+
+  const botEvent = nextBotMessage();
+  const sent = await api('/api/rooms/1/messages', {
+    method: 'POST', headers: senderAuth,
+    body: JSON.stringify({ content: '', attachment_id: uploaded.body.file.id })
+  });
+  assert.equal(sent.response.status, 201);
+  const received = await botEvent;
+  const imageSeg = received.message.find(seg => seg.type === 'image');
+  assert.ok(imageSeg, '图片应转为 image 段');
+  assert.match(imageSeg.data.file, /^https?:\/\/.+\/api\/public\/files\/[A-Za-z0-9]+$/);
+  const fetched = await fetch(imageSeg.data.file);
+  assert.equal(fetched.status, 200);
+  assert.equal(fetched.headers.get('content-type'), 'image/png');
+  assert.match(fetched.headers.get('content-disposition'), /^inline;/);
+  assert.deepEqual(Buffer.from(await fetched.arrayBuffer()), png);
+
+  // 2) get_msg 返回 image 段（修复前会退化成 file 段）
+  const got = await onebotAction(socket, 'get_msg', { message_id: sent.body.message.id });
+  assert.equal(got.status, 'ok');
+  const gotImg = got.data.message.find(seg => seg.type === 'image');
+  assert.ok(gotImg, 'get_msg 应返回 image 段');
+  assert.match(gotImg.data.file, /\/api\/public\/files\/[A-Za-z0-9]+$/);
+
+  // 3) get_group_msg_history 同样返回 image 段
+  const history = await onebotAction(socket, 'get_group_msg_history', { group_id: 1 });
+  const histMsg = history.data.messages.find(m => m.message_id === sent.body.message.id);
+  assert.ok(histMsg, '历史中应能找到该消息');
+  assert.ok(histMsg.message.some(seg => seg.type === 'image'), '历史消息应含 image 段');
+
+  // 4) 非图片附件 → file 段 + 文件名 + 可下载 URL
+  const textFile = Buffer.from('PolyChat bot file 测试\n');
+  const uploadedText = await api('/api/files', {
+    method: 'POST', headers: senderAuth,
+    body: JSON.stringify({ name: '机器人说明.txt', type: 'text/plain', data: textFile.toString('base64') })
+  });
+  const sentText = await api('/api/rooms/1/messages', {
+    method: 'POST', headers: senderAuth,
+    body: JSON.stringify({ content: '', attachment_id: uploadedText.body.file.id })
+  });
+  const gotText = await onebotAction(socket, 'get_msg', { message_id: sentText.body.message.id });
+  const fileSeg = gotText.data.message.find(seg => seg.type === 'file');
+  assert.ok(fileSeg, '非图片附件应为 file 段');
+  assert.equal(fileSeg.data.name, '机器人说明.txt');
+  assert.match(fileSeg.data.file, /^https?:\/\/.+\/api\/public\/files\/[A-Za-z0-9]+$/);
+  const fetchedText = await fetch(fileSeg.data.file);
+  assert.equal(fetchedText.status, 200);
+  assert.deepEqual(Buffer.from(await fetchedText.arrayBuffer()), textFile);
+
+  // 5) 未知 stored_name → 404
+  const missing = await fetch(`${base}/api/public/files/000000000000000000000000000000000000000000000000`);
+  assert.equal(missing.status, 404);
+
+  socket.close();
+});
+
 test('P2P 直传：配置、创建、审批、信令转发与完成消息', async () => {
   const alice = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'p2p_alice', password: 'p2p-password-1' }) });
   const bob = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'p2p_bob', password: 'p2p-password-2' }) });

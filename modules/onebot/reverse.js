@@ -1,7 +1,7 @@
 import { WebSocket } from 'ws';
 import { onebotTS } from './utils.js';
 
-export function createOnebotReverse({ db, isUserBanned, botSockets, handleAction }) {
+export function createOnebotReverse({ db, isUserBanned, botSockets, handleAction, publicBaseUrl }) {
   const connections = [];
 
   function parseConfig() {
@@ -50,6 +50,7 @@ export function createOnebotReverse({ db, isUserBanned, botSockets, handleAction
     const ws = new WebSocket(cfg.url, { headers });
     state.socket = ws;
     ws.user = botUser;
+    ws.origin = (publicBaseUrl || '').replace(/\/+$/, '') || `http://localhost`;
     ws.isAlive = true;
 
     ws.on('open', () => {

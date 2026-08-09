@@ -1,6 +1,12 @@
 import { WebSocketServer } from 'ws';
 
-export function createOnebotWs({ db, isUserBanned, botSockets, handleAction }) {
+// 生成消息段用的服务器 origin：配置了 PUBLIC_URL 就用它，否则按连接请求推导（机器人能回访的地址）
+function originFrom(req) {
+  const proto = (req.headers['x-forwarded-proto'] || '').split(',')[0]?.trim() || (req.socket.encrypted ? 'https' : 'http');
+  return `${proto}://${req.headers.host || 'localhost'}`;
+}
+
+export function createOnebotWs({ db, isUserBanned, botSockets, handleAction, publicBaseUrl }) {
   const onebotWsServer = new WebSocketServer({ noServer: true });
 
   function attach(server) {
@@ -15,6 +21,7 @@ export function createOnebotWs({ db, isUserBanned, botSockets, handleAction }) {
       if (!botUser || isUserBanned(botUser)) { socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return socket.destroy(); }
       onebotWsServer.handleUpgrade(req, socket, head, client => {
         client.user = botUser;
+        client.origin = process.env.PUBLIC_URL ? (publicBaseUrl || '').replace(/\/+$/, '') : originFrom(req);
         client.isAlive = true;
         botSockets.add(client);
         client.on('pong', () => { client.isAlive = true; });

@@ -16,6 +16,7 @@ services:
       ONEBOT_REVERSE_URL: ${ONEBOT_REVERSE_URL:-}
       ONEBOT_BOT_TOKEN: ${ONEBOT_BOT_TOKEN:-}
       ONEBOT_ACCESS_TOKEN: ${ONEBOT_ACCESS_TOKEN:-}
+      PUBLIC_URL: ${PUBLIC_URL:-}
     volumes:
       - ./data:/app/data
     healthcheck:
