@@ -557,41 +557,42 @@ button { cursor: pointer; }
   .m-app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; color: inherit; background: var(--warm-100); }
 
   /* ---- 聊天页顶栏 ---- */
-  .m-topbar { flex: none; display: flex; align-items: center; gap: 6px; min-height: 52px; padding: env(safe-area-inset-top) 6px 6px; border-bottom: 1px solid var(--warm-200); background: color-mix(in srgb, var(--white) 92%, transparent); backdrop-filter: blur(16px); }
+  .m-topbar { flex: none; display: flex; align-items: center; gap: 6px; min-height: 52px; padding: calc(env(safe-area-inset-top, 0px) + 6px) 6px 6px; border-bottom: 1px solid var(--warm-200); background: color-mix(in srgb, var(--white) 92%, transparent); backdrop-filter: blur(16px); }
   .m-back, .m-more { flex: none; display: grid; place-items: center; width: 42px; height: 42px; border: 0; border-radius: 12px; color: inherit; font-size: 24px; line-height: 1; background: transparent; }
   .m-back { font-size: 28px; padding-bottom: 3px; }
   .m-more { font-size: 16px; letter-spacing: 1px; }
   .m-topbar-title { min-width: 0; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px; }
   .m-topbar-title h2 { margin: 0; overflow: hidden; color: inherit; font-size: 16px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
   .m-topbar-title h2 small { font-size: 10px; }
-  .m-topbar-title > small { display: flex; align-items: center; gap: 4px; color: #8b94a2; font-size: 11px; }
+  .m-topbar-title > small { display: flex; align-items: center; gap: 4px; max-width: 100%; overflow: hidden; color: #8b94a2; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 
   /* ---- 移动端消息区（复用 .bubble/.markdown/.avatar 类名以兼容主题） ---- */
   .m-messages { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 10px calc(12px + env(safe-area-inset-bottom)); -webkit-overflow-scrolling: touch; }
   .m-messages article { display: flex; align-items: flex-start; gap: 8px; margin: 0 auto 18px; }
   .m-messages article .avatar { flex: none; width: 34px; height: 34px; border-radius: 10px; }
   .m-messages article .bubble { flex: 1; min-width: 0; padding: 9px 12px 11px; border-radius: 3px 14px 14px; }
+  .m-messages article:has(.bubble.own) { flex-direction: row-reverse; }
   .m-messages article .bubble.own { flex: 0 1 auto; max-width: 86%; margin-left: auto; background: color-mix(in srgb, var(--blue-600) 14%, var(--white)); border-color: color-mix(in srgb, var(--blue-600) 45%, var(--warm-300)); border-radius: 14px 3px 14px 14px; }
   .m-messages .bubble > header button { opacity: 1; }
   .m-messages .message-menu-trigger { min-width: 40px; min-height: 40px; padding: 6px 9px; font-size: 13px; margin: -8px -6px -8px 4px; }
   .m-messages .empty { height: 100%; }
 
   /* 消息操作菜单 → 底部 action sheet */
-  .m-messages .message-menu { position: fixed; left: 0; right: 0; bottom: 0; top: auto; z-index: 56; display: grid; width: 100%; min-width: 0; margin: 0; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); border: 0; border-radius: 18px 18px 0 0; background: var(--white); box-shadow: 0 0 0 100vmax rgba(20, 26, 40, .45); }
+  .m-messages .message-menu { position: fixed; left: 0; right: 0; bottom: 0; top: auto; z-index: 56; display: grid; width: 100%; max-height: 60vh; overflow-y: auto; min-width: 0; margin: 0; padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)); border: 0; border-radius: 18px 18px 0 0; background: var(--white); box-shadow: 0 0 0 100vmax rgba(20, 26, 40, .45); }
   .m-messages .message-menu button { min-height: 46px; padding: 12px 14px; border-radius: 12px; color: inherit; font-size: 15px; }
   .m-messages .message-menu button:active { background: var(--warm-100); }
   .m-messages .reactions button { min-width: 36px; min-height: 36px; }
 
   /* ---- 底部 sheet（房间/私信操作） ---- */
   .m-sheet-backdrop { position: fixed; inset: 0; z-index: 55; background: rgba(20, 26, 40, .5); }
-  .m-sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 56; display: grid; gap: 4px; padding: 14px 12px calc(14px + env(safe-area-inset-bottom)); border-radius: 18px 18px 0 0; background: var(--white); box-shadow: 0 -10px 40px rgba(0,0,0,.2); }
+  .m-sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 56; display: grid; gap: 4px; max-height: 70vh; overflow-y: auto; padding: 14px 12px calc(14px + env(safe-area-inset-bottom, 0px)); border-radius: 18px 18px 0 0; background: var(--white); box-shadow: 0 -10px 40px rgba(0,0,0,.2); }
   .m-sheet h3 { margin: 2px 4px 6px; color: #8b94a2; font-size: 11px; font-weight: 700; letter-spacing: .1em; }
   .m-sheet button { min-height: 48px; padding: 12px 16px; border: 0; border-radius: 12px; color: inherit; font-size: 16px; text-align: left; background: var(--warm-100); }
   .m-sheet button:active { background: var(--warm-200); }
   .m-sheet .m-sheet-cancel { margin-top: 6px; color: #c2413a; text-align: center; background: var(--warm-100); }
 
   /* ---- 首页布局 ---- */
-  .m-home-top { flex: none; display: flex; align-items: center; justify-content: space-between; padding: env(safe-area-inset-top) 14px 8px; }
+  .m-home-top { flex: none; display: flex; align-items: center; justify-content: space-between; padding: calc(env(safe-area-inset-top, 0px) + 10px) 14px 8px; }
   .m-home-top h1 { display: flex; align-items: center; gap: 9px; margin: 0; color: inherit; font-size: 19px; }
   .m-home-top h1 img { width: 28px; height: 28px; border-radius: 8px; }
   .m-new { display: grid; place-items: center; width: 42px; height: 42px; border: 0; border-radius: 13px; color: #fff; font-size: 22px; background: linear-gradient(135deg, var(--blue-600), var(--violet-600)); box-shadow: 0 6px 16px rgba(111,141,168,.35); }
@@ -653,6 +654,7 @@ button { cursor: pointer; }
   .m-app .composer .compose-row { gap: 6px; }
   .m-app .composer textarea { min-height: 40px; max-height: 110px; padding: 10px 12px; font-size: 16px; /* prevents iOS zoom */ }
   .m-app .composer .attach, .m-app .composer .send { min-width: 40px; min-height: 40px; }
+  .m-app .composer .attach, .m-app .composer .send { display: grid; place-items: center; }
   .m-app .pinned-area { margin: 0; }
   .m-app .announcement-bar, .m-app .pinned-bar { margin: 0; }
   .m-app .pinned-bar { max-height: 36vh; overflow-y: auto; }
