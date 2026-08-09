@@ -2,8 +2,8 @@ package com.polychat.app.ui.components
 
 import android.annotation.SuppressLint
 import android.graphics.Color as AndroidColor
+import android.view.MotionEvent
 import android.view.ViewGroup
-import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -13,27 +13,29 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.polychat.app.data.model.Mention
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
-import kotlin.math.roundToInt
 
 /**
  * Renders one message's Markdown (including LaTeX via KaTeX) inside a
  * transparent WebView using the bundled assets/markdown.html template.
  *
- * The WebView reports its content height back through a JS bridge, which
- * drives the Compose height so the bubble wraps the rendered content exactly.
- * KaTeX fonts + marked/DOMPurify are bundled in assets/vendor.
+ * The WebView height is ESTIMATED statically from the text length (see
+ * [estimateHeightDp]) — no JS height callbacks, so the bubble size never
+ * changes after first layout. This keeps the message LazyColumn stable and
+ * scrollable (dynamic WebView heights were breaking list scrolling).
+ *
+ * Touch: the WebView does not consume any touches, otherwise it would swallow
+ * drags and the message list could not scroll. Links inside messages are
+ * therefore not tappable (acceptable for now).
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -43,8 +45,7 @@ fun MarkdownWebView(
     bubbleColor: Color,
     modifier: Modifier = Modifier
 ) {
-    val density = LocalDensity.current.density
-    var heightDp by remember(content) { mutableIntStateOf(20) }
+    val heightDp = remember(content) { estimateHeightDp(content) }
     var webView by remember { mutableStateOf<WebView?>(null) }
     var pageReady by remember { mutableStateOf(false) }
     var mode by remember { mutableStateOf("light") }
@@ -80,7 +81,13 @@ fun MarkdownWebView(
 
     AndroidView(
         factory = { ctx ->
-            val wv = WebView(ctx)
+            // Pass through every touch to the parent LazyColumn — the bubble
+            // content is overflow:hidden, so there is nothing to scroll inside.
+            // Without this the WebView swallows drags and the message list is
+            // stuck.
+            val wv = object : WebView(ctx) {
+                override fun onTouchEvent(event: MotionEvent): Boolean = false
+            }
             wv.settings.javaScriptEnabled = true
             wv.settings.allowFileAccess = true
             wv.settings.domStorageEnabled = true
@@ -92,7 +99,6 @@ fun MarkdownWebView(
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
             wv.webChromeClient = WebChromeClient()
-            wv.addJavascriptInterface(Bridge { px -> heightDp = (px / density).roundToInt() }, "PolyChatBridge")
             wv.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, url: String?) {
                     pageReady = true
@@ -110,9 +116,33 @@ fun MarkdownWebView(
     )
 }
 
-private class Bridge(private val onHeight: (Int) -> Unit) {
-    @JavascriptInterface
-    fun onHeightChanged(height: Int) {
-        onHeight(height)
+private val MARKDOWN_IMAGE = Regex("""!\[[^\]]*\]\([^)]*\)""")
+private val MARKDOWN_BLOCK = Regex("""(?m)^(#{1,6} |```|[-*>] |\d+\. )""")
+
+/**
+ * Rough static height estimate (dp) for a rendered markdown message:
+ * full-width chars count 2, half-width 1, ~100 half-width units per line,
+ * ~10dp per line; block elements (headings, code fences, lists, quotes) and
+ * math/`$...$` formulas get extra room; each markdown image ~170dp.
+ * Deliberately over-estimates so content is never clipped.
+ */
+private fun estimateHeightDp(content: String): Int {
+    var width = 0
+    var lines = 1
+    for (ch in content) {
+        if (ch == '\n') {
+            lines++
+            width = 0
+            continue
+        }
+        width += if (ch.code > 0x2E7F) 2 else 1
+        if (width > 100) {
+            lines++
+            width = 0
+        }
     }
+    val blocks = MARKDOWN_BLOCK.findAll(content).count()
+    val imgCount = MARKDOWN_IMAGE.findAll(content).count()
+    val mathCount = content.count { it == '$' } / 2
+    return lines * 10 + blocks * 8 + 6 + imgCount * 170 + mathCount * 8
 }

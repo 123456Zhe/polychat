@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -57,7 +58,8 @@ fun MessageBubble(
         }
 
         Column(
-            modifier = Modifier.widthIn(max = 320.dp)
+            modifier = Modifier.widthIn(max = 300.dp),
+            horizontalAlignment = if (isOwn) Alignment.End else Alignment.Start
         ) {
             // Reply reference.
             message.reply_content?.let {
@@ -151,7 +153,11 @@ fun MessageBubble(
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = textColor.copy(alpha = 0.5f),
-                modifier = Modifier.padding(top = 3.dp, start = 4.dp)
+                modifier = Modifier.padding(
+                    top = 3.dp,
+                    start = if (isOwn) 0.dp else 4.dp,
+                    end = if (isOwn) 4.dp else 0.dp
+                )
             )
         }
     }
@@ -159,7 +165,7 @@ fun MessageBubble(
 
 @Composable
 fun Avatar(avatarUrl: String?, name: String, size: Int = 40) {
-    val initials = name.take(1).uppercase(Locale.getDefault())
+    val initials = name.take(1).uppercase(Locale.getDefault()).ifBlank { "?" }
     if (!avatarUrl.isNullOrEmpty()) {
         AsyncImage(
             model = avatarUrl,
@@ -172,7 +178,8 @@ fun Avatar(avatarUrl: String?, name: String, size: Int = 40) {
             modifier = Modifier
                 .size(size.dp)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primaryContainer),
+                .background(MaterialTheme.colorScheme.primaryContainer)
+                .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Text(initials, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)

@@ -40,7 +40,7 @@ enum class PolyTheme(
         surface = Color(0xFFF2F0EF), onSurface = Color(0xFF26344B),
         surfaceContainer = Color(0xFFF8F7F6), surfaceContainerHigh = Color(0xFFE4E0DF),
         outline = Color(0xFFC9C2C1),
-        ownBubble = Color(0xFFDCE7F2), incomingBubble = Color(0xFFFFFFFF), onBubble = Color(0xFF26344B)
+        ownBubble = Color(0xFFD6E4EF), incomingBubble = Color(0xFFE4E0DF), onBubble = Color(0xFF26344B)
     ),
     MIDNIGHT(
         id = "midnight", label = "午夜靛蓝", isDark = true,
@@ -50,7 +50,7 @@ enum class PolyTheme(
         surface = Color(0xFF111827), onSurface = Color(0xFFE5E7EB),
         surfaceContainer = Color(0xFF1E293B), surfaceContainerHigh = Color(0xFF243047),
         outline = Color(0xFF34425C),
-        ownBubble = Color(0xFF1E3A8A), incomingBubble = Color(0xFF1E293B), onBubble = Color(0xFFE5E7EB)
+        ownBubble = Color(0xFF312E81), incomingBubble = Color(0xFF243047), onBubble = Color(0xFFE5E7EB)
     ),
     TEAL(
         id = "teal", label = "青绿浅色", isDark = false,
@@ -60,7 +60,7 @@ enum class PolyTheme(
         surface = Color(0xFFF8FAFC), onSurface = Color(0xFF1E293B),
         surfaceContainer = Color(0xFFF1F5F9), surfaceContainerHigh = Color(0xFFE2E8F0),
         outline = Color(0xFFCBD5E1),
-        ownBubble = Color(0xFFCCFBF1), incomingBubble = Color(0xFFFFFFFF), onBubble = Color(0xFF1E293B)
+        ownBubble = Color(0xFFCCFBF1), incomingBubble = Color(0xFFE2E8F0), onBubble = Color(0xFF1E293B)
     ),
     MOCHA(
         id = "mocha", label = "Catppuccin Mocha", isDark = true,
@@ -80,7 +80,7 @@ enum class PolyTheme(
         surface = Color(0xFFFEF3C7), onSurface = Color(0xFF451A03),
         surfaceContainer = Color(0xFFFFFBEB), surfaceContainerHigh = Color(0xFFFDE68A),
         outline = Color(0xFFFDE68A),
-        ownBubble = Color(0xFFFEF3C7), incomingBubble = Color(0xFFFFFBEB), onBubble = Color(0xFF451A03)
+        ownBubble = Color(0xFFFEF3C7), incomingBubble = Color(0xFFFDE68A), onBubble = Color(0xFF451A03)
     );
 
     fun toColorScheme(): ColorScheme = if (isDark) darkColorScheme(

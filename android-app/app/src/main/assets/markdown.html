@@ -32,7 +32,7 @@
   #root code { padding: .15em .35em; border-radius: 4px; color: #574c72; background: #eeebef; font-family: "SFMono-Regular", Consolas, "Roboto Mono", monospace; font-size: .9em; }
   body.dark #root code { color: #c4b5fd; background: #312e81; }
   body.accent #root code { color: #e9e4ff; background: rgba(255,255,255,.18); }
-  #root pre { margin: .7em 0; padding: 10px 12px; border-radius: 8px; overflow-x: auto; color: #e5e9ef; background: #35445f; }
+  #root pre { margin: .7em 0; padding: 10px 12px; border-radius: 8px; overflow-x: auto; color: #e5e9ef; background: #35445f; white-space: pre-wrap; word-break: break-all; }
   body.dark #root pre { background: #0f172a; }
   #root pre code { padding: 0; background: transparent; color: inherit; }
   #root a { color: #58789a; }
@@ -40,7 +40,7 @@
   #root table { border-collapse: collapse; margin: .6em 0; }
   #root th, #root td { border: 1px solid #c9c2c1; padding: 4px 9px; font-size: 13px; }
   body.dark #root th, body.dark #root td { border-color: #34425c; }
-  #root img { max-width: 100%; border-radius: 8px; }
+  #root img { max-width: 100%; max-height: 220px; object-fit: contain; border-radius: 8px; }
   .mention { display: inline-block; padding: 0 5px; border-radius: 5px; color: #4f46e5; background: #e0e7ff; font-weight: 600; }
   body.dark .mention { color: #a5b4fc; background: #312e81; }
   body.accent .mention { color: #ffffff; background: rgba(255,255,255,.22); }
@@ -96,18 +96,11 @@
     html = html.replace(/\[at:(\d+)\]/g, function (_, id) { return '<span class="mention">@用户' + id + '</span>'; });
     html = html.replace(/(^|[\s>])@([\p{L}\p{N}_-]{2,24})/gu, '$1<span class="mention">@$2</span>');
     document.getElementById('root').innerHTML = html;
-    notifyHeight();
-  }
-
-  function notifyHeight() {
-    var h = document.body.scrollHeight;
-    window.PolyChatBridge && window.PolyChatBridge.onHeightChanged(h);
   }
 
   // Called from Kotlin via evaluateJavascript to set theme class
   function setMode(mode) {
     document.body.className = mode || '';
-    notifyHeight();
   }
 
   window.renderMessage = renderMessage;

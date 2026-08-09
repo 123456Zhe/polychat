@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -39,8 +40,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
@@ -77,14 +80,26 @@ fun ChatScreen(
     var draft by remember { mutableStateOf("") }
     var menuMessage by remember { mutableStateOf<Message?>(null) }
     val listState = rememberLazyListState()
+    var firstScroll by remember { mutableStateOf(true) }
 
     LaunchedEffect(roomId, convId) {
         viewModel.open(roomId, convId)
+        firstScroll = true
     }
     LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
+        if (messages.isNotEmpty() && firstScroll) {
             listState.scrollToItem(messages.size - 1)
+            firstScroll = false
         }
+    }
+    // Load older messages when user scrolls near the top.
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .collect { index ->
+                if (index < 5 && viewModel.hasOlder.value) {
+                    viewModel.loadOlder()
+                }
+            }
     }
 
     Scaffold(
@@ -164,16 +179,25 @@ fun ChatScreen(
                     modifier = Modifier.weight(1f)
                 )
                 Spacer(Modifier.width(8.dp))
-                IconButton(
-                    onClick = {
-                        if (draft.isNotBlank()) {
-                            viewModel.send(draft)
-                            draft = ""
-                        }
-                    },
-                    modifier = Modifier.size(48.dp)
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary)
+                        .clickable(enabled = draft.isNotBlank()) {
+                            if (draft.isNotBlank()) {
+                                viewModel.send(draft)
+                                draft = ""
+                            }
+                        },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Filled.Send, contentDescription = "发送", tint = MaterialTheme.colorScheme.primary)
+                    Icon(
+                        Icons.Filled.Send,
+                        contentDescription = "发送",
+                        tint = if (draft.isNotBlank()) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.4f)
+                    )
                 }
             }
         }
@@ -244,12 +268,17 @@ class ChatViewModel @Inject constructor(
     private var roomId: Long? = null
     private var convId: Long? = null
     private var serverUrl: String? = null
+    private var oldestId: Long? = null
+    private val _hasOlder = MutableStateFlow(false)
+    val hasOlder: StateFlow<Boolean> = _hasOlder.asStateFlow()
 
     suspend fun open(roomId: Long?, convId: Long?) {
         this.roomId = roomId
         this.convId = convId
         _loading.value = true
         _messages.value = emptyList()
+        oldestId = null
+        _hasOlder.value = false
         serverUrl = chatRepo.serverUrlOrNull()
         _myId.value = prefs.getUserId() ?: 0L
         val me = authRepo.me()
@@ -259,14 +288,35 @@ class ChatViewModel @Inject constructor(
             _subtitle.value = chatRepo.roomSubtitle(roomId)
             val list = chatRepo.loadRoomMessages(roomId)
             _messages.value = list
+            oldestId = list.firstOrNull()?.id
+            _hasOlder.value = list.size >= 60
         } else if (convId != null) {
             _title.value = chatRepo.convName(convId) ?: "私信"
             _subtitle.value = ""
             val list = chatRepo.loadDmMessages(convId)
             _messages.value = list
+            oldestId = list.firstOrNull()?.id
+            _hasOlder.value = list.size >= 60
             list.lastOrNull()?.let { chatRepo.markDmRead(convId, it.id) }
         }
         _loading.value = false
+    }
+
+    fun loadOlder() {
+        viewModelScope.launch {
+            val rid = roomId ?: return@launch
+            val before = oldestId ?: return@launch
+            try {
+                val older = chatRepo.loadRoomMessages(rid, before = before, limit = 60)
+                if (older.isNotEmpty()) {
+                    _messages.value = older + _messages.value
+                    oldestId = older.first().id
+                    _hasOlder.value = older.size >= 60
+                } else {
+                    _hasOlder.value = false
+                }
+            } catch (_: Exception) { }
+        }
     }
 
     fun send(text: String) {
@@ -295,13 +345,13 @@ class ChatViewModel @Inject constructor(
 
     fun resolveAvatar(avatarUpdatedAt: Long?, userId: Long): String? {
         if (avatarUpdatedAt == null) return null
-        val base = serverUrl ?: return null
+        val base = serverUrl ?: com.polychat.app.data.api.ApiClient.DEFAULT_SERVER_URL
         return "$base/api/users/$userId/avatar?v=$avatarUpdatedAt"
     }
 
     fun resolveFile(attachmentId: Long?): String? {
         if (attachmentId == null) return null
-        val base = serverUrl ?: return null
+        val base = serverUrl ?: com.polychat.app.data.api.ApiClient.DEFAULT_SERVER_URL
         return "$base/api/files/$attachmentId?inline=1"
     }
 }
