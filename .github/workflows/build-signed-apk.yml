@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version name (e.g., 1.0.0)'
+        description: 'Version name (e.g., 1.1.0)'
         required: true
-        default: '1.0.0'
+        default: '1.1.0'
 
 jobs:
   build:
@@ -25,24 +25,21 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Decode Keystore
-        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android-app/polychat.keystore
+      # Signing uses the committed android-app/polychat.keystore (same key for
+      # debug and release), so any build can overwrite-install a previous one.
+      # versionCode stays fixed and only ever increases manually — never derive
+      # it from the clock (a lower value blocks overwrite installs).
 
-      - name: Update version
+      - name: Update version name
         working-directory: android-app
         run: |
-          sed -i "s/versionCode = .*/versionCode = $(( $(date +%s) % 100000 ))/" app/build.gradle.kts
           sed -i "s/versionName = .*/versionName = \"${{ inputs.version }}\"/" app/build.gradle.kts
 
       - name: Build Signed APK
         working-directory: android-app
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease \
-            -Pandroid.injected.signing.store.file=$PWD/polychat.keystore \
-            -Pandroid.injected.signing.store.password=${{ secrets.ANDROID_KEYSTORE_PASSWORD }} \
-            -Pandroid.injected.signing.key.alias=${{ secrets.ANDROID_KEY_ALIAS }} \
-            -Pandroid.injected.signing.key.password=${{ secrets.ANDROID_KEY_PASSWORD }}
+          ./gradlew assembleRelease
 
       - name: Create Release
         uses: softprops/action-gh-release@v2

@@ -1,5 +1,10 @@
 package com.polychat.app.data.repo
 
+import android.content.ContentValues
+import android.content.Context
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Base64
 import com.polychat.app.data.api.AnnouncementRequest
 import com.polychat.app.data.api.ApiService
@@ -7,6 +12,7 @@ import com.polychat.app.data.api.uploadOffset
 import com.polychat.app.data.local.PreferencesStore
 import com.polychat.app.data.model.*
 import com.polychat.app.data.ws.ChatWebSocketClient
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +30,7 @@ import javax.inject.Singleton
 class ChatRepository @Inject constructor(
     private val api: ApiService,
     private val prefs: PreferencesStore,
+    @ApplicationContext private val context: Context,
     val ws: ChatWebSocketClient
 ) {
     // ---- State ----
@@ -47,6 +54,10 @@ class ChatRepository @Inject constructor(
 
     private val _roomUnread = MutableStateFlow<Map<Long, Long>>(emptyMap())
     val roomUnread: StateFlow<Map<Long, Long>> = _roomUnread.asStateFlow()
+
+    /** Rooms with an unread message that @mentions me (red @ badge, mirrors web). */
+    private val _mentionedRooms = MutableStateFlow<Set<Long>>(emptySet())
+    val mentionedRooms: StateFlow<Set<Long>> = _mentionedRooms.asStateFlow()
 
     private val _dmUnread = MutableStateFlow<Map<Long, Long>>(emptyMap())
     val dmUnread: StateFlow<Map<Long, Long>> = _dmUnread.asStateFlow()
@@ -86,6 +97,15 @@ class ChatRepository @Inject constructor(
             val list = map[roomId].orEmpty()
             if (list.any { it.id == message.id }) map else map + (roomId to (list + message))
         }
+        // Live messages that @mention me light up the red @ badge.
+        val myId = runCatching { prefs.getUserId() }.getOrNull()
+        if (myId != null && message.user_id != myId && message.mentions.any { it.id == myId }) {
+            _mentionedRooms.update { it + roomId }
+        }
+    }
+
+    fun clearMention(roomId: Long) {
+        _mentionedRooms.update { it - roomId }
     }
 
     suspend fun editRoomMessage(messageId: Long, content: String): Message =
@@ -204,8 +224,7 @@ class ChatRepository @Inject constructor(
      * Uploads a file in 1MB chunks following the server protocol.
      * Returns the resulting attachment id.
      */
-    suspend fun uploadFile(file: File, name: String, mimeType: String): Long = withContext(Dispatchers.IO) {
-        val total = file.length()
+    suspend fun uploadFile(file: File, name: String, mimeType: String): Long = withContext(Dispatchers.IO) {        val total = file.length()
         val init = api.uploadInit(UploadInitRequest(name, mimeType, total))
         val sessionId = init.upload.id
         var offset = 0L
@@ -241,6 +260,67 @@ class ChatRepository @Inject constructor(
             runCatching { api.cancelUpload(sessionId) }
             throw e
         }
+    }
+
+    // ---- File download ----
+    /**
+     * Downloads an attachment to the app cache (for opening) and persists a
+     * copy to the system Downloads directory. Returns the cached file, or null
+     * if the download fails (the caller surfaces the error message).
+     */
+    suspend fun downloadAttachment(attachmentId: Long, name: String, mimeType: String?): File? =
+        withContext(Dispatchers.IO) {
+            val resp = api.downloadFile(attachmentId)
+            val body = resp.body()
+            if (!resp.isSuccessful || body == null) throw IOException("下载失败 (${resp.code()})")
+            val safeName = sanitizeFileName(name.ifBlank { "file_$attachmentId" })
+            val cacheDir = File(context.cacheDir, "downloads").apply { mkdirs() }
+            val cacheFile = File(cacheDir, safeName)
+            body.byteStream().use { input ->
+                cacheFile.outputStream().use { out -> input.copyTo(out) }
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                saveToMediaStore(cacheFile, safeName, mimeType)
+            } else {
+                saveToLegacyDownloads(cacheFile, safeName)
+            }
+            cacheFile
+        }
+
+    private fun saveToMediaStore(source: File, name: String, mimeType: String?) {
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, name)
+            put(MediaStore.Downloads.MIME_TYPE, mimeType ?: "application/octet-stream")
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val resolver = context.contentResolver
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: throw IOException("无法写入下载目录")
+        try {
+            resolver.openOutputStream(uri)?.use { out ->
+                source.inputStream().use { it.copyTo(out) }
+            } ?: throw IOException("无法写入下载目录")
+            values.clear()
+            values.put(MediaStore.Downloads.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+        } catch (e: Exception) {
+            runCatching { resolver.delete(uri, null, null) }
+            throw e
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun saveToLegacyDownloads(source: File, name: String) {
+        val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        if (!dir.exists()) dir.mkdirs()
+        source.inputStream().use { input ->
+            File(dir, name).outputStream().use { out -> input.copyTo(out) }
+        }
+    }
+
+    private fun sanitizeFileName(name: String): String {
+        val cleaned = name.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+        return cleaned.ifBlank { "file" }
     }
 
     // ---- WS helpers ----

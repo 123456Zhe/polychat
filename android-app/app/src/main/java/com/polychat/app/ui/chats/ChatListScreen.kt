@@ -55,6 +55,7 @@ fun ChatListScreen(
     val conversations by viewModel.chatRepo.conversations.collectAsState()
     val roomUnread by viewModel.chatRepo.roomUnread.collectAsState()
     val dmUnread by viewModel.chatRepo.dmUnread.collectAsState()
+    val mentionedRooms by viewModel.chatRepo.mentionedRooms.collectAsState()
 
     Scaffold(
         topBar = {
@@ -80,7 +81,12 @@ fun ChatListScreen(
             if (rooms.isNotEmpty()) {
                 item { SectionLabel("聊天室") }
                 items(rooms, key = { "room_${it.id}" }) { room ->
-                    RoomRow(room, unread = roomUnread[room.id] ?: 0, onClick = { onOpenRoom(room.id) })
+                    RoomRow(
+                        room = room,
+                        unread = roomUnread[room.id] ?: 0,
+                        mentioned = mentionedRooms.contains(room.id),
+                        onClick = { onOpenRoom(room.id) }
+                    )
                 }
             }
             if (conversations.isNotEmpty()) {
@@ -111,7 +117,7 @@ private fun SectionLabel(text: String) {
 }
 
 @Composable
-private fun RoomRow(room: Room, unread: Long, onClick: () -> Unit) {
+private fun RoomRow(room: Room, unread: Long, mentioned: Boolean, onClick: () -> Unit) {
     ListRow(
         leading = {
             Box(
@@ -129,6 +135,7 @@ private fun RoomRow(room: Room, unread: Long, onClick: () -> Unit) {
         title = room.name,
         subtitle = if (room.is_private) "🔒 私有聊天室" else "公共聊天室",
         unread = unread,
+        mentioned = mentioned,
         onClick = onClick
     )
 }
@@ -160,6 +167,7 @@ private fun ListRow(
     title: String,
     subtitle: String,
     unread: Long,
+    mentioned: Boolean = false,
     onClick: () -> Unit
 ) {
     Row(
@@ -177,7 +185,18 @@ private fun ListRow(
             Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        if (unread > 0) {
+        if (mentioned) {
+            Spacer(Modifier.width(8.dp))
+            Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFDC2626)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("@", color = Color.White, style = MaterialTheme.typography.labelSmall)
+            }
+        } else if (unread > 0) {
             Spacer(Modifier.width(8.dp))
             Box(
                 modifier = Modifier

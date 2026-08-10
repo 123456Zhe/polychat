@@ -5,10 +5,10 @@
 ## 功能
 
 - 认证：登录 / 注册 / 会话恢复 / 头像 / 导出 / 删号
-- 房间：列表 / 创建 / 发送消息 / 编辑 / 撤回 / 置顶 / 公告 / 成员 / 邀请码 / @提及
+- 房间：列表 / 创建 / 发送消息 / 编辑 / 撤回 / 置顶 / 公告 / 成员 / 邀请码 / @提及（输入 @ 呼出成员选择器，被 @ 的人列表显示红色 @ 角标）
 - 私信（DM）：会话 / 消息 / 已读回执 / 未读 / 表情反应
 - 好友：请求 / 接受 / 拒绝 / 删除 / 搜索
-- 文件：分片上传（1MB chunks）/ 图片预览 / 附件下载
+- 文件：分片上传（1MB chunks）/ 发送文件 / 图片全屏预览（双指缩放、双击放大）/ 附件下载到系统「下载」并打开
 - **Markdown + LaTeX 公式渲染**（WebView 内嵌 KaTeX，与 Web 端一致）
 - 通知：前台 WS 实时 → 本地通知 + 通知中心
 - 实时：在线状态 / typing 指示 / 双轨（WS + 轮询兜底）
@@ -42,7 +42,15 @@ chmod +x gradlew
 
 或直接用 Android Studio 打开 `android-app/` 目录运行。
 
-CI：推送到 GitHub main 分支会自动构建 APK（`.github/workflows/build-android.yml`）。
+CI：推送到 GitHub main 分支可手动触发 Release 构建（`.github/workflows/build-signed-apk.yml`）。
+
+## 签名与覆盖安装
+
+- debug 与 release 共用仓库内提交的 `polychat.keystore`（见 `app/build.gradle.kts`），因此本机构建、Android Studio、CI Release 的 APK 签名完全一致，新版本可直接覆盖安装旧版本。
+- **注意**：签名密钥与密码是公开的，仅适合自托管项目；若将来要上架应用商店，请换成私有密钥。
+- **升级说明**：如果设备上已安装旧签名（本地 debug 或 CI 密钥）的版本，首次切换到本签名需**卸载重装一次**；之后所有构建均可互相覆盖安装。
+- `versionCode` 只增不减（当前 2）。CI 不再用时间戳生成 versionCode，避免「版本号降低导致无法覆盖」。
+- Android 7–9（API 24–28）下载文件需要「存储」权限，系统会在首次下载时提示。
 
 ## 服务器地址
 

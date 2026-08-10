@@ -1,6 +1,8 @@
 package com.polychat.app.data.api
 
 import com.polychat.app.data.model.*
+import okhttp3.ResponseBody
+import retrofit2.Response
 import retrofit2.http.*
 
 /**
@@ -185,6 +187,11 @@ interface ApiService {
 
     @POST("api/files")
     suspend fun uploadLegacy(@Body body: LegacyFileRequest): FileResponse
+
+    /** Streams attachment bytes (Authorization attached by AuthInterceptor). */
+    @Streaming
+    @GET("api/files/{id}")
+    suspend fun downloadFile(@Path("id") id: Long): Response<ResponseBody>
 
     @GET("api/p2p/config")
     suspend fun p2pConfig(): P2pConfig

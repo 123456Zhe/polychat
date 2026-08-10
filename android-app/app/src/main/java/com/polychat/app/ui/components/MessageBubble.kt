@@ -41,7 +41,9 @@ fun MessageBubble(
     isOwn: Boolean,
     avatarUrl: String?,
     attachmentUrl: String?,
-    onOpenMenu: (Message) -> Unit
+    onOpenMenu: (Message) -> Unit,
+    onImageClick: (Message, String) -> Unit = { _, _ -> },
+    onFileClick: (Message) -> Unit = {}
 ) {
     val tokens = LocalChatTokens.current
     val bubbleColor = if (isOwn) tokens.ownBubble else tokens.incomingBubble
@@ -115,16 +117,29 @@ fun MessageBubble(
                                         .widthIn(max = 260.dp)
                                         .height(180.dp)
                                         .clip(RoundedCornerShape(8.dp))
+                                        .clickable { onImageClick(message, attachmentUrl) }
                                 )
                             } else {
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
-                                    color = Color.Transparent
+                                    color = Color.Transparent,
+                                    modifier = Modifier.clickable { onFileClick(message) }
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text("📎", style = MaterialTheme.typography.titleMedium)
                                         Spacer(Modifier.width(6.dp))
-                                        Text(name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Column(Modifier.widthIn(max = 170.dp)) {
+                                            Text(name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            message.attachment_size?.let {
+                                                Text(
+                                                    formatSize(it),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = textColor.copy(alpha = 0.6f)
+                                                )
+                                            }
+                                        }
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("↓", style = MaterialTheme.typography.titleMedium, color = textColor.copy(alpha = 0.7f))
                                     }
                                 }
                             }
@@ -185,6 +200,15 @@ fun Avatar(avatarUrl: String?, name: String, size: Int = 40) {
             Text(initials, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
         }
     }
+}
+
+private fun formatSize(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val kb = bytes / 1024.0
+    if (kb < 1024) return String.format(Locale.getDefault(), "%.0f KB", kb)
+    val mb = kb / 1024.0
+    if (mb < 1024) return String.format(Locale.getDefault(), "%.1f MB", mb)
+    return String.format(Locale.getDefault(), "%.1f GB", mb / 1024.0)
 }
 
 private fun formatTime(iso: String?): String {

@@ -11,19 +11,36 @@ android {
     namespace = "com.polychat.app"
     compileSdk = 36
 
+    // Single committed signing key for BOTH debug and release. This makes every
+    // APK (local debug, CI release, Android Studio) share the same signature so
+    // new builds can be installed over previous ones. See android-app/polychat.keystore.
+    signingConfigs {
+        create("polychat") {
+            storeFile = file("../polychat.keystore")
+            storePassword = "polychat-app-keystore"
+            keyAlias = "polychat"
+            keyPassword = "polychat-app-keystore"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.polychat.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        // Must only ever increase — do not go backwards (that blocks overwrite installs).
+        versionCode = 2
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("polychat")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("polychat")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }

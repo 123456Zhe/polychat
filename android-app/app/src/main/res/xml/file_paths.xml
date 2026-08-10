@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Downloaded attachments are cached under cacheDir/downloads for opening. -->
+    <cache-path name="cache" path="." />
+    <external-files-path name="external_files" path="." />
+</paths>

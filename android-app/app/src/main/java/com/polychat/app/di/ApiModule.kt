@@ -1,5 +1,6 @@
 package com.polychat.app.di
 
+import android.content.Context
 import com.polychat.app.data.api.ApiClient
 import com.polychat.app.data.api.ApiService
 import com.polychat.app.data.local.PreferencesStore
@@ -10,6 +11,7 @@ import com.polychat.app.data.ws.ChatWebSocketClient
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
@@ -39,8 +41,9 @@ object ApiModule {
     fun provideChatRepository(
         api: ApiService,
         prefs: PreferencesStore,
-        ws: ChatWebSocketClient
-    ): ChatRepository = ChatRepository(api, prefs, ws)
+        ws: ChatWebSocketClient,
+        @ApplicationContext context: Context
+    ): ChatRepository = ChatRepository(api, prefs, context, ws)
 
     @Provides
     @Singleton
