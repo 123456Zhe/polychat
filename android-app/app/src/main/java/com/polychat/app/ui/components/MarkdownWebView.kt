@@ -2,6 +2,7 @@ package com.polychat.app.ui.components
 
 import android.annotation.SuppressLint
 import android.graphics.Color as AndroidColor
+import android.webkit.JavascriptInterface
 import android.view.MotionEvent
 import android.view.ViewGroup
 import android.webkit.WebChromeClient
@@ -14,6 +15,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -23,15 +25,15 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.polychat.app.data.model.Mention
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlin.math.ceil
 
 /**
  * Renders one message's Markdown (including LaTeX via KaTeX) inside a
  * transparent WebView using the bundled assets/markdown.html template.
  *
- * The WebView height is ESTIMATED statically from the text length (see
- * [estimateHeightDp]) — no JS height callbacks, so the bubble size never
- * changes after first layout. This keeps the message LazyColumn stable and
- * scrollable (dynamic WebView heights were breaking list scrolling).
+ * The initial height is estimated so the list can lay out immediately. The
+ * page then reports its rendered height after Markdown, fonts and images have
+ * settled, preventing long messages from being clipped.
  *
  * Touch: the WebView does not consume any touches, otherwise it would swallow
  * drags and the message list could not scroll. Links inside messages are
@@ -45,7 +47,8 @@ fun MarkdownWebView(
     bubbleColor: Color,
     modifier: Modifier = Modifier
 ) {
-    val heightDp = remember(content) { estimateHeightDp(content) }
+    val estimatedDp = remember(content) { estimateHeightDp(content) }
+    var heightDp by remember(content) { mutableIntStateOf(estimatedDp) }
     var webView by remember { mutableStateOf<WebView?>(null) }
     var pageReady by remember { mutableStateOf(false) }
     var mode by remember { mutableStateOf("light") }
@@ -87,10 +90,26 @@ fun MarkdownWebView(
             // stuck.
             val wv = object : WebView(ctx) {
                 override fun onTouchEvent(event: MotionEvent): Boolean = false
+                override fun onInterceptTouchEvent(event: MotionEvent): Boolean = false
+                override fun dispatchTouchEvent(event: MotionEvent): Boolean = false
             }
             wv.settings.javaScriptEnabled = true
             wv.settings.allowFileAccess = true
             wv.settings.domStorageEnabled = true
+            wv.addJavascriptInterface(
+                object {
+                    @JavascriptInterface
+                    fun reportHeight(heightPx: Float) {
+                        wv.post {
+                            // WebView scrollHeight is measured in CSS px, which
+                            // maps to dp under the viewport's device scale.
+                            val renderedDp = (ceil(heightPx).toInt() + 2).coerceAtLeast(32)
+                            if (heightDp != renderedDp) heightDp = renderedDp
+                        }
+                    }
+                },
+                "PolyChatLayout"
+            )
             wv.setBackgroundColor(AndroidColor.TRANSPARENT)
             wv.isVerticalScrollBarEnabled = false
             wv.isHorizontalScrollBarEnabled = false

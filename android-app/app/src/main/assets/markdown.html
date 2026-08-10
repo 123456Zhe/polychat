@@ -15,14 +15,14 @@
     -webkit-text-size-adjust: 100%;
   }
   /* Bubble content uses a compact markdown style matching the web client */
-  body { color: #364258; font-size: 14px; line-height: 1.62; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", "PingFang SC", sans-serif; }
+  body { color: #364258; font-size: 14px; line-height: 1.78; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", "PingFang SC", sans-serif; }
   body.dark { color: #cbd5e1; }
   body.accent { color: #ffffff; }
   body.accent a { color: #dbe7ff; }
   #root { word-break: break-word; }
   #root > :first-child { margin-top: 0; }
   #root > :last-child { margin-bottom: 0; }
-  #root p { margin: .55em 0; }
+  #root p { margin: .6em 0; }
   #root h1, #root h2, #root h3 { margin: .9em 0 .4em; line-height: 1.3; font-size: 1.15em; }
   #root h1 { font-size: 1.35em; }
   #root h3 { font-size: 1.05em; }
@@ -96,6 +96,31 @@
     html = html.replace(/\[at:(\d+)\]/g, function (_, id) { return '<span class="mention">@用户' + id + '</span>'; });
     html = html.replace(/(^|[\s>])@([\p{L}\p{N}_-]{2,24})/gu, '$1<span class="mention">@$2</span>');
     document.getElementById('root').innerHTML = html;
+    observeMessageLayout();
+  }
+
+  var layoutObserver;
+  var heightFrame;
+  function reportHeight() {
+    cancelAnimationFrame(heightFrame);
+    heightFrame = requestAnimationFrame(function () {
+      if (window.PolyChatLayout && window.PolyChatLayout.reportHeight) {
+        window.PolyChatLayout.reportHeight(Math.ceil(document.documentElement.scrollHeight));
+      }
+    });
+  }
+
+  function observeMessageLayout() {
+    if (!layoutObserver) {
+      layoutObserver = new ResizeObserver(reportHeight);
+      layoutObserver.observe(document.getElementById('root'));
+    }
+    var images = document.getElementById('root').querySelectorAll('img');
+    for (var i = 0; i < images.length; i++) {
+      if (!images[i].complete) images[i].addEventListener('load', reportHeight, { once: true });
+    }
+    reportHeight();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(reportHeight);
   }
 
   // Called from Kotlin via evaluateJavascript to set theme class

@@ -286,14 +286,14 @@ class ChatViewModel @Inject constructor(
         if (roomId != null) {
             _title.value = chatRepo.roomName(roomId) ?: "房间"
             _subtitle.value = chatRepo.roomSubtitle(roomId)
-            val list = chatRepo.loadRoomMessages(roomId)
+            val list = chatRepo.loadRoomMessages(roomId, before = Long.MAX_VALUE)
             _messages.value = list
             oldestId = list.firstOrNull()?.id
             _hasOlder.value = list.size >= 60
         } else if (convId != null) {
             _title.value = chatRepo.convName(convId) ?: "私信"
             _subtitle.value = ""
-            val list = chatRepo.loadDmMessages(convId)
+            val list = chatRepo.loadDmMessages(convId, before = Long.MAX_VALUE)
             _messages.value = list
             oldestId = list.firstOrNull()?.id
             _hasOlder.value = list.size >= 60
