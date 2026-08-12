@@ -1,4 +1,6 @@
 name: Build Signed Release APK
+permissions:
+  contents: write
 on:
   workflow_dispatch:
     inputs:
@@ -7,8 +9,6 @@ on:
         required: true
         default: 1.1.0
 jobs:
-  permissions:
-    contents: write
   build:
     runs-on: ubuntu-latest
     steps:
