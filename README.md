@@ -264,7 +264,7 @@ Android 客户端是独立的原生工程（Kotlin + Jetpack Compose + Material 
 
 也可直接用 Android Studio 打开 `android-app/` 目录运行。推送到 GitHub 后 CI（`.github/workflows/build-android.yml`）会自动构建并上传 APK artifact。
 
-Android 端支持与 Web 端一致的核心功能（房间/DM/好友/文件/Markdown+LaTeX 渲染/通知中心/5 套主题/管理面板），默认连接 `http://68.64.177.154:3000`，可在「我的 → 服务器地址」中修改。详见 `android-app/README.md`。
+Android 端支持与 Web 端一致的核心功能（房间/DM/好友/文件/Markdown+LaTeX 渲染/通知中心/5 套主题/管理面板），默认连接 `https://chat.zhezhe.online`，可在「我的 → 服务器地址」中修改。详见 `android-app/README.md`。
 
 ## Docker Compose 部署
 

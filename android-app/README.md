@@ -54,7 +54,7 @@ CI：推送到 GitHub main 分支可手动触发 Release 构建（`.github/workf
 
 ## 服务器地址
 
-默认连接 `http://68.64.177.154:3000`。安装后可在「我的 → 服务器地址」中修改。
+默认连接 `https://chat.zhezhe.online`。安装后可在「我的 → 服务器地址」中修改。
 因 Android 9+ 默认禁止明文 HTTP，`network_security_config.xml` 已放行明文流量（生产建议换成 HTTPS）。
 
 ## 与 Web 端的关系

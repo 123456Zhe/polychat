@@ -29,6 +29,7 @@ const PUBLIC = join(ROOT, 'web');
 const KATEX_DIST = join(ROOT, 'node_modules', 'katex', 'dist');
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
+const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
 const DB_PATH = process.env.DB_PATH || join(ROOT, 'data', 'polychat.db');
 const UPLOAD_DIR = process.env.UPLOAD_DIR || join(dirname(DB_PATH), 'uploads');
 const AVATAR_DIR = process.env.AVATAR_DIR || join(dirname(DB_PATH), 'avatars');
@@ -458,7 +459,20 @@ function logAudit(adminId, action, targetUserId = null, details = null) {
 }
 
 function getClientIp(req) {
-  return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+  if (TRUST_PROXY) return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+  return req.socket.remoteAddress || 'unknown';
+}
+
+function canAccessAttachment(attachmentId, user) {
+  const attachment = db.prepare('SELECT * FROM attachments WHERE id = ?').get(attachmentId);
+  if (!attachment) return null;
+  if (attachment.user_id === user.id || user.is_admin) return attachment;
+  const linked = db.prepare(`SELECT messages.room_id, messages.dm_id
+    FROM messages WHERE messages.attachment_id = ? LIMIT 1`).get(attachmentId);
+  if (!linked) return null;
+  if (linked.dm_id) return isDmMember(linked.dm_id, user.id) ? attachment : null;
+  if (linked.room_id) return roomForUser(linked.room_id, user.id) ? attachment : null;
+  return null;
 }
 
 function isIpBanned(ip) {
@@ -686,21 +700,18 @@ function createNotification(userId, { type = 'system', title, content, link = nu
 
 function cookie(token, clear = false) {
   const age = clear ? 0 : SESSION_DAYS * 86400;
-  return `polychat_session=${clear ? '' : encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}`;
+  const secure = process.env.NODE_ENV === 'production' || process.env.PUBLIC_URL?.startsWith('https://');
+  return `polychat_session=${clear ? '' : encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`;
 }
 
 async function api(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/health') {
-    const userCount = db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
-    const messageCount = db.prepare('SELECT COUNT(*) AS count FROM messages').get().count;
     const uptimeMs = Date.now() - startTime;
     return json(res, 200, {
       status: 'ok',
       version: '1.0.0',
       uptime_ms: uptimeMs,
-      uptime_human: `${Math.floor(uptimeMs / 86400000)}d ${Math.floor((uptimeMs % 86400000) / 3600000)}h ${Math.floor((uptimeMs % 3600000) / 60000)}m`,
-      database: { path: DB_PATH, users: userCount, messages: messageCount },
-      backup: { enabled: BACKUP_ENABLED, last_backup: lastBackupTime, error: backupError }
+      uptime_human: `${Math.floor(uptimeMs / 86400000)}d ${Math.floor((uptimeMs % 86400000) / 3600000)}h ${Math.floor((uptimeMs % 3600000) / 60000)}m`
     });
   }
 
@@ -1366,8 +1377,8 @@ async function api(req, res, url) {
 
   const fileMatch = url.pathname.match(/^\/api\/files\/(\d+)$/);
   if (fileMatch && req.method === 'GET') {
-    if (!requireUser(req, res)) return;
-    const file = db.prepare('SELECT * FROM attachments WHERE id = ?').get(Number(fileMatch[1]));
+    const viewer = requireUser(req, res); if (!viewer) return;
+    const file = canAccessAttachment(Number(fileMatch[1]), viewer);
     if (!file) return json(res, 404, { error: '文件不存在' });
     try {
       const bytes = readFileSync(join(UPLOAD_DIR, file.stored_name));

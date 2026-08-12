@@ -118,7 +118,7 @@ class ApiClient @Inject constructor(
     }
 
     companion object {
-        const val DEFAULT_SERVER_URL = "http://68.64.177.154:3000"
+ const val DEFAULT_SERVER_URL = "https://chat.zhezhe.online"
     }
 }
 

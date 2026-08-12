@@ -143,7 +143,7 @@ fun ProfileScreen(
             title = { Text("服务器地址") },
             text = {
                 Column {
-                    Text("默认 http://68.64.177.154:3000", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+ Text("默认 https://chat.zhezhe.online", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = url,
