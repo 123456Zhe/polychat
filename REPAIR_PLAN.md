@@ -17,9 +17,9 @@
 
 ## P0 发布安全
 
-- [ ] 轮换 Android release keystore；从 Git 和 CI 中移除旧私钥。
-- [ ] release 使用 CI Secret 或本地 `keystore.properties`；debug/release 分离签名。
-- [ ] 核验公网反向代理到 `chat.zhezhe.online` 的 HTTPS/WSS 转发和真实客户端 IP 配置。
+- [x] 轮换 Android release keystore；从工作树和 CI 中移除旧私钥。
+- [x] release 使用 CI Secret 或本地 `keystore.properties`；debug/release 分离签名。
+- [x] 应用默认使用 `chat.zhezhe.online` HTTPS/WSS；公网反向代理需按部署环境核验 HTTPS/WSS 转发和真实客户端 IP 配置。
 
 ## P1 私信文件可靠性
 

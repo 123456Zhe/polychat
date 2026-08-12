@@ -11,15 +11,17 @@ android {
     namespace = "com.polychat.app"
     compileSdk = 36
 
-    // Single committed signing key for BOTH debug and release. This makes every
-    // APK (local debug, CI release, Android Studio) share the same signature so
-    // new builds can be installed over previous ones. See android-app/polychat.keystore.
+    val signingProperties = java.util.Properties().apply {
+        val file = rootProject.file("keystore.properties")
+        if (file.exists()) file.inputStream().use(::load)
+    }
     signingConfigs {
-        create("polychat") {
-            storeFile = file("../polychat.keystore")
-            storePassword = "polychat-app-keystore"
-            keyAlias = "polychat"
-            keyPassword = "polychat-app-keystore"
+        create("polychatRelease") {
+            val path = signingProperties.getProperty("storeFile")
+            if (path != null) storeFile = rootProject.file(path)
+            storePassword = signingProperties.getProperty("storePassword")
+            keyAlias = signingProperties.getProperty("keyAlias")
+            keyPassword = signingProperties.getProperty("keyPassword")
         }
     }
 
@@ -36,11 +38,11 @@ android {
 
     buildTypes {
         debug {
-            signingConfig = signingConfigs.getByName("polychat")
+            // Use the standard local debug key; it is never used for releases.
         }
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("polychat")
+            signingConfig = signingConfigs.getByName("polychatRelease")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }

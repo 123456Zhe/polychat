@@ -46,7 +46,7 @@ CI：推送到 GitHub main 分支可手动触发 Release 构建（`.github/workf
 
 ## 签名与覆盖安装
 
-- debug 与 release 共用仓库内提交的 `polychat.keystore`（见 `app/build.gradle.kts`），因此本机构建、Android Studio、CI Release 的 APK 签名完全一致，新版本可直接覆盖安装旧版本。
+- release 签名密钥不提交到仓库。复制 `keystore.properties.example` 为 `keystore.properties` 并填写本地密钥；CI 使用 `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD` Secrets。debug 使用 Android 默认 debug key。
 - **注意**：签名密钥与密码是公开的，仅适合自托管项目；若将来要上架应用商店，请换成私有密钥。
 - **升级说明**：如果设备上已安装旧签名（本地 debug 或 CI 密钥）的版本，首次切换到本签名需**卸载重装一次**；之后所有构建均可互相覆盖安装。
 - `versionCode` 只增不减（当前 2）。CI 不再用时间戳生成 versionCode，避免「版本号降低导致无法覆盖」。
@@ -55,7 +55,7 @@ CI：推送到 GitHub main 分支可手动触发 Release 构建（`.github/workf
 ## 服务器地址
 
 默认连接 `https://chat.zhezhe.online`。安装后可在「我的 → 服务器地址」中修改。
-因 Android 9+ 默认禁止明文 HTTP，`network_security_config.xml` 已放行明文流量（生产建议换成 HTTPS）。
+release 默认只允许 HTTPS；公网服务地址为 `https://chat.zhezhe.online`。局域网 HTTP 请仅在 debug 环境显式配置。
 
 ## 与 Web 端的关系
 
