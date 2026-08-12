@@ -1,37 +1,49 @@
 # PolyChat 修复计划
 
-本文件用于跨 agent 协作，按优先级记录待办、实施边界和验证要求。
+本文件供主 agent 和其他 agent 协作使用。已完成项目保留记录，未完成项目按优先级排列。
 
-## P0 安全与发布阻断
+## 已完成
 
-- [ ] 移除并轮换 Android release keystore；密码改为 CI secret/本地配置，debug/release 分离。
-- [ ] 修复 `/api/files/:id` 附件访问控制：仅上传者、可访问房间成员或 DM 成员可下载。
-- [ ] Android 默认服务器改为 `https://chat.zhezhe.online`；生产构建禁止任意明文 HTTP。
-- [ ] 仅在配置了可信反向代理时解析 `X-Forwarded-For`，避免 IP 限速/封禁绕过。
+- [x] `/api/files/:id` 附件访问控制：上传者、管理员、可访问房间成员或 DM 成员可下载。
+- [x] Android 默认服务器改为 `https://chat.zhezhe.online`。
+- [x] Android 默认禁止明文 HTTP。
+- [x] 仅在 `TRUST_PROXY=true` 时解析 `X-Forwarded-For`。
+- [x] 公共 `/api/health` 移除数据库路径、用户数、消息数和备份错误。
+- [x] HTTPS session cookie 增加 `Secure`。
+- [x] 私信服务器分片上传显示文件名、上传方式、百分比和完成状态。
+- [x] Android 上传使用服务端返回的 `chunk_size`，默认仍为 1 MiB。
+
+相关提交：`292b0b9`、`26d4a1c`。
+
+## P0 发布安全
+
+- [ ] 轮换 Android release keystore；从 Git 和 CI 中移除旧私钥。
+- [ ] release 使用 CI Secret 或本地 `keystore.properties`；debug/release 分离签名。
+- [ ] 核验公网反向代理到 `chat.zhezhe.online` 的 HTTPS/WSS 转发和真实客户端 IP 配置。
 
 ## P1 私信文件可靠性
 
-- [ ] 保留 1 MiB 分片大小；Android 使用服务端返回的 `chunk_size`。
-- [ ] P2P 失败回退分片时显示文件名、上传方式、进度、完成/失败状态。
-- [ ] 多文件分别显示状态；失败时保留可重试的文件和正文。
-- [ ] 核验 `chat.zhezhe.online` 反向代理允许 Base64 JSON 分片请求（至少 2 MiB）。
+- [ ] 多文件分别显示上传状态和错误；失败时保留可重试文件、正文和回复目标。
+- [ ] P2P 失败回退分片时明确提示原因，不静默切换。
+- [ ] 核验代理允许 Base64 JSON 分片请求，`client_max_body_size` 至少设置为 2 MiB。
+- [ ] 增加 20 MB、100 MB、代理 413、断点续传和取消上传测试。
 
-## P1 信息泄露
+## P1 信息泄露与数据生命周期
 
-- [ ] 公共健康检查移除数据库绝对路径、统计和备份错误，详细信息移到管理员接口。
-- [ ] 公共文件 URL 改为短期签名或受保护下载（需兼容 OneBot）。
-- [ ] HTTPS session cookie 增加 `Secure`。
+- [ ] 将 OneBot 公共文件 URL 改为短期签名 URL 或受保护下载，并保持机器人兼容。
+- [ ] 定期清理过期 session、登录/注册尝试、上传 session 和孤儿 `.part` 文件。
+- [ ] 增加附件权限矩阵测试：公共房间、私有房间、DM、第三方用户、撤回消息。
 
-## P2 质量与性能
+## P2 性能与维护
 
-- [ ] 补附件权限、P2P 回退、上传失败恢复和代理 413 测试。
-- [ ] 定期清理过期 session、登录记录、上传 session 和孤儿 `.part` 文件。
-- [ ] Web 动态加载 KaTeX/P2P/管理面板；Android release 启用 R8。
-- [ ] 逐步拆分 `server.mjs` 的领域路由。
+- [ ] Web 动态加载 KaTeX、P2P 和管理面板，降低约 633 KB 首屏 JS。
+- [ ] Android release 启用 R8，补充 Hilt/Retrofit/kotlinx serialization 规则验证。
+- [ ] 逐步拆分 `server.mjs` 的认证、上传、房间、DM 和管理路由。
+- [ ] 补 P2P 接受/拒绝/超时/ICE 失败及回退路径的自动化测试。
 
-## 当前实施顺序
+## 验证要求
 
-1. P0 服务端权限/IP/健康检查与 Android HTTPS 默认值。
-2. P1 私信分片上传可视化与 Android chunk 协商。
-3. 测试、构建和线上反向代理配置核验。
-
+- 服务端：`npm test`。
+- Web：`npm run web:build`。
+- 语法：`node --check server.mjs`、`git diff --check`。
+- Android：在具备 Android SDK 的环境执行 `./gradlew assembleDebug`/release 构建。
