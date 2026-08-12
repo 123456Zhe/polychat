@@ -622,14 +622,14 @@ function removeP2pProgress(transferId) { const copy = { ...p2pProgress.value }; 
 function sendP2pSignal(transferId, toUserId, data) { sendSocket({ type: 'p2p_signal', transfer_id: transferId, to_user_id: toUserId, data }); }
 function p2pStatusText(p) {
   if (p.status === 'waiting') return p.direction === 'send' ? '等待对方接受…' : '等待连接…';
-  if (p.status === 'connecting') return '正在打洞连接…';
+if (p.status === 'uploading') return `服务器分片上传 ${Math.round((p.ratio || 0) * 100)}%`; if (p.status === 'uploaded') return '服务器上传完成'; if (p.status === 'connecting') return '正在打洞连接…';
   if (p.status === 'transferring') return `传输中 ${Math.round(p.ratio * 100)}%`;
   if (p.status === 'received') return '已接收并保存到本机';
   if (p.status === 'sent') return '直传完成';
   if (p.status === 'failed') return `直传失败${p.error ? `：${p.error}` : ''}`;
   return p.status;
 }
-async function uploadFileChunked(file) {
+async function uploadFileChunked(file, progressId) { const id = progressId || `upload-${Date.now()}-${Math.random()}`; setP2pProgress(id, { name: file.name, size: file.size, direction: 'send', ratio: 0, status: 'uploading' });
   const init = await api('/api/uploads', { method: 'POST', body: JSON.stringify({ name: file.name, type: file.type || 'application/octet-stream', size: file.size }) });
   const upload = init.upload;
   let offset = 0;
@@ -638,7 +638,8 @@ async function uploadFileChunked(file) {
     const data = await fileData(part);
     const result = await api(`/api/uploads/${upload.id}/chunks`, { method: 'PUT', body: JSON.stringify({ offset, data }) });
     offset += part.size;
-    if (result.completed) return result;
+    setP2pProgress(id, { ratio: offset / file.size, status: 'uploading' });
+    if (result.completed) { setP2pProgress(id, { ratio: 1, status: 'uploaded' }); setTimeout(() => removeP2pProgress(id), 2500); return result; }
   }
   throw new Error('文件上传失败');
 }
