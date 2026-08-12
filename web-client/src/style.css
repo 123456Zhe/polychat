@@ -139,6 +139,14 @@ button { cursor: pointer; }
 .announcement-bar-actions { margin-left: auto; display: flex; gap: 6px; }
 .announcement-bar-actions button { padding: 2px 7px; border: 1px solid #d97706; border-radius: 5px; color: #92400e; font-size: 10px; background: #fffbeb; }
 .announcement-bar-content { padding: 0 14px 10px; color: #451a03; font-size: 13px; line-height: 1.6; background: linear-gradient(135deg, #fef3c7, #fffbeb); }
+.global-announcement-bar { display: flex; align-items: flex-start; gap: 10px; margin: 0 clamp(18px, 4vw, 58px); padding: 10px 14px; border-bottom: 1px solid #c7d2fe; color: #3730a3; font-size: 13px; line-height: 1.6; background: linear-gradient(135deg, #eef2ff, #faf5ff); }
+.global-announcement-body { flex: 1; min-width: 0; }
+.global-announcement-meta { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.global-announcement-meta b { color: #4338ca; }
+.global-announcement-meta small { color: #6d6a9e; }
+.global-announcement-body .markdown { margin-top: 4px; color: #3730a3; font-size: 13px; }
+.global-announcement-close { margin-left: auto; padding: 2px 8px; border: 0; border-radius: 6px; color: #8b94a2; font-size: 14px; cursor: pointer; background: transparent; }
+.global-announcement-close:hover { color: #4338ca; background: rgba(99, 102, 241, .12); }
 .pinned-bar { margin: 0 clamp(18px, 4vw, 58px); }
 .pinned-bar-header:hover { background: var(--warm-200); }
 .pinned-icon { font-size: 14px; }
@@ -355,6 +363,12 @@ button { cursor: pointer; }
 
 /* ============ 功能指南帮助面板 ============ */
 .help-modal { width: min(880px, 100%); }
+.md-help { width: min(680px, 100%); }
+.md-help table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.md-help td { padding: 7px 10px; border-bottom: 1px solid var(--warm-200); vertical-align: top; }
+.md-help td:first-child { width: 38%; white-space: nowrap; }
+.md-help code { padding: 2px 6px; border-radius: 5px; color: #7c3aed; font-size: 12px; background: #f5f3ff; }
+.md-help tr:hover td { background: var(--warm-100); }
 .help-modal > .hint { margin: -3px 0 14px; color: #7b8492; font-size: 12px; letter-spacing: 0; }
 .help-tour-entry { margin-bottom: 4px; }
 .help-tour-entry .primary { border: 0; border-radius: 9px; color: #fff; padding: 9px 15px; background: linear-gradient(135deg, var(--blue-700), var(--violet-700)); box-shadow: 0 6px 16px rgba(73,83,119,.18); }

@@ -75,6 +75,14 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 
 ## Session work log
 
+### This session (借鉴 LanTalk：房主踢人通知 / 全局公告 / Markdown 速查 / 智能检测)
+- **房主踢人增强**（服务端 `server.mjs`）：`DELETE /api/rooms/:id/members/:userId` 移除成员后给被踢者推送 `room_kicked` WS 事件（`room_id` + `room_name`）+ 创建「你已被移出房间」通知；Web 端 `handleSocketEvent` 收到 `room_kicked` 后自动退出该房间并 toast 提示（`backToMobileHome()`）。
+- **管理员全局公告**：新增 `GET/POST/DELETE /api/admin/announcement`（GET 登录用户可读，POST/DELETE 需 `requireAdmin`），公告持久化到 `app_settings`（key=`global_announcement`，重启不丢），发布/清除均 `logAudit` + `broadcast({type:'announcement', global:true, ...})`（不带 roomId → 全体在线）。Web 端：桌面/移动各 3 处顶部横幅（🔊 系统公告，支持 Markdown + × 本地关闭），管理面板新增第 4 个「公告」tab（textarea 发布 / 预览 / 清除）。
+- **Markdown 语法速查**：Web composer 双端（桌面+移动、房间+私信共 4 处）新增「MD」按钮 → `.modal` 速查表（14 行：标题/粗体/斜体/删除线/行内代码/代码块/链接/图片/引用/列表/表格/`$`/`$$`/@提及）；Android `ChatScreen` composer 新增 HelpOutline 按钮 → `ModalBottomSheet` 速查表（`mdCheatRows`）。
+- **Markdown 智能检测（Android）**：`MarkdownWebView.kt` 新增 `containsMarkdown()`（行内 `**`/`*`/`~~`/`` ` ``/`[]()`/`[at:]`/`$`/表格 + 块级复用 `MARKDOWN_BLOCK`），`MessageBubble` 纯文本消息直接渲染 `Text`，跳过昂贵的每消息 WebView 管线（mentions 非空仍走 WebView）。
+- 顺带修复：Web `time()` 兼容 ISO 时间戳（此前全局公告显示 "Invalid Date"）。
+- 验证：新增 2 组测试（踢人 `room_kicked`+通知 / 全局公告权限+广播+持久化+清除），21/21 Node 测试通过；`web:build` 干净；桌面+移动（390×844）浏览器实测：MD 速查弹窗 14 行、公告横幅发布/清除/实时跨客户端推送、踢人 toast 与自动退出、通知中心未读。
+
 ### This session (功能提示与可视化引导)
 - 为 Web 端添加全面功能提示与可视化引导（`web-client/src/App.vue` + `style.css`，无新增依赖）：
   - **首次使用引导 Tour**：登录后自动弹出可跳过的 spotlight 分步引导（localStorage `polychat.tour-done` 持久化，完成后不再自动弹出），桌面 7 步高亮「新建聊天室/房间与私信列表/顶栏/输入框/消息操作/帮助按钮」，移动端 7 步（启动时自动回到首页）高亮底部 Tab 与 ＋ 按钮。

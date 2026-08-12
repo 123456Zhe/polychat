@@ -796,3 +796,95 @@ test('P2P 直传：取消、拒绝与活跃数量上限', async () => {
   const over = await api('/api/p2p/transfers', { method: 'POST', headers: aliceAuth, body: JSON.stringify({ conversation_id: convId, name: 'over.bin', size: 1024, type: 'application/octet-stream' }) });
   assert.equal(over.response.status, 429);
 });
+
+test('房主移除成员：被踢者收到 room_kicked 事件与通知', async () => {
+  const owner = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'kick_owner', password: 'kick-password-1' }) });
+  const guest = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'kick_guest', password: 'kick-password-2' }) });
+  const ownerAuth = { authorization: `Bearer ${owner.body.token}` }, guestAuth = { authorization: `Bearer ${guest.body.token}` };
+  const created = await api('/api/rooms', { method: 'POST', headers: ownerAuth, body: JSON.stringify({ name: '踢人测试房间', is_private: true }) });
+  const roomId = created.body.room.id;
+  await api(`/api/rooms/${roomId}/members`, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ username: 'kick_guest' }) });
+  assert.equal((await api('/api/rooms', { headers: guestAuth })).body.rooms.some(room => room.id === roomId), true);
+
+  const guestSocket = new WebSocket(`${base.replace('http:', 'ws:')}/ws?token=${encodeURIComponent(guest.body.token)}`);
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('被踢者 WebSocket 连接超时')), 2000);
+    guestSocket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
+    guestSocket.addEventListener('error', reject, { once: true });
+  });
+  const nextGuestEvent = type => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`未收到 ${type} 事件`)), 2000);
+    const listener = event => {
+      const payload = JSON.parse(event.data);
+      if (payload.type !== type) return;
+      clearTimeout(timer); guestSocket.removeEventListener('message', listener); resolve(payload);
+    };
+    guestSocket.addEventListener('message', listener);
+  });
+  const kicked = nextGuestEvent('room_kicked');
+  const notified = nextGuestEvent('notification');
+  const removed = await api(`/api/rooms/${roomId}/members/${guest.body.user.id}`, { method: 'DELETE', headers: ownerAuth });
+  assert.equal(removed.response.status, 200);
+  const kickedPayload = await kicked;
+  assert.equal(kickedPayload.room_id, roomId);
+  assert.equal(kickedPayload.room_name, '踢人测试房间');
+  const notifPayload = await notified;
+  assert.equal(notifPayload.notification.type, 'room');
+  assert.equal(notifPayload.notification.title, '你已被移出房间');
+  // 被踢后不再看到私有房间
+  assert.equal((await api('/api/rooms', { headers: guestAuth })).body.rooms.some(room => room.id === roomId), false);
+  // 陌生人对该房间没有管理权限
+  const stranger = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'kick_stranger', password: 'kick-password-3' }) });
+  const denied = await api(`/api/rooms/${roomId}/members/${stranger.body.user.id}`, { method: 'DELETE', headers: { authorization: `Bearer ${stranger.body.token}` } });
+  assert.equal(denied.response.status, 403);
+  guestSocket.close();
+});
+
+test('管理员全局公告：广播全体在线、普通用户无权限、可查询与清除', async () => {
+  const adminLogin = await api('/api/login', { method: 'POST', body: JSON.stringify({ username: 'alice', password: 'correct-horse' }) });
+  const adminAuth = { authorization: `Bearer ${adminLogin.body.token}` };
+  const member = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'announce_member', password: 'announce-password' }) });
+  const memberAuth = { authorization: `Bearer ${member.body.token}` };
+
+  // 普通用户不能发布/清除
+  assert.equal((await api('/api/admin/announcement', { method: 'POST', headers: memberAuth, body: JSON.stringify({ content: 'x' }) })).response.status, 403);
+  assert.equal((await api('/api/admin/announcement', { method: 'DELETE', headers: memberAuth })).response.status, 403);
+
+  const memberSocket = new WebSocket(`${base.replace('http:', 'ws:')}/ws?token=${encodeURIComponent(member.body.token)}`);
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('成员 WebSocket 连接超时')), 2000);
+    memberSocket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
+    memberSocket.addEventListener('error', reject, { once: true });
+  });
+  const nextAnnouncement = () => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('未收到全局公告事件')), 2000);
+    const listener = event => {
+      const payload = JSON.parse(event.data);
+      if (payload.type !== 'announcement' || !payload.global) return;
+      clearTimeout(timer); memberSocket.removeEventListener('message', listener); resolve(payload);
+    };
+    memberSocket.addEventListener('message', listener);
+  });
+
+  // 发布 → 在线成员收到全局公告事件
+  const pushed = nextAnnouncement();
+  const published = await api('/api/admin/announcement', { method: 'POST', headers: adminAuth, body: JSON.stringify({ content: '服务器将于今晚维护' }) });
+  assert.equal(published.response.status, 200);
+  assert.equal(published.body.announcement.content, '服务器将于今晚维护');
+  const pushedPayload = await pushed;
+  assert.equal(pushedPayload.content, '服务器将于今晚维护');
+  assert.equal(pushedPayload.admin_name, 'alice');
+
+  // 所有登录用户可查询
+  const read = await api('/api/admin/announcement', { headers: memberAuth });
+  assert.equal(read.body.announcement.content, '服务器将于今晚维护');
+  // 空内容拒绝
+  assert.equal((await api('/api/admin/announcement', { method: 'POST', headers: adminAuth, body: JSON.stringify({ content: '  ' }) })).response.status, 400);
+
+  // 清除 → 收到清除事件，查询为空
+  const cleared = nextAnnouncement();
+  assert.equal((await api('/api/admin/announcement', { method: 'DELETE', headers: adminAuth })).response.status, 200);
+  assert.equal((await cleared).content, null);
+  assert.equal((await api('/api/admin/announcement', { headers: memberAuth })).body.announcement, null);
+  memberSocket.close();
+});

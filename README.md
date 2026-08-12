@@ -12,6 +12,8 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 - 多聊天室，可由任意已登录用户创建
 - Web 端支持标题、列表、引用、代码块、链接、图片、粗体、斜体、删除线等 Markdown
 - Web 端通过 KaTeX 支持行内 `$...$` 和块级 `$$...$$` LaTeX；CDN 不可用时显示原始公式
+- 输入框旁提供 Markdown/LaTeX 语法速查弹窗（Web 与 Android 均可一键查看）
+- Android 端纯文本消息跳过 WebView 渲染管线（`containsMarkdown` 智能检测），长消息列表滚动更流畅
 - WebSocket 实时推送：房间消息、私信、好友事件（请求/接受/删除）、输入状态和在线状态；所有客户端保留 HTTP 轮询作为降级方案
 
 ### 好友与私信
@@ -32,6 +34,8 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 - 账户支持持久化头像；Web 提供账户设置与预览，GUI/TUI 也可上传头像
 - Web 端支持跨房间未读角标、页面标题未读数和可选的浏览器桌面通知
 - 管理员可封禁/禁言用户（支持设置时长）
+- 房主/房间管理员可将成员移出房间，被移出者实时收到 `room_kicked` 事件、自动退出房间并收到通知
+- 管理员可发布**全局公告**：一键广播给所有在线用户并显示在顶部横幅（支持 Markdown），公告持久化保存、重启不丢，可在管理面板「公告」页清除
 - 登录限速保护（5 次/15 分钟）
 - 审计日志记录管理员操作
 - 管理员可在机器人面板审批申请、复制 OneBot WebSocket 配置和撤销 Bot Token
@@ -363,5 +367,6 @@ curl -I http://127.0.0.1:3000/
 | PUT | `/api/admin/users/:id/mute` | 禁言用户 |
 | PUT | `/api/admin/users/:id/unmute` | 解除禁言 |
 | GET | `/api/admin/audit-logs` | 查看审计日志 |
+| GET/POST/DELETE | `/api/admin/announcement` | 全局公告：查询（登录用户）/发布/清除（管理员） |
 
 拉取消息可加 `?after=<消息ID>&limit=100` 实现增量更新。私信会话列表返回未读数，拉取消息后可调用 `/api/dm/conversations/:id/read` 标记已读。WebSocket 地址为 `ws://host:port/ws?token=<token>`，连接后自动接收房间消息、私信和好友事件的实时推送。

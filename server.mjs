@@ -832,6 +832,32 @@ async function api(req, res, url) {
     return json(res, 200, { stats, users });
   }
 
+  // 全局公告：管理员向全体在线用户广播（持久化于 app_settings，重启不丢）
+  const adminAnnouncementMatch = url.pathname === '/api/admin/announcement';
+  if (adminAnnouncementMatch && req.method === 'GET') {
+    const user = requireUser(req, res); if (!user) return;
+    const row = db.prepare("SELECT value FROM app_settings WHERE key = 'global_announcement'").get();
+    return json(res, 200, { announcement: row ? JSON.parse(row.value) : null });
+  }
+  if (adminAnnouncementMatch && req.method === 'POST') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const { content } = await readBody(req);
+    const text = String(content || '').trim();
+    if (!text) return json(res, 400, { error: '公告内容不能为空' });
+    const announcement = { content: text, admin_name: admin.username, created_at: new Date().toISOString() };
+    db.prepare("INSERT OR REPLACE INTO app_settings(key, value) VALUES ('global_announcement', ?)").run(JSON.stringify(announcement));
+    logAudit(admin.id, 'announcement', null, '发布全局公告');
+    broadcast({ type: 'announcement', global: true, ...announcement });
+    return json(res, 200, { announcement });
+  }
+  if (adminAnnouncementMatch && req.method === 'DELETE') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    db.prepare("DELETE FROM app_settings WHERE key = 'global_announcement'").run();
+    logAudit(admin.id, 'announcement_clear', null, '清除全局公告');
+    broadcast({ type: 'announcement', global: true, content: null });
+    return json(res, 200, { ok: true });
+  }
+
   const adminUserMatch = url.pathname.match(/^\/api\/admin\/users\/(\d+)\/admin$/);
   if (adminUserMatch && req.method === 'PUT') {
     const admin = requireAdmin(req, res); if (!admin) return;
@@ -1149,7 +1175,11 @@ async function api(req, res, url) {
     const context = requireRoomManager(req, res, Number(roomMemberDelete[1])); if (!context) return;
     const targetId = Number(roomMemberDelete[2]);
     if (targetId === context.room.created_by) return json(res, 400, { error: '不能移除房主' });
-    db.prepare('DELETE FROM room_members WHERE room_id = ? AND user_id = ?').run(context.room.id, targetId);
+    const result = db.prepare('DELETE FROM room_members WHERE room_id = ? AND user_id = ?').run(context.room.id, targetId);
+    if (Number(result.changes) > 0) {
+      createNotification(targetId, { type: 'room', title: '你已被移出房间', content: context.room.name });
+      sendToUser(targetId, { type: 'room_kicked', room_id: context.room.id, room_name: context.room.name });
+    }
     broadcast({ type: 'rooms' });
     return json(res, 200, { ok: true });
   }

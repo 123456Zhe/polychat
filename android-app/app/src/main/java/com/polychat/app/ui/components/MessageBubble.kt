@@ -98,13 +98,23 @@ fun MessageBubble(
                     if (message.isRetracted) {
                         Text("此消息已撤回", style = MaterialTheme.typography.bodySmall, color = textColor.copy(alpha = 0.6f))
                     } else {
-                        // Text content (Markdown + LaTeX via WebView).
+                        // Text content. Pure text skips the (expensive) per-message
+                        // WebView pipeline; mentions always need the renderer to turn
+                        // [at:123] into a highlighted @name.
                         if (!message.content.isNullOrBlank()) {
-                            MarkdownWebView(
-                                content = message.content,
-                                mentions = message.mentions,
-                                bubbleColor = bubbleColor
-                            )
+                            if (message.mentions.isEmpty() && !containsMarkdown(message.content)) {
+                                Text(
+                                    text = message.content,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = textColor
+                                )
+                            } else {
+                                MarkdownWebView(
+                                    content = message.content,
+                                    mentions = message.mentions,
+                                    bubbleColor = bubbleColor
+                                )
+                            }
                         }
                         // Attachment.
                         message.attachment_name?.let { name ->

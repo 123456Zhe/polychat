@@ -30,6 +30,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.CircularProgressIndicator
@@ -57,6 +58,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.TextFieldValue
@@ -102,6 +104,7 @@ fun ChatScreen(
 
     var draft by remember { mutableStateOf(TextFieldValue("")) }
     var menuMessage by remember { mutableStateOf<Message?>(null) }
+    var mdHelpOpen by remember { mutableStateOf(false) }
     var previewUrl by remember { mutableStateOf<String?>(null) }
     var previewMessage by remember { mutableStateOf<Message?>(null) }
     val listState = rememberLazyListState()
@@ -251,6 +254,9 @@ fun ChatScreen(
                 IconButton(onClick = { filePicker.launch(arrayOf("*/*")) }, enabled = !uploading) {
                     Icon(Icons.Filled.AttachFile, contentDescription = "发送文件")
                 }
+                IconButton(onClick = { mdHelpOpen = true }, enabled = !uploading) {
+                    Icon(Icons.Filled.HelpOutline, contentDescription = "Markdown 语法速查")
+                }
                 OutlinedTextField(
                     value = draft,
                     onValueChange = { draft = it },
@@ -309,6 +315,42 @@ fun ChatScreen(
                     SheetAction("撤回", danger = true) {
                         viewModel.retract(msg)
                         menuMessage = null
+                    }
+                }
+            }
+        }
+    }
+
+    // Markdown / LaTeX quick reference sheet.
+    if (mdHelpOpen) {
+        androidx.compose.material3.ModalBottomSheet(
+            onDismissRequest = { mdHelpOpen = false }
+        ) {
+            Column(
+                Modifier
+                    .padding(horizontal = 20.dp, vertical = 8.dp)
+                    .padding(bottom = 28.dp)
+            ) {
+                Text("Markdown 语法速查", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(2.dp))
+                mdCheatRows.forEach { (syntax, desc) ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Text(
+                                syntax,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Text(desc, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
@@ -407,6 +449,24 @@ private fun insertMention(draft: TextFieldValue, start: Int, query: String, user
         selection = TextRange(before.length + token.length)
     )
 }
+
+/** Markdown / LaTeX quick reference shown in the composer help sheet. */
+private val mdCheatRows = listOf(
+    "# 标题" to "一级到六级标题（# ～ ######）",
+    "**加粗**" to "加粗",
+    "*斜体*" to "斜体",
+    "~~删除线~~" to "删除线",
+    "`行内代码`" to "行内代码",
+    "```js 代码块```" to "多行代码块（可指定语言）",
+    "[文字](https://…)" to "链接",
+    "![说明](图片URL)" to "图片",
+    "> 引用" to "引用",
+    "- 项目 / 1. 第一项" to "无序 / 有序列表",
+    "| 列1 | 列2 |" to "表格（第二行写 | --- |）",
+    "\$E=mc^2\$" to "行内 LaTeX 公式",
+    "\$\$…\$\$" to "块级 LaTeX 公式",
+    "@用户名" to "提及用户（会高亮提醒）"
+)
 
 @Composable
 private fun SheetAction(text: String, danger: Boolean = false, onClick: () -> Unit) {

@@ -137,6 +137,27 @@ fun MarkdownWebView(
 
 private val MARKDOWN_IMAGE = Regex("""!\[[^\]]*\]\([^)]*\)""")
 private val MARKDOWN_BLOCK = Regex("""(?m)^(#{1,6} |```|[-*>] |\d+\. )""")
+private val MARKDOWN_INLINE = listOf(
+    Regex("""\*\*[^\n]+\*\*"""),        // **bold**
+    Regex("""\*[^*\n]+\*"""),           // *italic*
+    Regex("""~~[^\n]+~~"""),            // ~~strikethrough~~
+    Regex("""`[^`\n]+`"""),             // `inline code`
+    Regex("""\[[^\]]+\]\([^)]+\)"""),   // [link](url)
+    Regex("""\[at:\d+\]"""),            // @mention placeholder [at:123]
+    Regex("""\$[^$\n]+\$"""),           // inline math $...$
+    Regex("""^\s*\|.*\|\s*$""", RegexOption.MULTILINE) // table row
+)
+
+/**
+ * Detects whether a message contains Markdown / LaTeX syntax that needs the
+ * WebView renderer. Pure-text messages skip the (expensive) per-message
+ * WebView pipeline entirely and are drawn with a plain Text instead.
+ */
+fun containsMarkdown(text: String): Boolean {
+    if (MARKDOWN_IMAGE.containsMatchIn(text)) return true
+    if (MARKDOWN_BLOCK.containsMatchIn(text)) return true
+    return MARKDOWN_INLINE.any { it.containsMatchIn(text) }
+}
 
 /**
  * Rough static height estimate (dp) for a rendered markdown message:
