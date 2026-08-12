@@ -1,3 +1,10 @@
+import java.util.Properties
+
+val signingProperties = Properties().apply {
+    val propertiesFile = rootProject.file("keystore.properties")
+    if (propertiesFile.exists()) propertiesFile.inputStream().use { load(it) }
+}
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -11,10 +18,6 @@ android {
     namespace = "com.polychat.app"
     compileSdk = 36
 
-    val signingProperties = java.util.Properties().apply {
-        val file = rootProject.file("keystore.properties")
-        if (file.exists()) file.inputStream().use(::load)
-    }
     signingConfigs {
         create("polychatRelease") {
             val path = signingProperties.getProperty("storeFile")
