@@ -1076,26 +1076,38 @@ test('房间设置：owner 可设四开关+密码，member 403，密码哈希不
   assert.equal(room.response.status, 201);
   const id = room.body.room.id;
 
-  let bobSocket;
+  let aliceSocket, bobSocket;
   try {
-    // WS 广播：在线用户（含非成员）应收到 room_settings 事件
+    // WS 广播：按房间广播——成员（owner alice）收到 room_settings，非成员 bob 不收到
+    aliceSocket = new WebSocket(`${base.replace('http:', 'ws:')}/ws?token=${encodeURIComponent(alice.body.token)}`);
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('alice WebSocket 连接超时')), 2000);
+      aliceSocket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
+      aliceSocket.addEventListener('error', reject, { once: true });
+    });
     bobSocket = new WebSocket(`${base.replace('http:', 'ws:')}/ws?token=${encodeURIComponent(bob.body.token)}`);
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('bob WebSocket 连接超时')), 2000);
       bobSocket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
       bobSocket.addEventListener('error', reject, { once: true });
     });
-    const nextSettings = () => new Promise((resolve, reject) => {
+
+    const nextSettings = socket => new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('未收到 room_settings 事件')), 2000);
       const listener = event => {
         const payload = JSON.parse(event.data);
         if (payload.type !== 'room_settings' || payload.room_id !== id) return;
-        clearTimeout(timer); bobSocket.removeEventListener('message', listener); resolve(payload);
+        clearTimeout(timer); socket.removeEventListener('message', listener); resolve(payload);
       };
-      bobSocket.addEventListener('message', listener);
+      socket.addEventListener('message', listener);
+    });
+    let bobGotSettings = false;
+    bobSocket.addEventListener('message', event => {
+      const payload = JSON.parse(event.data);
+      if (payload.type === 'room_settings' && payload.room_id === id) bobGotSettings = true;
     });
 
-    const waiting = nextSettings();
+    const waiting = nextSettings(aliceSocket);
     const r = await api(`/api/rooms/${id}/settings`, { method: 'PATCH', headers: authA, body: JSON.stringify({ locked: true, readonly: true, password: 'secret' }) });
     assert.equal(r.response.status, 200);
     assert.equal(r.body.settings.room_id, id);
@@ -1106,6 +1118,10 @@ test('房间设置：owner 可设四开关+密码，member 403，密码哈希不
     assert.equal(settingsEvent.locked, true);
     assert.equal(settingsEvent.has_password, true);
 
+    // 非成员 bob 不应收到按房间广播的 room_settings（已在上面等 alice 收到事件，广播必然已发出）
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(bobGotSettings, false, '非成员不应收到 room_settings 广播');
+
     const row = db.prepare('SELECT password_hash, locked, readonly FROM rooms WHERE id = ?').get(id);
     assert.equal(row.locked, 1);
     assert.equal(row.readonly, 1);
@@ -1114,10 +1130,32 @@ test('房间设置：owner 可设四开关+密码，member 403，密码哈希不
     const denied = await api(`/api/rooms/${id}/settings`, { method: 'PATCH', headers: authB, body: JSON.stringify({ locked: false }) });
     assert.equal(denied.response.status, 403);
   } finally {
+    aliceSocket?.close();
     bobSocket?.close();
   }
 
   const clear = await api(`/api/rooms/${id}/settings`, { method: 'PATCH', headers: authA, body: JSON.stringify({ password: '' }) });
   assert.equal(clear.response.status, 200);
   assert.equal(clear.body.settings.has_password, false);
+});
+
+test('房间设置：公共房仅全局管理员可修改，非管理员 room-admin 403', async () => {
+  const adminLogin = await api('/api/login', { method: 'POST', body: JSON.stringify({ username: 'alice', password: 'correct-horse' }) });
+  const adminAuth = { authorization: `Bearer ${adminLogin.body.token}` };
+  const member = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'pubset_member', password: 'correct-horse' }) });
+  const memberAuth = { authorization: `Bearer ${member.body.token}` };
+  const room = await api('/api/rooms', { method: 'POST', headers: adminAuth, body: JSON.stringify({ name: '公共设置房' }) });
+  assert.equal(room.response.status, 201);
+  const id = room.body.room.id;
+  // 提为公共房 room-admin
+  const added = await api(`/api/rooms/${id}/members`, { method: 'POST', headers: adminAuth, body: JSON.stringify({ username: 'pubset_member', role: 'admin' }) });
+  assert.equal(added.response.status, 200);
+  // 非全局管理员的 room-admin 不能改公共房设置
+  const denied = await api(`/api/rooms/${id}/settings`, { method: 'PATCH', headers: memberAuth, body: JSON.stringify({ locked: true }) });
+  assert.equal(denied.response.status, 403);
+  assert.equal(denied.body.error, '只有管理员可以修改公共聊天室设置');
+  // 全局管理员可以修改
+  const ok = await api(`/api/rooms/${id}/settings`, { method: 'PATCH', headers: adminAuth, body: JSON.stringify({ locked: true }) });
+  assert.equal(ok.response.status, 200);
+  assert.equal(ok.body.settings.locked, true);
 });

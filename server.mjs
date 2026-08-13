@@ -1130,6 +1130,7 @@ async function api(req, res, url) {
   const roomSettingsMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/settings$/);
   if (roomSettingsMatch && req.method === 'PATCH') {
     const context = requireRoomManager(req, res, Number(roomSettingsMatch[1])); if (!context) return;
+    if (!context.room.is_private && !context.user.is_admin) return json(res, 403, { error: '只有管理员可以修改公共聊天室设置' });
     const { locked, hidden, password, readonly } = await readBody(req);
     const room = context.room;
     const next = {
@@ -1140,9 +1141,9 @@ async function api(req, res, url) {
     };
     db.prepare('UPDATE rooms SET locked = ?, hidden = ?, password_hash = ?, readonly = ? WHERE id = ?')
       .run(next.locked, next.hidden, next.password_hash, next.readonly, room.id);
-    logAudit(context.user.id, 'room_settings', room.id);
+    logAudit(context.user.id, 'room_settings', null, '房间 ' + room.id);
     const settings = { room_id: room.id, locked: Boolean(next.locked), hidden: Boolean(next.hidden), readonly: Boolean(next.readonly), has_password: next.password_hash !== null };
-    broadcast({ type: 'room_settings', ...settings });
+    broadcast({ type: 'room_settings', ...settings }, room.id);
     broadcast({ type: 'rooms' });
     return json(res, 200, { settings });
   }
