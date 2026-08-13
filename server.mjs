@@ -245,6 +245,16 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS gallery_images (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    filename TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    stored_name TEXT NOT NULL,
+    storage TEXT NOT NULL DEFAULT 'local' CHECK(storage IN ('local', 'qiniu')),
+    created_at INTEGER NOT NULL
+  );
 `);
 db.exec(`CREATE TABLE IF NOT EXISTS bot_tokens (
   token TEXT PRIMARY KEY,

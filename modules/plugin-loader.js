@@ -29,6 +29,7 @@ import announcementPlugin from '../plugins/polychat-plugin-announcement/index.js
 import webPushPlugin from '../plugins/polychat-plugin-web-push/index.js';
 import p2pPlugin from '../plugins/polychat-plugin-p2p/index.js';
 import onebotPlugin from '../plugins/polychat-plugin-onebot/index.js';
+import galleryPlugin from '../plugins/polychat-plugin-gallery/index.js';
 
 const PLUGIN_PREFIX = 'polychat-plugin-';
 const CONFIG_VERSION = 1;
@@ -42,7 +43,8 @@ const BUILTIN_MODULES = {
   announcement: announcementPlugin,
   'web-push': webPushPlugin,
   p2p: p2pPlugin,
-  onebot: onebotPlugin
+  onebot: onebotPlugin,
+  gallery: galleryPlugin
 };
 const BUILTINS = Object.values(BUILTIN_MODULES);
 
