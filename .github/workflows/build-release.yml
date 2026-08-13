@@ -89,35 +89,41 @@ jobs:
             macOS)   mv dist/polychat-server dist/polychat-server-macos ;;
             *)       mv dist/polychat-server dist/polychat-server-linux ;;
           esac
-      # SEA binary crash isolation (only needed on macOS so far): postject can
-      # silently fail to inject the blob into a *signed* Mach-O (leaving the
-      # fuse byte → SIGSEGV at startup, nodejs/node#63466). Probe compares
-      # file size before/after injection and both signing orders.
+      # SEA binary crash isolation (macOS): probe injection on the runner's
+      # Node vs a fresh Node 26, with an lldb backtrace of the crash and
+      # Mach-O/signature inspection — root-causes the macOS SEA SIGSEGV.
       - name: Diagnose SEA crash on macOS
         if: runner.os == 'macOS'
         shell: bash
         run: |
           NODE_BIN="$(node -p 'process.execPath')"
-          ls -l "$NODE_BIN" | awk '{print "node size:", $5}'
+          echo "=== runner node ==="; "$NODE_BIN" -v
+          echo "=== plain node sanity ==="; "$NODE_BIN" -e 'console.log("plain-node-ok")'
+          echo "=== node signature ==="; codesign -dv "$NODE_BIN" 2>&1 | head -8 || true
           mkdir -p probe && cd probe
           printf 'console.log("probe-bare-ok");\n' > bare.cjs
           ../node_modules/.bin/esbuild bare.cjs --bundle --platform=node --format=cjs --outfile=bare-bundle.cjs
           printf '{"main":"bare-bundle.cjs","output":"bare.blob","disableExperimentalSEAWarning":true}' > sea-config.json
-          node --experimental-sea-config sea-config.json
-          inject() { node -e "require('postject').inject('$1','NODE_SEA_BLOB',require('node:fs').readFileSync('bare.blob'),{sentinelFuse:'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2'}).then(()=>console.log('injected $1'))"; }
-          echo "--- probe A: inject then sign (old order) ---"
-          cp "$NODE_BIN" probe-a
-          inject probe-a
-          ls -l probe-a | awk '{print "probe-a size after inject:", $5}'
-          codesign --sign - probe-a
-          ./probe-a && echo "PROBE A OK" || echo "PROBE A crashed (exit $?)"
-          echo "--- probe B: remove signature, inject, sign (new order) ---"
-          cp "$NODE_BIN" probe-b
-          codesign --remove-signature probe-b
-          inject probe-b
-          ls -l probe-b | awk '{print "probe-b size after inject:", $5}'
-          codesign --sign - probe-b
-          ./probe-b && echo "PROBE B OK" || echo "PROBE B crashed (exit $?)"
+          build_and_run() {
+            local name="$1" nodebin="$2"
+            cp "$nodebin" "probe-$name"
+            codesign --remove-signature "probe-$name" 2>/dev/null || true
+            "$nodebin" --experimental-sea-config sea-config.json
+            cp bare.blob "blob-$name"
+            node -e "require('postject').inject('probe-$name','NODE_SEA_BLOB',require('node:fs').readFileSync('blob-$name'),{sentinelFuse:'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2'}).then(()=>console.log('injected $name'))"
+            ls -l "probe-$name" | awk -v n="$name" '{print "probe-" n " size:", $5}'
+            codesign --sign - "probe-$name"
+            echo "--- run probe-$name ---"
+            ./probe-$name && echo "PROBE $name OK" || echo "PROBE $name crashed (exit $?)"
+          }
+          build_and_run n24 "$NODE_BIN"
+          echo "=== lldb backtrace of n24 crash ==="
+          lldb -b -o "run" -o "bt 20" -- ./probe-n24 2>&1 | grep -vE "^(\(lldb\)|\[.*\]$)" | tail -30 || true
+          echo "=== node 26 probe ==="
+          N26_BIN="$(npx -y node@26 -p 'process.execPath' 2>/dev/null)" || N26_BIN=""
+          if [ -n "$N26_BIN" ]; then echo "node26: $($N26_BIN -v) @ $N26_BIN"; build_and_run n26 "$N26_BIN"; else echo "npx node@26 unavailable"; fi
+          echo "=== injected Mach-O sections (n24) ==="
+          otool -l probe-n24 2>/dev/null | grep -A4 -E "__POSTJECT|LC_CODE_SIGNATURE" | head -20 || true
       - name: Smoke-test the binary before publishing
         shell: bash
         run: |
