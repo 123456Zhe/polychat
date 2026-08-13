@@ -17,6 +17,8 @@ services:
       ONEBOT_BOT_TOKEN: ${ONEBOT_BOT_TOKEN:-}
       ONEBOT_ACCESS_TOKEN: ${ONEBOT_ACCESS_TOKEN:-}
       PUBLIC_URL: ${PUBLIC_URL:-}
+      FILE_URL_SECRET: ${FILE_URL_SECRET:-}
+      FILE_URL_TTL_MS: ${FILE_URL_TTL_MS:-604800000}
     volumes:
       - ./data:/app/data
     healthcheck:
