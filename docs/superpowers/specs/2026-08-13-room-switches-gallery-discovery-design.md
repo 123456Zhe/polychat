@@ -133,7 +133,8 @@ CREATE TABLE IF NOT EXISTS gallery_images (
   filename TEXT NOT NULL,
   mime TEXT NOT NULL,
   size INTEGER NOT NULL,
-  stored_name TEXT NOT NULL,
+  stored_name TEXT NOT NULL,   -- local 模式：本地文件名；qiniu 模式：对象 key
+  storage TEXT NOT NULL DEFAULT 'local' CHECK(storage IN ('local', 'qiniu')),
   created_at INTEGER NOT NULL
 );
 ```
@@ -141,35 +142,63 @@ CREATE TABLE IF NOT EXISTS gallery_images (
 ### 2.2 插件清单（`plugins/polychat-plugin-gallery/`，manifest 模式同 health）
 
 - `name: 'gallery'`，`enabledByDefault: true`
-- `defaultConfig: { quota_mb: 500 }`（环境变量 `GALLERY_QUOTA_MB` 覆盖）
-- 依赖 ctx：`db / json / requireUser / readBody / uploadDir / maxFileSize / publicBaseUrl / fileUrlSecret / fileUrlTtlMs / logAudit`
+- `defaultConfig: { quota_mb: 500, storage: 'local' }`（env 覆盖：`GALLERY_QUOTA_MB`、`GALLERY_STORAGE`）
+- 依赖 ctx：`db / json / requireUser / readBody / uploadDir / maxFileSize / publicBaseUrl / logAudit`；qiniu 模式另读 `env`
 
-### 2.3 路由（`registry.registerApiRoute`）
+### 2.3 存储后端（新增：本地 vs 七牛 Kodo）
+
+`GALLERY_STORAGE` 决定存储后端，两套后端共用同一套路由与配额逻辑：
+
+| 模式 | 说明 |
+|---|---|
+| `local`（默认） | 文件落盘 `data/gallery/`（沿用原设计），外链走核心签名 URL |
+| `qiniu` | 服务端接收图片 → 生成 upload token → 上传至七牛 Kodo → DB 记对象 key；下载走 `QINIU_DOMAIN` 公开 URL |
+
+**qiniu 模式配置（环境变量，前缀规范同 `BACKUP_*`/`VAPID_*`）：**
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| `GALLERY_STORAGE` | 否 | `local`（默认）或 `qiniu` |
+| `QINIU_ACCESS_KEY` / `QINIU_SECRET_KEY` | qiniu 时必填 | 七牛密钥（控制台 → 密钥管理） |
+| `QINIU_BUCKET` | qiniu 时必填 | 空间名（图床用**公开读**空间） |
+| `QINIU_ZONE` | qiniu 时必填 | 地域：`z0` 华东 / `z1` 华北 / `z2` 华南 / `na0` 北美 / `as0` 东南亚 |
+| `QINIU_DOMAIN` | qiniu 时必填 | 下载域名：测试域名 `<bucket>.cdn-<zone>.qiniucs.com` 或自定义 CDN 域名（推荐——测试域名有有效期与防盗链限制） |
+| `QINIU_PRIVATE` | 否 | `false`（默认，公开空间）；`true`（私有空间时外链改用七牛签名 URL，服务端生成带 deadline 的下载链接） |
+
+对象 key 命名：`gallery/<userId>/<timestamp>-<random>.<ext>`（按用户分目录，避免重名覆盖）。
+
+依赖：新增 `qiniu` npm 包（纯 JS，需在 `build:all` 验证 SEA 打包；备选：七牛 S3 兼容端点 + `@aws-sdk/client-s3`，包更重，不采用）。`GALLERY_STORAGE=qiniu` 但未配置 `QINIU_*` 时，上传返回 503 并给出明确错误提示。
+
+### 2.4 路由（`registry.registerApiRoute`）
 
 | 方法/路径 | 行为 |
 |---|---|
-| `POST /api/gallery` | 上传图片（multipart 或原始 bytes，复用核心上传解析/落盘方式，存 `data/gallery/`）。校验：单图 ≤ `maxFileSize`、mime 为图片（PNG/JPEG/WebP/GIF，与头像一致）；配额：该用户 `gallery_images.size` 总和 + 新图 > `quota_mb*1024*1024` → 413 |
-| `GET /api/gallery` | 我的图床列表（分页 `?offset=&limit=`，默认 50），每项含 id/filename/mime/size/created_at/url；响应含 `quota_mb / used_mb` |
-| `DELETE /api/gallery/:id` | 本人或全局管理员；删除数据库行 + 物理文件；404 若不存在 |
-| `GET /api/gallery/:id/file` | 返回图片 bytes（`Content-Type: mime`）。鉴权：`?token=` 签名文件 URL（复用核心 `fileUrlSecret`/`fileUrlTtlMs` 机制）或本人会话；**外链场景**：生成 `GET /api/gallery/:id/file?token=...` 签名 URL，可直接 `<img src>` 引用/贴聊天 |
+| `POST /api/gallery` | 上传图片（multipart 或原始 bytes，复用核心上传解析）。校验：单图 ≤ `maxFileSize`、mime 为图片（PNG/JPEG/WebP/GIF）；配额：该用户 `gallery_images.size` 总和 + 新图 > `quota_mb*1024*1024` → 413。`storage=local` 落盘 `data/gallery/`；`storage=qiniu` 服务端中转直传 Kodo，DB 记 key |
+| `GET /api/gallery` | 我的图床列表（分页 `?offset=&limit=`，默认 50），每项含 id/filename/mime/size/created_at/storage/url；响应含 `quota_mb / used_mb`。`url`：local 用签名 URL；qiniu 公开空间用 `https://<QINIU_DOMAIN>/<key>`；私有空间用七牛签名 URL |
+| `DELETE /api/gallery/:id` | 本人或全局管理员；删除 DB 行 + 物理文件（local）或 Kodo 对象（qiniu，`BucketManager.delete(key)`）；404 若不存在 |
+| `GET /api/gallery/:id/file` | local：返回图片 bytes（签名/本人鉴权）；qiniu：302 重定向到对应下载 URL |
 
-### 2.4 外链 URL
+### 2.5 外链 URL
 
-复用核心附件签名 URL 机制：`buildFileUrl(id)` 生成带过期签名 token 的 URL（TTL 由 `fileUrlTtlMs` 控制）。聊天内发送时可将图片 URL 以 Markdown `![]()` 插入消息正文。
+- `local`：核心签名文件 URL（`fileUrlSecret`/`fileUrlTtlMs`，有 TTL）
+- `qiniu` 公开空间：`https://<QINIU_DOMAIN>/<key>`——**永久外链，无 TTL**，可直接 `<img src>` 引用/贴聊天/贴吧博客（图床典型用法）
+- `qiniu` 私有空间（`QINIU_PRIVATE=true`）：服务端 SDK 生成带 deadline 的签名下载 URL
 
-### 2.5 Web UI
+### 2.6 Web UI
 
 - 移动端「我的」页新增「我的图床」入口；桌面端资料区入口
 - 图床页：网格预览（缩略图）、用量条（used/quota）、复制外链按钮、删除按钮、上传按钮（支持粘贴/拖拽，复用现有上传交互）
+- qiniu 模式下"复制外链"复制的是七牛 URL（永久外链）
 - 图床图片可一键"发送到聊天"（插入 `![](...)` 到输入框）
 
-### 2.6 测试（新增 ~5 条）
+### 2.7 测试（新增 ~6 条）
 
 1. 上传 200 + 列表含该项 + 外链 URL 200
 2. 非图片 mime → 400；超大 → 413（`maxFileSize`）
 3. 配额：超过 `quota_mb` → 413
 4. 删除：本人 200 + 文件消失 + URL 404；他人 403；管理员可删
 5. 签名 URL：过期/伪造 token → 403/404
+6. `GALLERY_STORAGE=qiniu` 但缺 `QINIU_*` → 上传 503 且错误信息明确（测试不依赖真实七牛网络；qiniu 端到端冒烟留给有真实密钥的手动验证）
 
 ---
 
@@ -213,13 +242,15 @@ UDP/multicast beacon 预留：插件可在 manifest/README 注明"v2 计划在 h
 - `web:build` 干净；`build:all`（SEA 单文件）成功，两个新插件被静态打包且 `dist/polychat-server` 启动后 `/api/gallery`、`/api/discovery` 可用
 - `data/plugins.json` 首次启动自动生成含 gallery/lan-discovery 默认配置；`DISABLED_PLUGINS=gallery` 后对应路由 404
 - 手动冒烟：私有房 🔒 可见→密码加入/申请审批全流程、四项开关生效、只读房禁言、图床上传/外链贴聊天、`/api/discovery` 字段正确
+- （可选，有真实七牛密钥时）`GALLERY_STORAGE=qiniu` 端到端冒烟：上传进 Kodo、`QINIU_DOMAIN` 外链可访问、删除后对象消失
 
 ## 风险与注意事项
 
 - **列表 SQL 变更影响面**：`GET /api/rooms` 语义变化（私有房可见）需同步检查依赖该列表的 Web 逻辑（房间列表渲染、移动端聊天页）。
 - **password 语义边界**：password 只约束"加入"动作；公共房非成员本就能读消息，设密码仅阻止"加入为成员"——文档需向用户说明公共房设密码的实际效果有限。
 - **签名 URL 过期**：外链图片带 TTL，长期外链（贴吧/博客）可能过期，README 注明。
-- **gallery 文件清理**：用户注销账户时需删除其图床文件（复用现有 `DELETE /api/me` 账户删除的清理逻辑，追加 `gallery_images` 清理）。
+- **gallery 文件清理**：用户注销账户时需删除其图床文件/对象（复用现有 `DELETE /api/me` 账户删除的清理逻辑，追加 `gallery_images` 清理；qiniu 模式下逐个 `BucketManager.delete`）。
+- **qiniu 测试域名限制**：七牛测试域名有有效期与防盗链限制，正式使用建议绑定自定义 CDN 域名；`QINIU_PRIVATE` 与公开空间需一致，否则外链 403。
 - **插件黑名单**：`DISABLED_PLUGINS` 应能独立停用 gallery / lan-discovery 而不影响其它功能。
 
 ## 参考
