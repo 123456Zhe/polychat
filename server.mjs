@@ -1127,6 +1127,26 @@ async function api(req, res, url) {
     return json(res, 200, { ok: true });
   }
 
+  const roomSettingsMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/settings$/);
+  if (roomSettingsMatch && req.method === 'PATCH') {
+    const context = requireRoomManager(req, res, Number(roomSettingsMatch[1])); if (!context) return;
+    const { locked, hidden, password, readonly } = await readBody(req);
+    const room = context.room;
+    const next = {
+      locked: locked === undefined ? room.locked : (locked ? 1 : 0),
+      hidden: hidden === undefined ? room.hidden : (hidden ? 1 : 0),
+      readonly: readonly === undefined ? room.readonly : (readonly ? 1 : 0),
+      password_hash: password === undefined ? room.password_hash : (password === '' ? null : hashPassword(String(password)))
+    };
+    db.prepare('UPDATE rooms SET locked = ?, hidden = ?, password_hash = ?, readonly = ? WHERE id = ?')
+      .run(next.locked, next.hidden, next.password_hash, next.readonly, room.id);
+    logAudit(context.user.id, 'room_settings', room.id);
+    const settings = { room_id: room.id, locked: Boolean(next.locked), hidden: Boolean(next.hidden), readonly: Boolean(next.readonly), has_password: next.password_hash !== null };
+    broadcast({ type: 'room_settings', ...settings });
+    broadcast({ type: 'rooms' });
+    return json(res, 200, { settings });
+  }
+
   const roomMemberMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/members$/);
   if (roomMemberMatch && req.method === 'GET') {
     const context = requireRoomAccess(req, res, Number(roomMemberMatch[1])); if (!context) return;

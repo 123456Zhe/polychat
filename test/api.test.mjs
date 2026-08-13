@@ -1065,3 +1065,59 @@ test('房间列表：私有房非成员可见（🔒）、hidden 房仅成员可
   const privItem = listB2.body.rooms.find(r => r.name === '私有房列表');
   assert.equal(privItem.is_private, true);
 });
+
+test('房间设置：owner 可设四开关+密码，member 403，密码哈希不落明文', async () => {
+  const alice = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'alice_set', password: 'correct-horse' }) });
+  const authA = { authorization: `Bearer ${alice.body.token}` };
+  const bob = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'bob_set', password: 'correct-horse' }) });
+  const authB = { authorization: `Bearer ${bob.body.token}` };
+  // 非管理员只能建私有房；owner 权限即可设置开关
+  const room = await api('/api/rooms', { method: 'POST', headers: authA, body: JSON.stringify({ name: '设置房', is_private: true }) });
+  assert.equal(room.response.status, 201);
+  const id = room.body.room.id;
+
+  let bobSocket;
+  try {
+    // WS 广播：在线用户（含非成员）应收到 room_settings 事件
+    bobSocket = new WebSocket(`${base.replace('http:', 'ws:')}/ws?token=${encodeURIComponent(bob.body.token)}`);
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('bob WebSocket 连接超时')), 2000);
+      bobSocket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
+      bobSocket.addEventListener('error', reject, { once: true });
+    });
+    const nextSettings = () => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('未收到 room_settings 事件')), 2000);
+      const listener = event => {
+        const payload = JSON.parse(event.data);
+        if (payload.type !== 'room_settings' || payload.room_id !== id) return;
+        clearTimeout(timer); bobSocket.removeEventListener('message', listener); resolve(payload);
+      };
+      bobSocket.addEventListener('message', listener);
+    });
+
+    const waiting = nextSettings();
+    const r = await api(`/api/rooms/${id}/settings`, { method: 'PATCH', headers: authA, body: JSON.stringify({ locked: true, readonly: true, password: 'secret' }) });
+    assert.equal(r.response.status, 200);
+    assert.equal(r.body.settings.room_id, id);
+    assert.equal(r.body.settings.locked, true);
+    assert.equal(r.body.settings.readonly, true);
+    assert.equal(r.body.settings.has_password, true);
+    const settingsEvent = await waiting;
+    assert.equal(settingsEvent.locked, true);
+    assert.equal(settingsEvent.has_password, true);
+
+    const row = db.prepare('SELECT password_hash, locked, readonly FROM rooms WHERE id = ?').get(id);
+    assert.equal(row.locked, 1);
+    assert.equal(row.readonly, 1);
+    assert.ok(row.password_hash !== 'secret' && row.password_hash.length > 20, '密码应存哈希而非明文');
+
+    const denied = await api(`/api/rooms/${id}/settings`, { method: 'PATCH', headers: authB, body: JSON.stringify({ locked: false }) });
+    assert.equal(denied.response.status, 403);
+  } finally {
+    bobSocket?.close();
+  }
+
+  const clear = await api(`/api/rooms/${id}/settings`, { method: 'PATCH', headers: authA, body: JSON.stringify({ password: '' }) });
+  assert.equal(clear.response.status, 200);
+  assert.equal(clear.body.settings.has_password, false);
+});
