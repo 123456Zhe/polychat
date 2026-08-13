@@ -89,26 +89,35 @@ jobs:
             macOS)   mv dist/polychat-server dist/polychat-server-macos ;;
             *)       mv dist/polychat-server dist/polychat-server-linux ;;
           esac
-      # SEA binary crash isolation (only needed on macOS so far): build two
-      # minimal SEA probes through the same pipeline — bare, then with
-      # node:sqlite — to tell whether the crash is SEA itself or node:sqlite.
+      # SEA binary crash isolation (only needed on macOS so far): postject can
+      # silently fail to inject the blob into a *signed* Mach-O (leaving the
+      # fuse byte → SIGSEGV at startup, nodejs/node#63466). Probe compares
+      # file size before/after injection and both signing orders.
       - name: Diagnose SEA crash on macOS
         if: runner.os == 'macOS'
         shell: bash
         run: |
+          NODE_BIN="$(node -p 'process.execPath')"
+          ls -l "$NODE_BIN" | awk '{print "node size:", $5}'
           mkdir -p probe && cd probe
-          printf 'console.log("probe-bare");\nconsole.log("probe-ok");\n' > bare.cjs
-          printf 'console.log("probe-sqlite");\nconst { DatabaseSync } = require("node:sqlite");\nconst d = new DatabaseSync(":memory:");\nd.exec("create table t(a)");\nconsole.log("probe-sqlite-ok");\n' > sqlite.cjs
-          for p in bare sqlite; do
-            ../node_modules/.bin/esbuild $p.cjs --bundle --platform=node --format=cjs --outfile=$p-bundle.cjs
-            printf '{"main":"%s-bundle.cjs","output":"%s.blob","disableExperimentalSEAWarning":true}' "$p" "$p" > sea-config.json
-            node --experimental-sea-config sea-config.json
-            cp "$(node -p 'process.execPath')" probe-$p
-            node -e "require('postject').inject('probe-$p','NODE_SEA_BLOB',require('node:fs').readFileSync('$p.blob'),{sentinelFuse:'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2'}).then(()=>console.log('injected $p'))"
-            codesign --sign - probe-$p
-            echo "--- running probe-$p ---"
-            ./probe-$p || echo "PROBE $p CRASHED (exit $?)"
-          done
+          printf 'console.log("probe-bare-ok");\n' > bare.cjs
+          ../node_modules/.bin/esbuild bare.cjs --bundle --platform=node --format=cjs --outfile=bare-bundle.cjs
+          printf '{"main":"bare-bundle.cjs","output":"bare.blob","disableExperimentalSEAWarning":true}' > sea-config.json
+          node --experimental-sea-config sea-config.json
+          inject() { node -e "require('postject').inject('$1','NODE_SEA_BLOB',require('node:fs').readFileSync('bare.blob'),{sentinelFuse:'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2'}).then(()=>console.log('injected $1'))"; }
+          echo "--- probe A: inject then sign (old order) ---"
+          cp "$NODE_BIN" probe-a
+          inject probe-a
+          ls -l probe-a | awk '{print "probe-a size after inject:", $5}'
+          codesign --sign - probe-a
+          ./probe-a && echo "PROBE A OK" || echo "PROBE A crashed (exit $?)"
+          echo "--- probe B: remove signature, inject, sign (new order) ---"
+          cp "$NODE_BIN" probe-b
+          codesign --remove-signature probe-b
+          inject probe-b
+          ls -l probe-b | awk '{print "probe-b size after inject:", $5}'
+          codesign --sign - probe-b
+          ./probe-b && echo "PROBE B OK" || echo "PROBE B crashed (exit $?)"
       - name: Smoke-test the binary before publishing
         shell: bash
         run: |

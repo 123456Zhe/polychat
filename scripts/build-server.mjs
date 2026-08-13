@@ -112,14 +112,21 @@ async function makeBinary() {
   mkdirSync(DIST_DIR, { recursive: true });
   copyFileSync(process.execPath, outFile);
 
+  // macOS: nodejs.org binaries are shipped signed. The sealed signature can
+  // make postject's Mach-O injection fail *silently* — it flips the SEA fuse
+  // byte but never inserts the blob, which crashes the binary at startup
+  // (SIGSEGV in BlobDeserializer, see nodejs/node#63466). Remove the existing
+  // signature before injection (per the Node SEA manual-flow docs), then
+  // ad-hoc re-sign afterwards — otherwise macOS refuses to run the binary.
+  if (process.platform === 'darwin') {
+    execFileSync('codesign', ['--remove-signature', outFile], { stdio: 'inherit' });
+  }
+
   const { inject } = await import('postject');
   await inject(outFile, 'NODE_SEA_BLOB', readFileSync(SEA_BLOB), {
     sentinelFuse: 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2',
   });
   if (!isWin) chmodSync(outFile, 0o755);
-  // SEA on macOS: the injected blob invalidates the original code signature,
-  // and macOS refuses to run an unsigned executable (killed on launch), so it
-  // must be ad-hoc re-signed after injection (Node SEA docs requirement).
   if (process.platform === 'darwin') {
     execFileSync('codesign', ['--sign', '-', outFile], { stdio: 'inherit' });
     console.log('Ad-hoc signed macOS binary with codesign');
