@@ -1029,3 +1029,10 @@ test('附件权限矩阵：公共房、私有房、DM 与撤回后不可下载',
   assert.equal((await get(dmFile.id, ownerAuth)).status, 404);
   assert.equal((await get(dmFile.id, dmPeerAuth)).status, 404);
 });
+
+test('房间开关：新列与加入申请表存在（迁移生效）', async () => {
+  const cols = db.prepare('PRAGMA table_info(rooms)').all().map(c => c.name);
+  for (const c of ['locked', 'hidden', 'password_hash', 'readonly']) assert.ok(cols.includes(c), `rooms 缺列 ${c}`);
+  const joinTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='room_join_requests'").get();
+  assert.ok(joinTable, '缺少 room_join_requests 表');
+});

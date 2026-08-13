@@ -134,6 +134,14 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY(room_id, message_id)
   );
+  CREATE TABLE IF NOT EXISTS room_join_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
+    created_at INTEGER NOT NULL,
+    UNIQUE(room_id, user_id)
+  );
   CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -252,6 +260,10 @@ if (!roomColumns.has('is_private')) db.exec('ALTER TABLE rooms ADD COLUMN is_pri
 if (!roomColumns.has('announcement')) db.exec('ALTER TABLE rooms ADD COLUMN announcement TEXT');
 if (!roomColumns.has('announcement_by')) db.exec('ALTER TABLE rooms ADD COLUMN announcement_by INTEGER REFERENCES users(id)');
 if (!roomColumns.has('announcement_updated_at')) db.exec('ALTER TABLE rooms ADD COLUMN announcement_updated_at TEXT');
+if (!roomColumns.has('locked')) db.exec('ALTER TABLE rooms ADD COLUMN locked INTEGER NOT NULL DEFAULT 0');
+if (!roomColumns.has('hidden')) db.exec('ALTER TABLE rooms ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0');
+if (!roomColumns.has('password_hash')) db.exec('ALTER TABLE rooms ADD COLUMN password_hash TEXT');
+if (!roomColumns.has('readonly')) db.exec('ALTER TABLE rooms ADD COLUMN readonly INTEGER NOT NULL DEFAULT 0');
 const messageColumns = new Set(db.prepare('PRAGMA table_info(messages)').all().map(column => column.name));
 if (!messageColumns.has('reply_to')) db.exec('ALTER TABLE messages ADD COLUMN reply_to INTEGER REFERENCES messages(id)');
 if (!messageColumns.has('edited_at')) db.exec('ALTER TABLE messages ADD COLUMN edited_at TEXT');
