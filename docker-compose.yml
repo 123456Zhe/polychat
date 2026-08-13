@@ -19,7 +19,10 @@ services:
       PUBLIC_URL: ${PUBLIC_URL:-}
       FILE_URL_SECRET: ${FILE_URL_SECRET:-}
       FILE_URL_TTL_MS: ${FILE_URL_TTL_MS:-604800000}
+      PLUGINS_DIR: /app/data/plugins
+      PLUGIN_MARKET_REGISTRY: ${PLUGIN_MARKET_REGISTRY:-}
     volumes:
+      # data 卷同时承载插件目录（外部安装的插件随容器重建保留；内置插件仍在镜像 /app/plugins）
       - ./data:/app/data
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]

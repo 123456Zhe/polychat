@@ -10,14 +10,20 @@
 //   registerHeartbeat(fn)                        — called every 30s alongside the socket heartbeat
 //   registerCleanup(fn)                          — called by cleanupExpiredData()
 //   provide(name, service) / service(name)       — plugin-to-core (or plugin-to-plugin) service lookup
+//   removePlugin(name)                           — unregister everything a plugin registered (used on uninstall/disable)
+//
+// Every registration records the owning plugin name (null = core), so a plugin
+// can be hot-removed by name. The loader passes the plugin name as `owner`.
 
 export function createPluginRegistry() {
   const apiRoutes = [];
-  const wsHandlers = new Map();
-  const heartbeatFns = [];
-  const cleanupFns = [];
-  const services = {};
-  const enabledPlugins = [];
+  const wsHandlers = new Map();       // type -> handler
+  const wsHandlerOwners = new Map();  // type -> owner
+  const heartbeatFns = [];            // { fn, owner }
+  const cleanupFns = [];              // { fn, owner }
+  const services = {};                // name -> service
+  const serviceOwners = {};           // name -> owner
+  const enabledPlugins = [];          // plugin records (for /api/plugins list)
 
   return {
     // Collections read by the core dispatcher.
@@ -27,28 +33,59 @@ export function createPluginRegistry() {
     cleanupFns,
 
     // Registration API used by plugins.
-    registerApiRoute(method, pattern, handler) {
-      apiRoutes.push({ method, pattern, handler });
+    registerApiRoute(method, pattern, handler, owner = null) {
+      apiRoutes.push({ method, pattern, handler, owner });
     },
-    registerWsMessage(type, handler) {
+    registerWsMessage(type, handler, owner = null) {
       wsHandlers.set(type, handler);
+      wsHandlerOwners.set(type, owner);
     },
-    registerHeartbeat(fn) {
-      heartbeatFns.push(fn);
+    registerHeartbeat(fn, owner = null) {
+      heartbeatFns.push({ fn, owner });
     },
-    registerCleanup(fn) {
-      cleanupFns.push(fn);
+    registerCleanup(fn, owner = null) {
+      cleanupFns.push({ fn, owner });
     },
-    provide(name, service) {
+    provide(name, service, owner = null) {
       services[name] = service;
+      serviceOwners[name] = owner;
     },
     service(name) {
       return services[name];
     },
 
+    // Hot removal: drop every registration owned by a plugin (uninstall/disable).
+    removePlugin(name) {
+      for (let i = apiRoutes.length - 1; i >= 0; i--) {
+        if (apiRoutes[i].owner === name) apiRoutes.splice(i, 1);
+      }
+      for (const [type, owner] of wsHandlerOwners) {
+        if (owner === name) {
+          wsHandlers.delete(type);
+          wsHandlerOwners.delete(type);
+        }
+      }
+      for (const list of [heartbeatFns, cleanupFns]) {
+        for (let i = list.length - 1; i >= 0; i--) {
+          if (list[i].owner === name) list.splice(i, 1);
+        }
+      }
+      for (const key of Object.keys(serviceOwners)) {
+        if (serviceOwners[key] === name) {
+          delete services[key];
+          delete serviceOwners[key];
+        }
+      }
+    },
+
     // Bookkeeping used by the plugin loader (name/status/description listing).
     recordPlugin(meta) {
       enabledPlugins.push(meta);
+    },
+    unrecordPlugin(name) {
+      for (let i = enabledPlugins.length - 1; i >= 0; i--) {
+        if (enabledPlugins[i].name === name) enabledPlugins.splice(i, 1);
+      }
     },
     listPlugins() {
       return enabledPlugins;

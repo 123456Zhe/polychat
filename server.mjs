@@ -6,7 +6,10 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { createPluginRegistry } from './modules/plugin-registry.js';
-import { setupPlugins, setupExternalPlugins } from './modules/plugin-loader.js';
+import {
+  setupPlugins, setupExternalPlugins,
+  installPluginFromUrl, installPluginFromUpload, uninstallPlugin, setPluginEnabled, listMarketPlugins
+} from './modules/plugin-loader.js';
 // Embedded static assets (web/ + KaTeX vendor files). `null` in dev/test runs —
 // the single-file build (`npm run build:server`) swaps this module for the real
 // asset map so the bundled/SEA server is fully self-contained.
@@ -18,6 +21,12 @@ function createEventBus() {
     on(event, fn) {
       if (!listeners.has(event)) listeners.set(event, []);
       listeners.get(event).push(fn);
+    },
+    off(event, fn) {
+      const list = listeners.get(event);
+      if (!list) return;
+      const index = list.indexOf(fn);
+      if (index >= 0) list.splice(index, 1);
     },
     emit(event, data) {
       for (const fn of (listeners.get(event) || [])) {
@@ -775,7 +784,69 @@ async function api(req, res, url) {
   }
   // 插件状态公开查询：Web 端据此禁用未启用插件的 UI（如 onebot 停用 → 机器人管理页）
   if (req.method === 'GET' && url.pathname === '/api/plugins') {
-    return json(res, 200, { plugins: registry.listPlugins() });
+    const plugins = registry.listPlugins().map(({ name, version, description, enabled, source, install_method }) => ({ name, version, description, enabled, source, install_method }));
+    return json(res, 200, { plugins });
+  }
+  // 插件市场：GitHub 上的 polychat-plugin-* 仓库（或 PLUGIN_MARKET_REGISTRY 自建源）
+  if (req.method === 'GET' && url.pathname === '/api/admin/plugins/market') {
+    if (!requireAdmin(req, res)) return;
+    try {
+      return json(res, 200, { plugins: await listMarketPlugins() });
+    } catch (error) {
+      return json(res, 502, { error: error.message });
+    }
+  }
+  // 从 URL 安装插件（GitHub 仓库 / 直链 zip）—— 热加载，无需重启
+  if (req.method === 'POST' && url.pathname === '/api/admin/plugins/install') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    try {
+      const result = await installPluginFromUrl(pluginCtx, registry, await readBody(req));
+      logAudit(admin.id, 'install_plugin', null, `安装插件 ${result.name}`);
+      return json(res, 201, result);
+    } catch (error) {
+      return json(res, 400, { error: error.message });
+    }
+  }
+  // 上传 zip 安装插件（raw body，文件名走查询参数）
+  if (req.method === 'POST' && url.pathname === '/api/admin/plugins/install/upload') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    try {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const bytes = Buffer.concat(chunks);
+      if (bytes.length > 50 * 1024 * 1024) return json(res, 413, { error: '插件包过大（上限 50 MB）' });
+      const result = await installPluginFromUpload(pluginCtx, registry, bytes, { filename: url.searchParams.get('filename') || '' });
+      logAudit(admin.id, 'install_plugin', null, `上传安装插件 ${result.name}`);
+      return json(res, 201, result);
+    } catch (error) {
+      return json(res, 400, { error: error.message });
+    }
+  }
+  // 卸载外部插件（热卸载；内置插件拒绝）
+  const pluginDeleteMatch = url.pathname.match(/^\/api\/admin\/plugins\/([A-Za-z0-9_-]+)$/);
+  if (pluginDeleteMatch && req.method === 'DELETE') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    try {
+      const body = await readBody(req);
+      await uninstallPlugin(pluginCtx, registry, pluginDeleteMatch[1], { delete_config: Boolean(body?.delete_config) });
+      logAudit(admin.id, 'uninstall_plugin', null, `卸载插件 ${pluginDeleteMatch[1]}`);
+      return json(res, 200, { ok: true });
+    } catch (error) {
+      return json(res, 400, { error: error.message });
+    }
+  }
+  // 启用/停用插件（热生效，无需重启）
+  const pluginEnabledMatch = url.pathname.match(/^\/api\/admin\/plugins\/([A-Za-z0-9_-]+)\/enabled$/);
+  if (pluginEnabledMatch && req.method === 'PATCH') {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    try {
+      const body = await readBody(req);
+      const result = await setPluginEnabled(pluginCtx, registry, pluginEnabledMatch[1], Boolean(body?.enabled));
+      logAudit(admin.id, result.enabled ? 'enable_plugin' : 'disable_plugin', null, `${result.enabled ? '启用' : '停用'}插件 ${pluginEnabledMatch[1]}`);
+      return json(res, 200, result);
+    } catch (error) {
+      return json(res, 400, { error: error.message });
+    }
   }
 
   const adminUserMatch = url.pathname.match(/^\/api\/admin\/users\/(\d+)\/admin$/);
@@ -1856,7 +1927,7 @@ const heartbeat = setInterval(() => {
     socket.isAlive = false;
     socket.ping();
   }
-  for (const fn of registry.heartbeatFns) fn();
+  for (const { fn } of registry.heartbeatFns) fn();
 }, 30_000);
 heartbeat.unref();
 
@@ -1876,7 +1947,7 @@ export function cleanupExpiredData() {
         try { unlinkSync(join(UPLOAD_DIR, name)); } catch { /* already gone */ }
       }
     }
-    for (const fn of registry.cleanupFns) fn();
+    for (const { fn } of registry.cleanupFns) fn();
   } catch { /* cleanup failures are non-fatal */ }
 }
 

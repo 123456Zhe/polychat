@@ -83,8 +83,9 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 | `AVATAR_DIR` | `data/avatars` | 头像存储目录 |
 | `MAX_FILE_SIZE` | `104857600` (100 MB) | 最大文件大小（字节） |
 | `DISABLED_PLUGINS` | 空 | 逗号分隔的插件黑名单（如 `DISABLED_PLUGINS=backup,p2p`），优先于配置文件 |
-| `PLUGINS_DIR` | `plugins` | 外部插件投放目录（`polychat-plugin-*` 命名） |
+| `PLUGINS_DIR` | `plugins` | 外部插件投放/安装目录（`polychat-plugin-*` 命名） |
 | `PLUGINS_CONFIG_PATH` | `data/plugins.json` | 插件配置文件路径（自动生成 + 自动迁移） |
+| `PLUGIN_MARKET_REGISTRY` | 空 | 插件市场自建源 URL（JSON：`[{name,description,repo}]`）；缺省用 GitHub 搜索 `polychat-plugin-*` |
 
 以下变量由对应插件读取（插件默认启用时行为与旧版一致）：
 
@@ -116,7 +117,9 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 
 - **默认全部启用**，API 表面不变；按部署裁剪用 `DISABLED_PLUGINS=backup,p2p`。
 - 插件配置自动生成并自动迁移于 `data/plugins.json`（新增插件自动补默认、旧配置逐键合并、删除条目剪除），老项目升级零手工。
+- **WebUI 插件管理**（管理面板「插件」页签）：从市场/GitHub URL/上传 zip 安装、启用/停用、卸载，均**热加载无需重启**（管理员操作）。
 - 内置插件静态打包进单文件/SEA；外部插件（git clone 进 `plugins/` 或 `npm install polychat-plugin-*`）在目录部署下自动发现加载。
+- 每个插件是独立 GitHub 仓库（`123456Zhe/polychat-plugin-<name>`），主仓库用 git subtree 同步（见 docs/PLUGINS.md）。
 - 管理员可 `GET /api/admin/plugins` 查看插件名称/版本/状态。
 
 ## Web 前端开发

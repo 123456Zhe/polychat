@@ -47,6 +47,9 @@ export default {
   defaultConfig: { threshold: 42 },   // 配置默认值；会被自动并入 data/plugins.json
   setup(ctx) {
     // 在此注册路由 / WS 消息 / 心跳 / 清理钩子，或向核心提供服务
+    // ...
+    // 可返回一个清理函数：插件被停用/卸载时调用（清定时器、退订事件、关 WS 等）。
+    return () => { /* 清理资源 */ };
   }
 };
 ```
@@ -58,7 +61,7 @@ export default {
 | 成员 | 类型 | 说明 |
 |---|---|---|
 | `db` | `DatabaseSync` | 直接执行 SQL（表结构由核心集中创建，含插件所需表） |
-| `eventBus` | 事件总线 | `on(event, fn)` / `emit(event, data)`，订阅核心事件 |
+| `eventBus` | 事件总线 | `on(event, fn)` / `off(event, fn)` / `emit(event, data)`，订阅/退订核心事件 |
 | `env` | `process.env` | 读取环境变量做配置覆盖 |
 | `server` | `http.Server` | 需要 `server.on('upgrade', …)` 时使用（见 onebot 插件） |
 | `registry` | 注册表 | 见下表 |
@@ -91,6 +94,7 @@ export default {
 | `registerHeartbeat(fn)` | 每 30s 心跳时调用（socket ping 之外） |
 | `registerCleanup(fn)` | 每小时清理（`cleanupExpiredData()`）时调用 |
 | `provide(name, service)` / `service(name)` | 插件对外提供服务（核心用 `registry.service('onebot')?.disconnectUser(id)` 之类安全调用） |
+| `removePlugin(name)` | **反注册**：移除某插件注册的全部路由/WS 消息/心跳/清理/服务（停用/卸载时由 loader 调用） |
 
 ### 事件总线（eventBus）
 
@@ -155,3 +159,20 @@ eventBus.on('message:sent', ({ roomId, message, sender }) => {
 | `web-push` | 离线 Web Push | env `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/`VAPID_SUBJECT` |
 | `p2p` | 私信 P2P 大文件直传 | `minSize`/`activeLimit`/`ttlMs`/`connectTimeoutMs`，env `P2P_MIN_SIZE`/`TURN_URL`/`TURN_USERNAME`/`TURN_CREDENTIAL` |
 | `onebot` | OneBot v11 机器人网关 | env `ONEBOT_REVERSE_URL`/`ONEBOT_BOT_TOKEN`/`ONEBOT_ACCESS_TOKEN`/`PUBLIC_URL` |
+
+## 9. WebUI 插件管理（管理员，热加载）
+
+管理面板「插件」页签 + 以下管理员端点（安装=执行插件代码，仅管理员可操作）：
+
+| 端点 | 说明 |
+|---|---|
+| `GET /api/plugins` | 公开：插件列表（name/version/description/enabled/source/install_method） |
+| `GET /api/admin/plugins/market` | 市场列表：`PLUGIN_MARKET_REGISTRY` 自建 JSON 源（`{name,description,repo}[]`），缺省用 GitHub 搜索 `polychat-plugin-*` |
+| `POST /api/admin/plugins/install` | body `{url}`：GitHub 仓库（自动转 codeload 归档）或 zip 直链；热安装无需重启 |
+| `POST /api/admin/plugins/install/upload?filename=` | raw zip body 上传安装 |
+| `PATCH /api/admin/plugins/:name/enabled` | body `{enabled}`：启用/停用（热生效；停用时调用插件 setup 返回的清理函数） |
+| `DELETE /api/admin/plugins/:name` | 卸载外部插件（body `{delete_config?}`；内置插件拒绝） |
+
+- 外部插件安装到 `PLUGINS_DIR`（Docker 部署为 `data/plugins` 卷，随容器重建保留）；下次启动自动发现。
+- 卸载/停用即热移除：`registry.removePlugin(name)` 反注册 + 调用清理函数（backup 清定时器 / web-push 退订事件 / onebot 停反向连接并摘除升级监听）。
+- SEA 单文件二进制不含运行时安装的外部插件（目录部署才支持）。

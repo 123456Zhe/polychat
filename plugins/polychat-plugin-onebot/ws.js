@@ -10,7 +10,7 @@ export function createOnebotWs({ db, isUserBanned, botSockets, handleAction, pub
   const onebotWsServer = new WebSocketServer({ noServer: true });
 
   function attach(server) {
-    server.on('upgrade', (req, socket, head) => {
+    const onUpgrade = (req, socket, head) => {
       const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
       if (url.pathname !== '/api/onebot/ws' && url.pathname !== '/api') return;
       const token = url.searchParams.get('token') || '';
@@ -33,7 +33,10 @@ export function createOnebotWs({ db, isUserBanned, botSockets, handleAction, pub
         client.send(JSON.stringify({ time: Math.floor(Date.now() / 1000), self_id: botUser.id, post_type: 'meta_event', meta_event_type: 'lifecycle', sub_type: 'connect' }));
         client.send(JSON.stringify({ time: Math.floor(Date.now() / 1000), self_id: botUser.id, post_type: 'meta_event', meta_event_type: 'heartbeat', status: { online: true }, interval: 30000 }));
       });
-    });
+    };
+    server.on('upgrade', onUpgrade);
+    // 插件被停用/卸载时调用，摘除升级监听。
+    return () => server.off('upgrade', onUpgrade);
   }
 
   function heartbeat() {

@@ -28,5 +28,9 @@ export function setupOnebot(ctx) {
     }
   }
 
-  return { attach, heartbeat, disconnectUser, startReverse: reverse.start, stopReverse: reverse.stop };
+  function disconnectAll() {
+    for (const socket of botSockets) socket.close(4001, 'Plugin disabled');
+  }
+
+  return { attach, heartbeat, disconnectUser, disconnectAll, startReverse: reverse.start, stopReverse: reverse.stop };
 }

@@ -32,5 +32,7 @@ export default {
     performBackup();
     const timer = setInterval(performBackup, intervalHours * 3600_000);
     timer.unref();
+    // 停用/卸载时清理定时器。
+    return () => clearInterval(timer);
   }
 };

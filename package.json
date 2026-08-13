@@ -16,6 +16,7 @@
     "node": ">=22.5"
   },
   "dependencies": {
+    "adm-zip": "^0.5.18",
     "dompurify": "^3.2.6",
     "katex": "0.16.11",
     "marked": "^15.0.12",

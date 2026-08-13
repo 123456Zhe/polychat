@@ -77,6 +77,14 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 
 ## Session work log
 
+### This session (插件独立成仓库 + WebUI 插件管理，借鉴 AstrBot)
+- **插件独立成仓库**：6 个插件各建独立 GitHub 公开仓库 `123456Zhe/polychat-plugin-<name>`（subtree 同步进主仓库 `plugins/`，主仓库自包含部署不变）；各仓库含 README/package.json/LICENSE；`docs/PLUGINS.md` 记录 URL 与 subtree push/pull 工作流。
+- **WebUI 插件管理（热加载，无需重启）**：管理面板新增「插件」页签——已安装列表（启停/卸载，内置仅可停用）、市场安装（GitHub 搜索 `polychat-plugin-*` 或 `PLUGIN_MARKET_REGISTRY` 自建源）、GitHub URL/zip 直链安装、上传 zip 安装。
+- **热管理后端**：`registry.removePlugin(name)` 按 owner 反注册（注册项带 owner）；`eventBus.off` 退订；插件 `setup(ctx)` 可返回清理函数（backup 清定时器 / web-push 退订 `message:sent` / onebot 停反向连接+断开 Bot+`server.off('upgrade')` detach）；loader 新增 `installPluginFromUrl`（GitHub URL 自动转 codeload 归档 zip，纯 HTTP 无需 git）/`installPluginFromUpload`/`uninstallPlugin`/`setPluginEnabled`/`listMarketPlugins`，全部经 `withManagementLock` 串行化。
+- **API**：`GET /api/admin/plugins/market`、`POST /api/admin/plugins/install`（及 `/install/upload` raw zip）、`PATCH /api/admin/plugins/:name/enabled`、`DELETE /api/admin/plugins/:name`（内置插件拒绝，全部 requireAdmin + logAudit）；`GET /api/plugins` 公开列表补 version/source/install_method。
+- **部署**：新增 `adm-zip` 依赖（解压插件 zip，SEA 可打包）；docker-compose 加 `PLUGINS_DIR=/app/data/plugins` + data 卷承载（外部插件随容器重建保留，内置仍在镜像）。
+- **验证**：35/35 测试通过（新增 `test/plugins-admin.test.mjs` 3 项：URL 热装→启停→卸载全流程、内置不可卸载、非管理员 403）；`web:build` 干净；`build:all` 成功；本地冒烟：市场 7 个插件、GitHub URL 冲突检测、上传热装/停用 404/启用 200/卸载删目录全通。
+
 ### This session (插件系统：非必要功能独立为插件)
 - **目标**：项目更小、更易部署 —— server.mjs 2104 → 1895 行（约 210 行逻辑迁出为插件）；默认部署方式零变化（单文件 SEA / Docker / `node server.mjs`），内置插件静态打包自包含。
 - **插件框架**：`modules/plugin-registry.js`（`createPluginRegistry`：`registerApiRoute`/`registerWsMessage`/`registerHeartbeat`/`registerCleanup`/`provide`/`service`）；`modules/plugin-loader.js`（配置加载/迁移、发现、`setupPlugins` 同步加载内置、`setupExternalPlugins` 异步加载外部）。统一命名 `polychat-plugin-<name>`，插件 = 独立 npm 包（package.json/index.js/README），公开接口见 `docs/PLUGIN_API.md`，第三方模板 `templates/polychat-plugin-template/`，可插件化功能清单与迁移说明 `docs/PLUGINS.md`。

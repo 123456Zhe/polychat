@@ -45,9 +45,10 @@ export default {
 
     // 房间新消息 → 给该房间订阅过推送的其它成员发离线通知。
     // 订阅 message:sent 事件（核心对所有房间消息发射，含话题回复，与旧 pushMessage 行为一致）。
-    eventBus.on('message:sent', ({ roomId, message, sender }) => {
+    const onMessageSent = ({ roomId, message, sender }) => {
       void pushMessage(roomId, sender.id, message).catch(error => console.error('Web Push failed:', error.message));
-    });
+    };
+    eventBus.on('message:sent', onMessageSent);
 
     async function pushMessage(roomId, senderId, message) {
       const room = db.prepare('SELECT name, is_private FROM rooms WHERE id = ?').get(roomId);
@@ -70,5 +71,8 @@ export default {
         }
       }));
     }
+
+    // 停用/卸载时退订 message:sent 事件。
+    return () => eventBus.off('message:sent', onMessageSent);
   }
 };
