@@ -14,6 +14,7 @@
 - ✅ **阶段 6**：运行监控（自动备份 SQLite、健康检查端点）
 - ✅ **阶段 7**：好友系统（好友请求、接受/拒绝、删除、双向关系）
 - ✅ **阶段 8**：私信系统（DM 会话、消息发送/编辑/撤回/表情、未读计数、已读回执、WebSocket 实时推送）
+- ✅ **阶段 9**：房间开关（锁定/隐藏/密码/只读 + 加入申请审批）、个人图床插件（本地 + 七牛双后端）、局域网发现端点
 
 所有阶段已完成。GUI/TUI/Web 客户端和文档已同步更新。
 
@@ -76,6 +77,13 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 - OneBot v11 gateway at `ws://HOST:PORT/api/onebot/ws?token=<bot_token>` (also `/api` standard path). Bots authenticate with a bot token created by an admin-approved bot request.
 
 ## Session work log
+
+### This session (房间开关 + 图床插件 + 发现端点 + 证书自动化)
+- **房间开关与门禁（A1-A8）**：`rooms` 表新增 `locked`/`hidden`/`password_hash`/`readonly` 列 + `room_join_requests` 表（Schema 集中迁移）；`PUT /api/rooms/:id/settings` 设置开关（房主/房间管理员，公开房限定管理员）；门禁守卫——locked 仅接受邀请、hidden 不出现在公开列表（成员/管理员仍可见）、密码入房 `POST /api/rooms/:id/join`、readonly 拦非管理员发言；公开房可 `POST /api/rooms/:id/request-join` 申请、管理员 approve/reject（带通知，拒后可重申请）；Web 端房间设置开关 + 锁定/隐藏/只读徽章 + 密码加入弹窗 + 申请审批 UI（桌面+移动）。
+- **个人图床插件（B1-B6）**：新增内置插件 `polychat-plugin-gallery`（独立仓库 `123456Zhe/polychat-plugin-gallery`，subtree 同步）；`gallery_images` 表集中建在核心；`POST /api/gallery` 上传（图片 MIME 校验 + 每用户配额 `GALLERY_QUOTA_MB`）、`GET /api/gallery` 列表（含外链）、`DELETE /api/gallery/:id`、`GET /api/gallery/:id/file` 签名文件端点；本地后端落盘 `data/uploads/gallery/` + 七牛 Kodo 后端（`GALLERY_STORAGE=qiniu` + `QINIU_*`，服务端中转上传/删除/下载外链，`useHttpsDomain` 强制 HTTPS、私有空间签名 URL，缺任一 `QINIU_*` 上传 503）；注销账户时图床记录与文件一并清理（经 `gallery-cleanup` 服务，顺带修复 audit_logs FK 缺陷）；Web 端「我的图床」页（上传/配额/外链复制/删除）。新增 `qiniu`、`proxy-agent` 依赖（SEA 可打包）。
+- **发现端点（C1）**：新增内置插件 `polychat-plugin-lan-discovery`（独立仓库 `123456Zhe/polychat-plugin-lan-discovery`），`GET /api/discovery` 返回服务器元信息（name/version/host/port/rooms/online/uptime/features），登录可访问、未登录 401，SEA 部署 version 读盘兜底。
+- **证书自动化（运维，计划附录 A）**：`img.zhezhe.online` 七牛源站域名 Let's Encrypt DNS-01 签发 + certbot deploy hook 自动上传证书至七牛并启用 HTTPS（Cloudflare DNS 验证，非 node --test 范围）。
+- **验证**：53/53 Node 测试通过；`web:build` 干净；`build:all` 成功（SEA 140MB + .cjs，qiniu 依赖与两个新插件均打入 bundle）；dist 冒烟：health 200 / discovery 未登录 401 / gallery 空列表 200 / 无 `QINIU_*` 时上传 503「七牛模式未配置」。
 
 ### This session (插件独立成仓库 + WebUI 插件管理，借鉴 AstrBot)
 - **插件独立成仓库**：6 个插件各建独立 GitHub 公开仓库 `123456Zhe/polychat-plugin-<name>`（subtree 同步进主仓库 `plugins/`，主仓库自包含部署不变）；各仓库含 README/package.json/LICENSE；`docs/PLUGINS.md` 记录 URL 与 subtree push/pull 工作流。

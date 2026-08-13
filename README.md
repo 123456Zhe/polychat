@@ -15,6 +15,7 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 - 输入框旁提供 Markdown/LaTeX 语法速查弹窗（Web 与 Android 均可一键查看）
 - Android 端纯文本消息跳过 WebView 渲染管线（`containsMarkdown` 智能检测），长消息列表滚动更流畅
 - WebSocket 实时推送：房间消息、私信、好友事件（请求/接受/删除）、输入状态和在线状态；所有客户端保留 HTTP 轮询作为降级方案
+- 房间开关与门禁：房主/房间管理员可设置锁定（仅邀请可入）、隐藏（不出现在公开列表）、访问密码、只读（非管理员不可发言）；公开房可开启加入申请，由管理员审批后入房
 
 ### 好友与私信
 - 好友系统：发送请求→对方接受→双向关系，支持拒绝和删除
@@ -29,6 +30,7 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 - Web 端支持多文件选择、拖拽上传和粘贴图片
 - 发送前显示图片缩略图预览
 - Web 消息框支持直接粘贴截图或剪贴板图片
+- **个人图床**：登录用户上传图片（PNG/JPEG/WebP/GIF），按用户配额计量并提供外链；支持本地存储与七牛 Kodo 双后端（`GALLERY_STORAGE` 切换），注销账户时图片一并清理
 
 ### 用户与管理
 - 账户支持持久化头像；Web 提供账户设置与预览，GUI/TUI 也可上传头像
@@ -101,6 +103,13 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 | `MAX_BACKUPS` | `7` | 保留备份数量 |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | 空 | Web Push VAPID 密钥（`web-push` 插件，缺省自动生成并持久化） |
 | `VAPID_SUBJECT` | `mailto:polychat@example.com` | Web Push 订阅者标识 |
+| `GALLERY_STORAGE` | `local` | 图床存储后端：`local` 本地 / `qiniu` 七牛 Kodo（`gallery` 插件） |
+| `GALLERY_QUOTA_MB` | `500` | 每用户图床配额（MB） |
+| `QINIU_ACCESS_KEY` / `QINIU_SECRET_KEY` | 空 | 七牛 AK/SK（`gallery` 插件七牛后端，缺任一 `QINIU_*` 则上传返回 503） |
+| `QINIU_BUCKET` | 空 | 七牛存储空间名 |
+| `QINIU_ZONE` | 空 | 七牛区域：`z0` 华东 / `z1` 华北 / `z2` 华南 / `na0` 北美 / `as0` 新加坡 |
+| `QINIU_DOMAIN` | 空 | 七牛访问域名（源站或 CDN，须为 HTTPS） |
+| `QINIU_PRIVATE` | `false` | 七牛空间为私有（外链返回带时效的签名 URL） |
 
 ## 插件系统
 
@@ -114,6 +123,8 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 | `web-push` | 离线 Web Push 推送 | 失去离线提醒（站内实时不受影响） |
 | `p2p` | 私信 P2P 大文件直传 | 大文件回退为服务器分片上传 |
 | `onebot` | OneBot 机器人网关 | 失去 Bot 接入 |
+| `gallery` | 个人图床（本地/七牛双后端） | 失去图床上传与外链 |
+| `lan-discovery` | `GET /api/discovery` 局域网发现 | 失去发现端点（404） |
 
 - **默认全部启用**，API 表面不变；按部署裁剪用 `DISABLED_PLUGINS=backup,p2p`。
 - 插件配置自动生成并自动迁移于 `data/plugins.json`（新增插件自动补默认、旧配置逐键合并、删除条目剪除），老项目升级零手工。

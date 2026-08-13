@@ -14,6 +14,8 @@
 | `web-push` | Web Push（VAPID + 订阅路由 + 发消息推送） | 329-337、699-719、1079-1097、1541 | HTTP 路由、`message:sent` 事件 |
 | `p2p` | 私信 P2P 大文件直传 | 661-698、1650-1732、2051-2059 | HTTP 路由、WS 消息、`dm:sent` 事件、cleanup |
 | `onebot` | OneBot v11 机器人网关（原 `modules/onebot/`） | — | 独立 WS 服务、`message:sent`/`dm:sent`、服务提供（`disconnectUser`） |
+| `gallery` | 个人图床（上传/配额/外链，本地 + 七牛 Kodo 双后端） | —（新增） | HTTP 路由、requireUser、服务提供（`gallery-cleanup`） |
+| `lan-discovery` | `GET /api/discovery` 局域网发现端点 | —（新增） | HTTP 路由 |
 
 ### Tier 2 —— 可插件化，需核心先加钩子（未做，框架已预留能力面）
 
@@ -53,6 +55,8 @@
 | `web-push` | https://github.com/123456Zhe/polychat-plugin-web-push | `plugins/polychat-plugin-web-push/` |
 | `p2p` | https://github.com/123456Zhe/polychat-plugin-p2p | `plugins/polychat-plugin-p2p/` |
 | `onebot` | https://github.com/123456Zhe/polychat-plugin-onebot | `plugins/polychat-plugin-onebot/` |
+| `gallery` | https://github.com/123456Zhe/polychat-plugin-gallery | `plugins/polychat-plugin-gallery/` |
+| `lan-discovery` | https://github.com/123456Zhe/polychat-plugin-lan-discovery | `plugins/polychat-plugin-lan-discovery/` |
 
 ### subtree 同步工作流
 
@@ -75,7 +79,9 @@ plugins/
 ├── polychat-plugin-announcement/
 ├── polychat-plugin-web-push/
 ├── polychat-plugin-p2p/
-└── polychat-plugin-onebot/
+├── polychat-plugin-onebot/
+├── polychat-plugin-gallery/
+└── polychat-plugin-lan-discovery/
 modules/
 ├── plugin-registry.js             # 注册表（createPluginRegistry）
 └── plugin-loader.js               # 配置自动迁移 + 内置/外部插件加载
