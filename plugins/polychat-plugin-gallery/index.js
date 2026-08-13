@@ -153,8 +153,8 @@ export default {
     // B3 完整列表：分页 + 配额用量 + 签名外链 url（stored_name 保留，B2 既有测试依赖）
     registry.registerApiRoute('GET', '/api/gallery', async (req, res, url) => {
       const user = requireUser(req, res); if (!user) return;
-      const offset = Number(url.searchParams.get('offset') || 0);
-      const limit = Math.min(Number(url.searchParams.get('limit') || 50), 100);
+      const offset = Math.max(Number(url.searchParams.get('offset') || 0) || 0, 0);
+      const limit = Math.min(Math.max(Number(url.searchParams.get('limit') || 50) || 50, 1), 100);
       const rows = db.prepare('SELECT * FROM gallery_images WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(user.id, limit, offset);
       const used = db.prepare('SELECT COALESCE(SUM(size), 0) AS used FROM gallery_images WHERE user_id = ?').get(user.id).used;
       return json(res, 200, {

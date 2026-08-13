@@ -163,3 +163,20 @@ test('图床上传多张：图片 rowid 与 user id 错开时仍 201（audit 第
     assert.equal(up.status, 201, `第 ${i + 1} 张上传应 201（图片 rowid 与 user id 错开）`);
   }
 });
+
+test('图床列表分页参数钳制：非法/负值不 500 且不绕过上限', async () => {
+  const auth = await registerUser('gal_page');
+  // 非法 limit（非数字）→ 200 回退默认值，而非 node:sqlite datatype mismatch 500
+  const badLimit = await api('/api/gallery?limit=abc', { headers: auth });
+  assert.equal(badLimit.status, 200, '?limit=abc 应 200 而非 500');
+  // 负 limit → 200（SQLite 负 LIMIT 视为无上限，必须钳制到下限 1）
+  const negLimit = await api('/api/gallery?limit=-5', { headers: auth });
+  assert.equal(negLimit.status, 200, '?limit=-5 应 200 不报错');
+  // 非法 offset → 200 回退 0
+  const badOffset = await api('/api/gallery?offset=abc', { headers: auth });
+  assert.equal(badOffset.status, 200, '?offset=abc 应 200 而非 500');
+  // 超大 limit → 钳制到 100 上限
+  const bigLimit = await api('/api/gallery?limit=10000', { headers: auth });
+  assert.equal(bigLimit.status, 200, '?limit=10000 应 200');
+  assert.ok((await bigLimit.json()).images.length <= 100, 'limit 应被钳制在 100 以内');
+});
