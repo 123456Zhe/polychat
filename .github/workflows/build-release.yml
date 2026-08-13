@@ -89,41 +89,37 @@ jobs:
             macOS)   mv dist/polychat-server dist/polychat-server-macos ;;
             *)       mv dist/polychat-server dist/polychat-server-linux ;;
           esac
-      # SEA binary crash isolation (macOS): probe injection on the runner's
-      # Node vs a fresh Node 26, with an lldb backtrace of the crash and
-      # Mach-O/signature inspection — root-causes the macOS SEA SIGSEGV.
+      # SEA binary crash isolation (macOS): postject/LIEF declares a __POSTJECT
+      # section but node's BlobDeserializer still NULL-derefs (nodejs/node#63466).
+      # Probe locates where the blob magic actually landed vs the declared
+      # section offset, and tests copying the blob over the declared offset.
       - name: Diagnose SEA crash on macOS
         if: runner.os == 'macOS'
         shell: bash
         run: |
           NODE_BIN="$(node -p 'process.execPath')"
-          echo "=== runner node ==="; "$NODE_BIN" -v
-          echo "=== plain node sanity ==="; "$NODE_BIN" -e 'console.log("plain-node-ok")'
-          echo "=== node signature ==="; codesign -dv "$NODE_BIN" 2>&1 | head -8 || true
+          "$NODE_BIN" -e 'console.log("plain-node-ok")'
           mkdir -p probe && cd probe
           printf 'console.log("probe-bare-ok");\n' > bare.cjs
           ../node_modules/.bin/esbuild bare.cjs --bundle --platform=node --format=cjs --outfile=bare-bundle.cjs
           printf '{"main":"bare-bundle.cjs","output":"bare.blob","disableExperimentalSEAWarning":true}' > sea-config.json
-          build_and_run() {
-            local name="$1" nodebin="$2"
-            cp "$nodebin" "probe-$name"
-            codesign --remove-signature "probe-$name" 2>/dev/null || true
-            "$nodebin" --experimental-sea-config sea-config.json
-            cp bare.blob "blob-$name"
-            node -e "require('postject').inject('probe-$name','NODE_SEA_BLOB',require('node:fs').readFileSync('blob-$name'),{sentinelFuse:'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2'}).then(()=>console.log('injected $name'))"
-            ls -l "probe-$name" | awk -v n="$name" '{print "probe-" n " size:", $5}'
-            codesign --sign - "probe-$name"
-            echo "--- run probe-$name ---"
-            ./probe-$name && echo "PROBE $name OK" || echo "PROBE $name crashed (exit $?)"
-          }
-          build_and_run n24 "$NODE_BIN"
-          echo "=== lldb backtrace of n24 crash ==="
-          lldb -b -o "run" -o "bt 20" -- ./probe-n24 2>&1 | grep -vE "^(\(lldb\)|\[.*\]$)" | tail -30 || true
-          echo "=== node 26 probe ==="
-          N26_BIN="$(npx -y node@26 -p 'process.execPath' 2>/dev/null)" || N26_BIN=""
-          if [ -n "$N26_BIN" ]; then echo "node26: $($N26_BIN -v) @ $N26_BIN"; build_and_run n26 "$N26_BIN"; else echo "npx node@26 unavailable"; fi
-          echo "=== injected Mach-O sections (n24) ==="
-          otool -l probe-n24 2>/dev/null | grep -A4 -E "__POSTJECT|LC_CODE_SIGNATURE" | head -20 || true
+          "$NODE_BIN" --experimental-sea-config sea-config.json
+          cp "$NODE_BIN" probe-x
+          codesign --remove-signature probe-x 2>/dev/null || true
+          node -e "require('postject').inject('probe-x','NODE_SEA_BLOB',require('node:fs').readFileSync('bare.blob'),{sentinelFuse:'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2'}).then(()=>console.log('injected'))"
+          echo "=== where does the blob magic actually land? ==="
+          grep -abo "NODE_SEA_BLOB" probe-x | head -5
+          echo "=== declared __POSTJECT section ==="
+          otool -l probe-x | grep -A10 "sectname __NODE_SEA_BLOB" | head -12
+          echo "=== run before dd ==="
+          codesign --sign - probe-x
+          ./probe-x && echo "PROBE OK" || echo "PROBE crashed before dd (exit $?)"
+          echo "=== dd blob over declared section offset, re-sign, run ==="
+          SEC_OFF=$(otool -l probe-x | grep -A10 "sectname __NODE_SEA_BLOB" | grep -m1 " offset " | awk '{print $2}')
+          echo "section offset: $SEC_OFF (file size: $(stat -f%z probe-x))"
+          dd if=bare.blob of=probe-x bs=1 seek=$SEC_OFF conv=notrunc 2>/dev/null
+          codesign --sign - probe-x
+          ./probe-x && echo "PROBE OK after dd" || echo "PROBE crashed after dd (exit $?)"
       - name: Smoke-test the binary before publishing
         shell: bash
         run: |
