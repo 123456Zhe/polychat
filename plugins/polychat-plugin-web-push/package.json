@@ -1,0 +1,18 @@
+{
+  "name": "polychat-plugin-web-push",
+  "version": "1.0.0",
+  "description": "PolyChat 插件：离线 Web Push 推送通知（VAPID + 订阅管理 + 房间消息推送）",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
+  },
+  "keywords": ["polychat", "polychat-plugin", "web-push", "push"],
+  "license": "MIT"
+}

@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer } from 'ws';
-import webpush from 'web-push';
-import { setupOnebot } from './modules/onebot/index.js';
+import { createPluginRegistry } from './modules/plugin-registry.js';
+import { setupPlugins, setupExternalPlugins } from './modules/plugin-loader.js';
 // Embedded static assets (web/ + KaTeX vendor files). `null` in dev/test runs —
 // the single-file build (`npm run build:server`) swaps this module for the real
 // asset map so the bundled/SEA server is fully self-contained.
@@ -27,6 +27,9 @@ function createEventBus() {
   };
 }
 const eventBus = createEventBus();
+// 插件注册表：插件通过它注册 HTTP 路由 / WS 消息处理 / 心跳 / 清理钩子，
+// 核心分发器在下面读取同一批集合（详见 modules/plugin-loader.js 与 docs/PLUGIN_API.md）。
+const registry = createPluginRegistry();
 
 // Source directory. In dev (ESM) `import.meta.url` points at server.mjs; in the
 // single-file build (CJS bundle / SEA binary) `__dirname` resolves to wherever
@@ -51,21 +54,10 @@ const FILE_URL_SECRET = process.env.FILE_URL_SECRET || randomBytes(32).toString(
 const FILE_URL_TTL_MS = Number(process.env.FILE_URL_TTL_MS || 7 * 24 * 3600_000);
 const INLINE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const MAX_AVATAR_SIZE = 2 * 1024 * 1024;
-const BACKUP_DIR = process.env.BACKUP_DIR || join(dirname(DB_PATH), 'backups');
-const BACKUP_INTERVAL_HOURS = Number(process.env.BACKUP_INTERVAL_HOURS || 24);
-const BACKUP_ENABLED = process.env.BACKUP_ENABLED !== 'false';
-const P2P_MIN_SIZE = Number(process.env.P2P_MIN_SIZE || 5 * 1024 * 1024);
-const P2P_ACTIVE_LIMIT = 10;
-const P2P_TTL_MS = 15 * 60 * 1000;
-const P2P_CONNECT_TIMEOUT_MS = 30_000;
-const TURN_URL = process.env.TURN_URL || '';
-const TURN_USERNAME = process.env.TURN_USERNAME || '';
-const TURN_CREDENTIAL = process.env.TURN_CREDENTIAL || '';
 
 mkdirSync(join(ROOT, 'data'), { recursive: true });
 mkdirSync(UPLOAD_DIR, { recursive: true });
 mkdirSync(AVATAR_DIR, { recursive: true });
-if (BACKUP_ENABLED) mkdirSync(BACKUP_DIR, { recursive: true });
 export const db = new DatabaseSync(DB_PATH);
 db.exec(`
   PRAGMA journal_mode = WAL;
@@ -326,45 +318,6 @@ db.exec(`CREATE TABLE IF NOT EXISTS bot_requests (
   reviewed_at TEXT
 )`);
 
-let vapidPublicKey = process.env.VAPID_PUBLIC_KEY || db.prepare("SELECT value FROM app_settings WHERE key = 'vapid_public_key'").get()?.value;
-let vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || db.prepare("SELECT value FROM app_settings WHERE key = 'vapid_private_key'").get()?.value;
-if (!vapidPublicKey || !vapidPrivateKey) {
-  const generated = webpush.generateVAPIDKeys();
-  vapidPublicKey = generated.publicKey; vapidPrivateKey = generated.privateKey;
-  db.prepare("INSERT OR REPLACE INTO app_settings(key, value) VALUES ('vapid_public_key', ?)").run(vapidPublicKey);
-  db.prepare("INSERT OR REPLACE INTO app_settings(key, value) VALUES ('vapid_private_key', ?)").run(vapidPrivateKey);
-}
-webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'mailto:polychat@example.com', vapidPublicKey, vapidPrivateKey);
-
-const startTime = Date.now();
-let lastBackupTime = null;
-let backupError = null;
-
-function performBackup() {
-  if (!BACKUP_ENABLED) return;
-  try {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupPath = join(BACKUP_DIR, `polychat-${timestamp}.db`);
-    db.exec(`VACUUM INTO '${backupPath}'`);
-    lastBackupTime = Date.now();
-    backupError = null;
-    const backupFiles = readdirSync(BACKUP_DIR).filter(f => f.endsWith('.db')).sort();
-    const maxBackups = Number(process.env.MAX_BACKUPS || 7);
-    while (backupFiles.length > maxBackups) {
-      unlinkSync(join(BACKUP_DIR, backupFiles.shift()));
-    }
-  } catch (e) {
-    backupError = e.message;
-    console.error('Backup failed:', e.message);
-  }
-}
-
-if (BACKUP_ENABLED) {
-  performBackup();
-  const backupTimer = setInterval(performBackup, BACKUP_INTERVAL_HOURS * 3600_000);
-  backupTimer.unref();
-}
-
 function json(res, status, body, headers = {}) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers });
   res.end(JSON.stringify(body));
@@ -473,6 +426,11 @@ function logAudit(adminId, action, targetUserId = null, details = null) {
 function getClientIp(req) {
   if (TRUST_PROXY) return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
   return req.socket.remoteAddress || 'unknown';
+}
+
+// 通用私信会话成员判断（核心附件权限与 p2p 插件共用）。
+function isDmMember(conversationId, userId) {
+  return Boolean(db.prepare('SELECT 1 FROM dm_members WHERE conversation_id = ? AND user_id = ?').get(conversationId, userId));
 }
 
 function canAccessAttachment(attachmentId, user) {
@@ -658,65 +616,6 @@ function sendToUser(userId, event) {
 function userOnline(userId) {
   return [...sockets].some(socket => socket.readyState === 1 && socket.user.id === userId);
 }
-function p2pTransfer(id) {
-  return db.prepare('SELECT * FROM p2p_transfers WHERE id = ?').get(id);
-}
-function isDmMember(conversationId, userId) {
-  return Boolean(db.prepare('SELECT 1 FROM dm_members WHERE conversation_id = ? AND user_id = ?').get(conversationId, userId));
-}
-function dmPeerOf(conversationId, userId) {
-  return db.prepare('SELECT user_id FROM dm_members WHERE conversation_id = ? AND user_id != ?').get(conversationId, userId)?.user_id || null;
-}
-function expireStaleTransfers() {
-  db.prepare(`UPDATE p2p_transfers SET status = 'expired', updated_at = CURRENT_TIMESTAMP
-    WHERE status IN ('pending', 'accepted') AND (julianday('now') - julianday(created_at)) * 86400000 > ?`).run(P2P_TTL_MS);
-}
-function p2pIceServers() {
-  const servers = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
-  if (TURN_URL) {
-    const turn = { urls: TURN_URL };
-    if (TURN_USERNAME) turn.username = TURN_USERNAME;
-    if (TURN_CREDENTIAL) turn.credential = TURN_CREDENTIAL;
-    servers.push(turn);
-  }
-  return servers;
-}
-function publicP2p(transfer, peerOnline = false) {
-  return {
-    id: transfer.id,
-    conversation_id: transfer.conversation_id,
-    sender_id: transfer.sender_id,
-    receiver_id: transfer.receiver_id,
-    name: transfer.name,
-    type: transfer.mime_type,
-    size: transfer.size,
-    status: transfer.status,
-    sha256: transfer.sha256 || null,
-    created_at: transfer.created_at,
-    peer_online: peerOnline
-  };
-}
-async function pushMessage(roomId, senderId, message) {
-  const room = db.prepare('SELECT name, is_private FROM rooms WHERE id = ?').get(roomId);
-  if (!room) return;
-  const subscriptions = db.prepare(`SELECT push_subscriptions.endpoint, push_subscriptions.p256dh, push_subscriptions.auth
-    FROM push_subscriptions JOIN users ON users.id = push_subscriptions.user_id
-    LEFT JOIN room_members ON room_members.room_id = ? AND room_members.user_id = users.id
-    WHERE users.id != ? AND (? = 0 OR room_members.user_id IS NOT NULL OR users.is_admin = 1)`).all(roomId, senderId, room.is_private);
-  const payload = JSON.stringify({
-    title: `${message.username} · #${room.name}`,
-    body: message.content || (message.attachment_name ? `发送了 ${message.attachment_name}` : '发送了附件'),
-    roomId, messageId: message.id, url: `/?room=${roomId}&message=${message.id}`
-  });
-  await Promise.allSettled(subscriptions.map(async subscription => {
-    try {
-      await webpush.sendNotification({ endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, payload, { TTL: 3600, urgency: 'high' });
-    } catch (error) {
-      if ([404, 410].includes(error.statusCode)) db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').run(subscription.endpoint);
-      else throw error;
-    }
-  }));
-}
 
 function createNotification(userId, { type = 'system', title, content, link = null, data = null }) {
   const result = db.prepare('INSERT INTO notifications(user_id, type, title, content, link, data) VALUES (?, ?, ?, ?, ?, ?)')
@@ -738,15 +637,8 @@ function cookie(token, clear = false) {
 }
 
 async function api(req, res, url) {
-  if (req.method === 'GET' && url.pathname === '/api/health') {
-    const uptimeMs = Date.now() - startTime;
-    return json(res, 200, {
-      status: 'ok',
-      version: '1.0.0',
-      uptime_ms: uptimeMs,
-      uptime_human: `${Math.floor(uptimeMs / 86400000)}d ${Math.floor((uptimeMs % 86400000) / 3600000)}h ${Math.floor((uptimeMs % 3600000) / 60000)}m`
-    });
-  }
+  // 插件路由（/api/health、/api/p2p/*、/api/push/*、/api/admin/announcement 等）
+  // 由末尾的插件分发器处理，核心路由保持原有匹配顺序优先。
 
   if (req.method === 'POST' && url.pathname === '/api/register') {
     const ip = getClientIp(req);
@@ -876,30 +768,10 @@ async function api(req, res, url) {
     return json(res, 200, { stats, users });
   }
 
-  // 全局公告：管理员向全体在线用户广播（持久化于 app_settings，重启不丢）
-  const adminAnnouncementMatch = url.pathname === '/api/admin/announcement';
-  if (adminAnnouncementMatch && req.method === 'GET') {
-    const user = requireUser(req, res); if (!user) return;
-    const row = db.prepare("SELECT value FROM app_settings WHERE key = 'global_announcement'").get();
-    return json(res, 200, { announcement: row ? JSON.parse(row.value) : null });
-  }
-  if (adminAnnouncementMatch && req.method === 'POST') {
-    const admin = requireAdmin(req, res); if (!admin) return;
-    const { content } = await readBody(req);
-    const text = String(content || '').trim();
-    if (!text) return json(res, 400, { error: '公告内容不能为空' });
-    const announcement = { content: text, admin_name: admin.username, created_at: new Date().toISOString() };
-    db.prepare("INSERT OR REPLACE INTO app_settings(key, value) VALUES ('global_announcement', ?)").run(JSON.stringify(announcement));
-    logAudit(admin.id, 'announcement', null, '发布全局公告');
-    broadcast({ type: 'announcement', global: true, ...announcement });
-    return json(res, 200, { announcement });
-  }
-  if (adminAnnouncementMatch && req.method === 'DELETE') {
-    const admin = requireAdmin(req, res); if (!admin) return;
-    db.prepare("DELETE FROM app_settings WHERE key = 'global_announcement'").run();
-    logAudit(admin.id, 'announcement_clear', null, '清除全局公告');
-    broadcast({ type: 'announcement', global: true, content: null });
-    return json(res, 200, { ok: true });
+  // 插件状态可见性：管理员只读查看已加载/已停用插件（配置入口见 data/plugins.json）
+  if (req.method === 'GET' && url.pathname === '/api/admin/plugins') {
+    if (!requireAdmin(req, res)) return;
+    return json(res, 200, { plugins: registry.listPlugins() });
   }
 
   const adminUserMatch = url.pathname.match(/^\/api\/admin\/users\/(\d+)\/admin$/);
@@ -927,7 +799,7 @@ async function api(req, res, url) {
     if (target.is_admin) return json(res, 400, { error: '不能封禁管理员' });
     const bannedUntil = Date.now() + Number(duration_hours) * 3600_000;
     db.prepare('UPDATE users SET banned_until = ? WHERE id = ?').run(bannedUntil, targetId);
-    onebot.disconnectUser(targetId);
+    registry.service('onebot')?.disconnectUser(targetId);
     logAudit(admin.id, 'ban_user', targetId, `封禁 ${duration_hours} 小时`);
     return json(res, 200, { user: publicUser({ ...target, banned_until: bannedUntil }) });
   }
@@ -1074,26 +946,6 @@ async function api(req, res, url) {
         'cache-control': 'private, max-age=31536000, immutable', 'x-content-type-options': 'nosniff' });
       return res.end(bytes);
     } catch { return json(res, 404, { error: '头像文件不存在' }); }
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/push/vapid-public-key') {
-    if (!requireUser(req, res)) return;
-    return json(res, 200, { publicKey: vapidPublicKey });
-  }
-  if (req.method === 'POST' && url.pathname === '/api/push/subscriptions') {
-    const user = requireUser(req, res); if (!user) return;
-    const { endpoint = '', keys = {} } = await readBody(req, 10_000);
-    const target = String(endpoint), p256dh = String(keys.p256dh || ''), auth = String(keys.auth || '');
-    if (!/^https:\/\//.test(target) || target.length > 2000 || !p256dh || p256dh.length > 500 || !auth || auth.length > 500) return json(res, 400, { error: '推送订阅格式无效' });
-    db.prepare(`INSERT INTO push_subscriptions(endpoint, user_id, p256dh, auth) VALUES (?, ?, ?, ?)
-      ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth, updated_at = CURRENT_TIMESTAMP`).run(target, user.id, p256dh, auth);
-    return json(res, 200, { ok: true });
-  }
-  if (req.method === 'DELETE' && url.pathname === '/api/push/subscriptions') {
-    const user = requireUser(req, res); if (!user) return;
-    const { endpoint = '' } = await readBody(req, 4_000);
-    db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?').run(String(endpoint), user.id);
-    return json(res, 200, { ok: true });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/rooms') {
@@ -1537,8 +1389,8 @@ async function api(req, res, url) {
       LEFT JOIN attachments ON attachments.id = messages.attachment_id WHERE messages.id = ?`).get(result.lastInsertRowid);
     const hydrated = hydrateMessages([message], user.id)[0];
     broadcast({ type: threadRoot ? 'thread_message' : 'message', room_id: roomId, message_id: Number(result.lastInsertRowid), thread_root: threadRoot, message: hydrated }, roomId);
-    if (!threadRoot) eventBus.emit('message:sent', { roomId, message: hydrated, sender: user, threadRoot });
-    void pushMessage(roomId, user.id, message).catch(error => console.error('Web Push failed:', error.message));
+    // 通知插件（OneBot、web-push 等）有新消息；threadRoot 由订阅方自行过滤。
+    eventBus.emit('message:sent', { roomId, message: hydrated, sender: user, threadRoot });
     return json(res, 201, { message: hydrated });
   }
 
@@ -1645,90 +1497,6 @@ async function api(req, res, url) {
     db.prepare('INSERT INTO dm_members(conversation_id, user_id) VALUES (?, ?)').run(id, user.id);
     db.prepare('INSERT INTO dm_members(conversation_id, user_id) VALUES (?, ?)').run(id, target.id);
     return json(res, 201, { conversation: { id, peer: publicUser(target) } });
-  }
-
-  if (req.method === 'GET' && url.pathname === '/api/p2p/config') {
-    const user = requireUser(req, res); if (!user) return;
-    return json(res, 200, { ice_servers: p2pIceServers(), min_size: P2P_MIN_SIZE, connect_timeout_ms: P2P_CONNECT_TIMEOUT_MS });
-  }
-
-  const p2pTransfersMatch = url.pathname.match(/^\/api\/p2p\/transfers$/);
-  if (p2pTransfersMatch && req.method === 'POST') {
-    const user = requireUser(req, res); if (!user) return;
-    expireStaleTransfers();
-    if (isUserMuted(user)) return json(res, 403, { error: '你已被禁言，无法发送文件', muted_until: user.muted_until });
-    const { conversation_id, name = '', type = '', size = 0, content = '', reply_to = null } = await readBody(req);
-    const convId = Number(conversation_id);
-    if (!convId || !isDmMember(convId, user.id)) return json(res, 403, { error: '无权访问该会话' });
-    const cleanName = String(name).trim().replace(/[\r\n]/g, '').slice(0, 255);
-    if (!cleanName) return json(res, 400, { error: '文件名不能为空' });
-    const fileSize = Number(size);
-    if (!Number.isInteger(fileSize) || fileSize < 1 || fileSize > MAX_FILE_SIZE) return json(res, 400, { error: `文件大小需在 1 字节到 ${MAX_FILE_SIZE} 字节之间` });
-    const receiverId = dmPeerOf(convId, user.id);
-    if (!receiverId) return json(res, 400, { error: '会话中没有其他成员' });
-    const mime = String(type).match(/^[\w.+-]+\/[\w.+-]+$/) ? String(type) : 'application/octet-stream';
-    const text = String(content).trim().slice(0, 10_000);
-    const replyId = reply_to == null ? null : Number(reply_to);
-    if (replyId && !db.prepare('SELECT id FROM messages WHERE id = ? AND dm_id = ?').get(replyId, convId)) return json(res, 400, { error: '回复目标不存在或不在当前会话' });
-    const activeCount = db.prepare("SELECT COUNT(*) AS count FROM p2p_transfers WHERE (sender_id = ? OR receiver_id = ?) AND status IN ('pending', 'accepted')").get(user.id, user.id).count;
-    if (activeCount >= P2P_ACTIVE_LIMIT) return json(res, 429, { error: '进行中的直传过多，请稍后再试' });
-    const id = randomBytes(24).toString('base64url');
-    db.prepare('INSERT INTO p2p_transfers(id, conversation_id, sender_id, receiver_id, name, mime_type, size, content, reply_to) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, convId, user.id, receiverId, cleanName, mime, fileSize, text, replyId);
-    const transfer = p2pTransfer(id);
-    const peerOnline = userOnline(receiverId);
-    sendToUser(receiverId, { type: 'p2p_invite', transfer: publicP2p(transfer), sender_username: user.username });
-    return json(res, 201, { transfer: publicP2p(transfer, peerOnline) });
-  }
-
-  const p2pTransferMatch = url.pathname.match(/^\/api\/p2p\/transfers\/([A-Za-z0-9_-]+)$/);
-  if (p2pTransferMatch && req.method === 'GET') {
-    const user = requireUser(req, res); if (!user) return;
-    const transfer = p2pTransfer(p2pTransferMatch[1]);
-    if (!transfer || !isDmMember(transfer.conversation_id, user.id)) return json(res, 404, { error: '直传不存在' });
-    const peerId = user.id === transfer.sender_id ? transfer.receiver_id : transfer.sender_id;
-    return json(res, 200, { transfer: publicP2p(transfer, userOnline(peerId)) });
-  }
-
-  const p2pActionMatch = url.pathname.match(/^\/api\/p2p\/transfers\/([A-Za-z0-9_-]+)\/(accept|reject|cancel|complete|fail)$/);
-  if (p2pActionMatch && req.method === 'POST') {
-    const user = requireUser(req, res); if (!user) return;
-    expireStaleTransfers();
-    const transfer = p2pTransfer(p2pActionMatch[1]);
-    const action = p2pActionMatch[2];
-    if (!transfer || !isDmMember(transfer.conversation_id, user.id)) return json(res, 404, { error: '直传不存在' });
-    const isSender = user.id === transfer.sender_id;
-    const isReceiver = user.id === transfer.receiver_id;
-    if (action === 'accept' || action === 'reject') {
-      if (!isReceiver) return json(res, 403, { error: '只有接收者可以处理直传请求' });
-      if (transfer.status !== 'pending') return json(res, 409, { error: '直传状态不允许该操作' });
-      const newStatus = action === 'accept' ? 'accepted' : 'rejected';
-      db.prepare('UPDATE p2p_transfers SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newStatus, transfer.id);
-      sendToUser(transfer.sender_id, { type: action === 'accept' ? 'p2p_accepted' : 'p2p_rejected', transfer_id: transfer.id });
-      return json(res, 200, { transfer: publicP2p(p2pTransfer(transfer.id)) });
-    }
-    if (action === 'cancel') {
-      if (transfer.status !== 'pending' && transfer.status !== 'accepted') return json(res, 409, { error: '直传已结束，无法取消' });
-      db.prepare("UPDATE p2p_transfers SET status = 'canceled', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(transfer.id);
-      sendToUser(isSender ? transfer.receiver_id : transfer.sender_id, { type: 'p2p_canceled', transfer_id: transfer.id });
-      return json(res, 200, { transfer: publicP2p(p2pTransfer(transfer.id)) });
-    }
-    if (action === 'complete' || action === 'fail') {
-      if (transfer.status !== 'accepted') return json(res, 409, { error: '直传状态不允许该操作' });
-      const { sha256 = null } = await readBody(req);
-      const digest = typeof sha256 === 'string' && /^[a-f0-9]{64}$/.test(sha256) ? sha256 : null;
-      const newStatus = action === 'complete' ? 'completed' : 'failed';
-      db.prepare('UPDATE p2p_transfers SET status = ?, sha256 = COALESCE(?, sha256), updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newStatus, digest, transfer.id);
-      if (action === 'fail') return json(res, 200, { transfer: publicP2p(p2pTransfer(transfer.id)) });
-      const result = db.prepare('INSERT INTO messages(dm_id, user_id, content, p2p_transfer_id, reply_to) VALUES (?, ?, ?, ?, ?)').run(transfer.conversation_id, transfer.sender_id, transfer.content, transfer.id, transfer.reply_to);
-      const message = db.prepare(`SELECT ${dmMessageColumns} FROM messages JOIN users ON users.id = messages.user_id
-        LEFT JOIN messages AS parent ON parent.id = messages.reply_to LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id
-        LEFT JOIN attachments ON attachments.id = messages.attachment_id LEFT JOIN p2p_transfers ON p2p_transfers.id = messages.p2p_transfer_id
-        WHERE messages.id = ?`).get(result.lastInsertRowid);
-      const hydrated = hydrateMessages([message], user.id)[0];
-      broadcastDm(transfer.conversation_id, { type: 'dm_message', conversation_id: transfer.conversation_id, message: hydrated });
-      eventBus.emit('dm:sent', { conversationId: transfer.conversation_id, message: hydrated, sender: user });
-      return json(res, 201, { transfer: publicP2p(p2pTransfer(transfer.id)), message: hydrated });
-    }
   }
 
   const dmMessagesMatch = url.pathname.match(/^\/api\/dm\/conversations\/(\d+)\/messages$/);
@@ -1854,7 +1622,7 @@ async function api(req, res, url) {
     const row = db.prepare('SELECT user_id FROM bot_tokens WHERE token = ?').get(token);
     if (!row) return json(res, 404, { error: 'Token 不存在' });
     db.prepare('DELETE FROM bot_tokens WHERE token = ?').run(token);
-    onebot.disconnectUser(row.user_id);
+    registry.service('onebot')?.disconnectUser(row.user_id);
     logAudit(admin.id, 'delete_bot_token', row.user_id);
     return json(res, 200, { ok: true });
   }
@@ -1950,6 +1718,13 @@ async function api(req, res, url) {
     } catch { return json(res, 404, { error: '文件数据不存在' }); }
   }
 
+  // 插件 HTTP 路由分发（内置/外部插件注册，核心路由优先）
+  for (const route of registry.apiRoutes) {
+    if (route.method !== req.method) continue;
+    const hit = typeof route.pattern === 'string' ? url.pathname === route.pattern : route.pattern.test(url.pathname);
+    if (hit) return await route.handler(req, res, url);
+  }
+
   return json(res, 404, { error: '接口不存在' });
 }
 
@@ -2006,9 +1781,20 @@ export const server = http.createServer(async (req, res) => {
 // (file links, OneBot origin) unless the deployer sets PUBLIC_URL explicitly.
 const publicHost = /^(0\.0\.0\.0|::|\[::\])$/.test(HOST) ? 'localhost' : HOST;
 const publicBaseUrl = (process.env.PUBLIC_URL || `http://${publicHost}:${PORT}`).replace(/\/+$/, '');
-const onebot = setupOnebot({ db, eventBus, roomForUser, validateMentions, hydrateMessages, broadcast, conversationMembers, socketCanAccess, isUserBanned, isUserMuted, publicBaseUrl, fileUrlSecret: FILE_URL_SECRET, fileUrlTtlMs: FILE_URL_TTL_MS });
-onebot.attach(server);
-if (process.env.NODE_ENV !== 'test') onebot.startReverse();
+
+// 插件装配：注入核心依赖（ctx），同步加载内置插件（backup/health/announcement/
+// web-push/p2p/onebot）。外部插件（plugins/ 目录或 npm 的 polychat-plugin-*）在
+// 非 test 启动路径下异步加载，见文件底部。
+const pluginCtx = {
+  root: ROOT, db, eventBus, registry, server, env: process.env,
+  dbPath: DB_PATH, uploadDir: UPLOAD_DIR, avatarDir: AVATAR_DIR,
+  maxFileSize: MAX_FILE_SIZE, publicBaseUrl, fileUrlSecret: FILE_URL_SECRET, fileUrlTtlMs: FILE_URL_TTL_MS,
+  json, requireUser, requireAdmin, readBody, logAudit, getClientIp, publicUser,
+  hydrateMessages, broadcast, broadcastDm, conversationMembers, socketCanAccess,
+  onlineUsers, sendToUser, userOnline, createNotification, isUserBanned, isUserMuted,
+  roomForUser, validateMentions, isDmMember
+};
+setupPlugins(pluginCtx, registry);
 
 const webSocketServer = new WebSocketServer({ noServer: true });
 server.on('upgrade', (req, socket, head) => {
@@ -2048,15 +1834,9 @@ server.on('upgrade', (req, socket, head) => {
           for (const peer of sockets) if (peer !== client && peer.readyState === 1 && socketCanAccess(peer, roomId)) peer.send(payload);
           return;
         }
-        if (event.type === 'p2p_signal') {
-          expireStaleTransfers();
-          const transfer = p2pTransfer(String(event.transfer_id || ''));
-          if (!transfer || transfer.status !== 'accepted') return;
-          const targetId = Number(event.to_user_id);
-          if (targetId !== transfer.sender_id && targetId !== transfer.receiver_id) return;
-          if (user.id !== transfer.sender_id && user.id !== transfer.receiver_id) return;
-          sendToUser(targetId, { type: 'p2p_signal', transfer_id: transfer.id, from_user_id: user.id, data: event.data });
-        }
+        // 插件 WS 消息类型（如 p2p_signal → p2p 插件）。
+        const pluginWsHandler = registry.wsHandlers.get(event.type);
+        if (pluginWsHandler) pluginWsHandler(client, event);
       } catch { /* ignore malformed client messages */ }
     });
     client.on('close', () => {
@@ -2072,7 +1852,7 @@ const heartbeat = setInterval(() => {
     socket.isAlive = false;
     socket.ping();
   }
-  onebot.heartbeat();
+  for (const fn of registry.heartbeatFns) fn();
 }, 30_000);
 heartbeat.unref();
 
@@ -2092,13 +1872,24 @@ export function cleanupExpiredData() {
         try { unlinkSync(join(UPLOAD_DIR, name)); } catch { /* already gone */ }
       }
     }
+    for (const fn of registry.cleanupFns) fn();
   } catch { /* cleanup failures are non-fatal */ }
 }
 
 const cleanupTimer = setInterval(cleanupExpiredData, 60 * 60_000);
 cleanupTimer.unref();
 
+// 手动触发外部插件加载（正常启动路径已自动调用；供测试/运维按需加载）。
+export function loadExternalPlugins() {
+  return setupExternalPlugins(pluginCtx, registry);
+}
+
 if (process.env.NODE_ENV !== 'test') {
   cleanupExpiredData();
-  server.listen(PORT, HOST, () => console.log(`PolyChat: http://${HOST}:${PORT}`));
+  (async () => {
+    // 外部插件（plugins/ 目录或 npm 的 polychat-plugin-*）在监听前加载完毕；
+    // 内置插件已由上面的 setupPlugins 同步注册（SEA 单文件也自包含它们）。
+    await setupExternalPlugins(pluginCtx, registry);
+    server.listen(PORT, HOST, () => console.log(`PolyChat: http://${HOST}:${PORT}`));
+  })();
 }

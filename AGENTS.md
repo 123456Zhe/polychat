@@ -48,8 +48,8 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 
 ## Architecture
 
-- **Server**: `server.mjs` — HTTP server + SQLite (`node:sqlite`) + core API routes. Realtime bots/AI live in the `modules/onebot/` package, loaded via `setupOnebot()` and wired through an EventBus (`message:sent`, `dm:sent`). No framework, no build step for the server.
-- **Database**: SQLite with WAL mode, auto-migrates schema on startup (adds columns if missing). DB file at `data/polychat.db`.
+- **Server**: `server.mjs` — HTTP server + SQLite (`node:sqlite`) + core API routes. Non-essential features are extracted as plugins in `plugins/polychat-plugin-*/` (unified `polychat-plugin-<name>` naming), loaded by `modules/plugin-loader.js` through the `modules/plugin-registry.js` registry (HTTP routes / WS message types / heartbeat / cleanup / services), and wired through an EventBus (`message:sent`, `dm:sent`). OneBot lives in `plugins/polychat-plugin-onebot/` (was `modules/onebot/`). No framework, no build step for the server.
+- **Database**: SQLite with WAL mode, auto-migrates schema on startup (adds columns if missing). DB file at `data/polychat.db`. All tables (incl. plugin-owned ones like `p2p_transfers`, `push_subscriptions`, `app_settings`, `bot_tokens`) stay centrally created here so plugins only move logic, not schema.
 - **Web frontend**: Vue 3 + Vite app in `web-client/`. `npm run web:build` outputs production assets to `web/`, which the Node server serves directly. Mobile-responsive with sidebar toggle.
 - **Android app**: Capacitor wrapper in `android-app/`. Uses built web assets from `web/`. Build with `./build-android.sh`.
 - **GUI client**: `clients/gui.py` — Flet desktop app, shares `clients/chat_api.py` for HTTP logic. Needs `.venv-gui/` virtualenv (created by `build-gui.sh`).
@@ -59,15 +59,16 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 
 - First registered user automatically becomes admin.
 - Server auto-creates `data/`, `data/uploads/`, `data/avatars/`, and `data/backups/` directories.
-- Environment variables: `PORT` (default 3000), `HOST` (default `0.0.0.0` — all interfaces, so LAN/public access works out of the box; set `127.0.0.1` to restrict to loopback), `DB_PATH`, `UPLOAD_DIR`, `AVATAR_DIR`, `MAX_FILE_SIZE`, `BACKUP_ENABLED`, `BACKUP_DIR`, `BACKUP_INTERVAL_HOURS`, `MAX_BACKUPS`.
+- Environment variables: `PORT` (default 3000), `HOST` (default `0.0.0.0` — all interfaces, so LAN/public access works out of the box; set `127.0.0.1` to restrict to loopback), `DB_PATH`, `UPLOAD_DIR`, `AVATAR_DIR`, `MAX_FILE_SIZE`, plus plugin-level `DISABLED_PLUGINS` (comma-separated blacklist), `PLUGINS_DIR` (external plugin drop-in dir, default `plugins`), `PLUGINS_CONFIG_PATH` (default `data/plugins.json`). Per-plugin env vars (see README): `BACKUP_ENABLED`/`BACKUP_DIR`/`BACKUP_INTERVAL_HOURS`/`MAX_BACKUPS`, `VAPID_*`, `P2P_*`, `TURN_*`, `ONEBOT_*`.
+- Plugins default-enabled; config auto-generated/auto-migrated in `data/plugins.json` on every boot (new plugins added with defaults, removed pruned, config merged key-by-key with manifest `defaultConfig`). Built-ins statically imported → bundled into the single-file/SEA build; external plugins (drop-in dir or npm `polychat-plugin-*`) loaded dynamically (directory deployments only).
 - `NODE_ENV=test` suppresses the server from listening (used by tests to bind to a random port).
 - `data/` is gitignored — do not commit database or uploaded files.
 - File upload limit: 100 MB (configurable). Avatar limit: 2 MB (PNG/JPEG/WebP/GIF only).
 - Login rate limiting: 5 attempts per 15 minutes per IP.
 - Admin can ban/mute users with configurable duration.
 - Users can export chat history and delete their account.
-- Health check endpoint: `GET /api/health`.
-- Optional automatic SQLite backup (enabled by default).
+- Health check endpoint: `GET /api/health` (from the `health` plugin).
+- Optional automatic SQLite backup (enabled by default, from the `backup` plugin).
 - WebSocket realtime: room messages, DM messages, friend events (request/accept/remove), typing indicators, presence. HTTP polling retained as fallback.
 - Friend system: bidirectional — sender creates pending request; accept creates reverse row. Must be friends to start a DM conversation.
 - DM (private messaging): `dm_conversations` + `dm_members` tables. Messages stored in `messages` table with `dm_id` set and `room_id` null. Supports unread counts, marking as read, edit, retract, and reactions.
@@ -76,10 +77,14 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 
 ## Session work log
 
-### This session (默认监听 0.0.0.0)
-- `server.mjs`：`HOST` 默认从 `127.0.0.1` 改为 `0.0.0.0`（聊天服务本意是局域网/公网访问，开箱即用）；仅本机访问可设 `HOST=127.0.0.1`。
-- 连带修复：`publicBaseUrl` 默认值增加通配地址守卫——`HOST` 为 `0.0.0.0`/`::` 时回退用 `localhost` 生成 URL（否则文件链接/OneBot origin 会变成不可路由的 `http://0.0.0.0:3000`）；部署方仍可用 `PUBLIC_URL` 显式覆盖。
-- 文档同步：README 环境变量表/快速启动/单文件部署、AGENTS.md 环境变量说明、Release 正文示例（去掉显式 `HOST=0.0.0.0`，标注新默认值）。验证：启动实测绑定 `0.0.0.0`，`npm test` 25/25 通过。
+### This session (插件系统：非必要功能独立为插件)
+- **目标**：项目更小、更易部署 —— server.mjs 2104 → 1895 行（约 210 行逻辑迁出为插件）；默认部署方式零变化（单文件 SEA / Docker / `node server.mjs`），内置插件静态打包自包含。
+- **插件框架**：`modules/plugin-registry.js`（`createPluginRegistry`：`registerApiRoute`/`registerWsMessage`/`registerHeartbeat`/`registerCleanup`/`provide`/`service`）；`modules/plugin-loader.js`（配置加载/迁移、发现、`setupPlugins` 同步加载内置、`setupExternalPlugins` 异步加载外部）。统一命名 `polychat-plugin-<name>`，插件 = 独立 npm 包（package.json/index.js/README），公开接口见 `docs/PLUGIN_API.md`，第三方模板 `templates/polychat-plugin-template/`，可插件化功能清单与迁移说明 `docs/PLUGINS.md`。
+- **自动配置/迁移**：`data/plugins.json` 首次启动自动生成、每次启动自动迁移（新插件补默认、删除条目剪除、config 与 `defaultConfig` 逐键合并）；`DISABLED_PLUGINS=backup,p2p` 黑名单快速停用（优先于配置文件）；`PLUGINS_DIR`/`PLUGINS_CONFIG_PATH` 可换目录。老项目升级：内置 6 插件默认全开 + 原 env 变量照常生效 + Schema 集中自动迁移 → 零手工。
+- **提取的 6 个插件**：`backup`（定时备份）、`health`（`/api/health`）、`announcement`（全局公告）、`web-push`（VAPID + 订阅 + 订阅 `message:sent` 推送）、`p2p`（路由 + WS `p2p_signal` + `dm:sent` + cleanup，`isDmMember` 留在核心供附件权限共用并注入 ctx）、`onebot`（`modules/onebot/` git mv 到 `plugins/polychat-plugin-onebot/`，入口改为插件 manifest，`attach`/`startReverse`/`heartbeat` 内聚，核心经 `registry.service('onebot')?.disconnectUser()` 安全调用）。
+- **server.mjs 集成**：api() 404 前插件路由分发（核心优先）；WS 消息 `typing` 保留核心、其余查 `registry.wsHandlers`；心跳循环 `registry.heartbeatFns`；`cleanupExpiredData()` 追加 `registry.cleanupFns`；`message:sent` 事件改为无条件发射（含 `threadRoot`，OneBot 已有守卫，web-push 借此推送）；新增 `GET /api/admin/plugins` 管理员只读列表；`loadExternalPlugins()` 导出供测试/运维。
+- **验证**：31/31 Node 测试通过（25 旧 + 新增 `test/plugins.test.mjs` 5 项：配置迁移/停用不注册/管理员列表/外部插件投放+内置优先；`test/plugins-disabled.test.mjs` 1 项：黑名单）；`web:build` 干净；`build:all` 成功（bundle 5.2mb + SEA 128MB）；.cjs 与 SEA 二进制启动实测 health/p2p/push/announcement/admin-plugins 全通，`DISABLED_PLUGINS=health,p2p` 对应 404。
+- **后续可做（Tier 2）**：审计日志/管理封禁/限速再插件化（需核心加钩子，见 docs/PLUGINS.md）；插件拆分独立 git 仓库 + 发布 npm（等确认远程地址）。
 
 ### This session (单文件服务端打包)
 - **目标**：解决部署麻烦 —— 把服务端打成单个可执行文件，目标机无需装 Node、无需拷贝项目目录。

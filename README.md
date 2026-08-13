@@ -82,14 +82,42 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 | `UPLOAD_DIR` | `data/uploads` | 文件上传目录 |
 | `AVATAR_DIR` | `data/avatars` | 头像存储目录 |
 | `MAX_FILE_SIZE` | `104857600` (100 MB) | 最大文件大小（字节） |
-| `P2P_MIN_SIZE` | `5242880` (5 MB) | 达到该字节数的私信文件尝试 P2P 直传 |
-| `TURN_URL` | 空 | TURN 服务器地址（如 `turn:turn.example.com:3478`），对称 NAT 兜底 |
+| `DISABLED_PLUGINS` | 空 | 逗号分隔的插件黑名单（如 `DISABLED_PLUGINS=backup,p2p`），优先于配置文件 |
+| `PLUGINS_DIR` | `plugins` | 外部插件投放目录（`polychat-plugin-*` 命名） |
+| `PLUGINS_CONFIG_PATH` | `data/plugins.json` | 插件配置文件路径（自动生成 + 自动迁移） |
+
+以下变量由对应插件读取（插件默认启用时行为与旧版一致）：
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `P2P_MIN_SIZE` | `5242880` (5 MB) | 达到该字节数的私信文件尝试 P2P 直传（`p2p` 插件） |
+| `TURN_URL` | 空 | TURN 服务器地址（如 `turn:turn.example.com:3478`），对称 NAT 兜底（`p2p` 插件） |
 | `TURN_USERNAME` | 空 | TURN 用户名（可选） |
 | `TURN_CREDENTIAL` | 空 | TURN 密码（可选） |
-| `BACKUP_ENABLED` | `true` | 启用自动备份 |
+| `BACKUP_ENABLED` | `true` | 启用自动备份（`backup` 插件） |
 | `BACKUP_DIR` | `data/backups` | 备份目录 |
 | `BACKUP_INTERVAL_HOURS` | `24` | 备份间隔（小时） |
 | `MAX_BACKUPS` | `7` | 保留备份数量 |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | 空 | Web Push VAPID 密钥（`web-push` 插件，缺省自动生成并持久化） |
+| `VAPID_SUBJECT` | `mailto:polychat@example.com` | Web Push 订阅者标识 |
+
+## 插件系统
+
+非核心功能已独立为插件（统一命名 `polychat-plugin-<name>`，目录 `plugins/`，公共接口见 [docs/PLUGIN_API.md](docs/PLUGIN_API.md)）：
+
+| 插件 | 功能 | 停用影响 |
+|---|---|---|
+| `backup` | SQLite 自动备份 | 失去定时备份 |
+| `health` | `GET /api/health` | 健康检查 404（CI 冒烟依赖它，默认保留） |
+| `announcement` | 全局公告 | 失去全体公告 |
+| `web-push` | 离线 Web Push 推送 | 失去离线提醒（站内实时不受影响） |
+| `p2p` | 私信 P2P 大文件直传 | 大文件回退为服务器分片上传 |
+| `onebot` | OneBot 机器人网关 | 失去 Bot 接入 |
+
+- **默认全部启用**，API 表面不变；按部署裁剪用 `DISABLED_PLUGINS=backup,p2p`。
+- 插件配置自动生成并自动迁移于 `data/plugins.json`（新增插件自动补默认、旧配置逐键合并、删除条目剪除），老项目升级零手工。
+- 内置插件静态打包进单文件/SEA；外部插件（git clone 进 `plugins/` 或 `npm install polychat-plugin-*`）在目录部署下自动发现加载。
+- 管理员可 `GET /api/admin/plugins` 查看插件名称/版本/状态。
 
 ## Web 前端开发
 

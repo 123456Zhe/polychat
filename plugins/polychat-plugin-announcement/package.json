@@ -1,0 +1,15 @@
+{
+  "name": "polychat-plugin-announcement",
+  "version": "1.0.0",
+  "description": "PolyChat 插件：管理员全局公告（发布/清除/广播）",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "keywords": ["polychat", "polychat-plugin", "announcement"],
+  "license": "MIT"
+}

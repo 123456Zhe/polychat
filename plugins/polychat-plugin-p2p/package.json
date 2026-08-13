@@ -1,0 +1,15 @@
+{
+  "name": "polychat-plugin-p2p",
+  "version": "1.0.0",
+  "description": "PolyChat 插件：私信间 WebRTC P2P 大文件直传（STUN/TURN + 分片上传回退）",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "keywords": ["polychat", "polychat-plugin", "p2p", "webrtc"],
+  "license": "MIT"
+}

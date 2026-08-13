@@ -1,0 +1,15 @@
+{
+  "name": "polychat-plugin-health",
+  "version": "1.0.0",
+  "description": "PolyChat 插件：健康检查端点 GET /api/health",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "keywords": ["polychat", "polychat-plugin", "health"],
+  "license": "MIT"
+}

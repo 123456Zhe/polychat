@@ -1,0 +1,15 @@
+{
+  "name": "polychat-plugin-<name>",
+  "version": "0.1.0",
+  "description": "PolyChat 插件：一句话描述你的插件",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "keywords": ["polychat", "polychat-plugin"],
+  "license": "MIT"
+}

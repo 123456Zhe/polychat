@@ -1,0 +1,15 @@
+{
+  "name": "polychat-plugin-backup",
+  "version": "1.0.0",
+  "description": "PolyChat 插件：SQLite 自动备份（VACUUM INTO 快照 + 轮转保留）",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "keywords": ["polychat", "polychat-plugin", "backup"],
+  "license": "MIT"
+}
