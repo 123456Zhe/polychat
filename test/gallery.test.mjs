@@ -129,3 +129,25 @@ test('图床列表/删除/文件：外链 200、伪造签名 403、他人 403、
   const gone = await fetch(base + img.url);
   assert.equal(gone.status, 404, '删除后文件应 404');
 });
+
+test('注销账户：图床记录与文件一并清理', async () => {
+  const reg = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'gal_del', password: PASSWORD }) });
+  assert.equal(reg.status, 201);
+  const regBody = await reg.json();
+  const auth = { authorization: `Bearer ${regBody.token}` };
+
+  const up = await api('/api/gallery', {
+    method: 'POST', headers: { authorization: auth.authorization, 'content-type': 'image/png' }, body: PNG
+  });
+  assert.equal(up.status, 201);
+  const storedName = (await (await api('/api/gallery', { headers: auth })).json()).images[0].stored_name;
+  const localPath = join(process.env.UPLOAD_DIR, 'gallery', storedName);
+  assert.ok(existsSync(localPath), '上传后本地文件应存在');
+
+  const gone = await api('/api/me', { method: 'DELETE', headers: auth, body: JSON.stringify({ password: PASSWORD }) });
+  assert.equal(gone.status, 200);
+
+  const rows = db.prepare('SELECT COUNT(*) AS c FROM gallery_images WHERE user_id = ?').get(regBody.user.id);
+  assert.equal(rows.c, 0, '注销后 gallery_images 行应清空');
+  assert.ok(!existsSync(localPath), '注销后本地图床文件应删除');
+});

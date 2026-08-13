@@ -109,6 +109,17 @@ export default {
       return res.end();
     }
 
+    // 清理服务：账户注销时核心经 registry.service('gallery-cleanup') 安全调用
+    //（插件停用时服务不存在，核心跳过七牛对象删除；本地文件由核心直接 unlink）。
+    // 复用上面的 qiniuDelete（BucketManager.delete，useHttpsDomain 强制 HTTPS）。
+    registry.provide('gallery-cleanup', {
+      deleteObject: async (key) => {
+        const q = qiniuMac();
+        if (!q) return; // 七牛未配置 → 无可删，静默返回
+        await qiniuDelete(q, key);
+      }
+    });
+
     registry.registerApiRoute('POST', '/api/gallery', async (req, res) => {
       const user = requireUser(req, res); if (!user) return;
       const mime = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
