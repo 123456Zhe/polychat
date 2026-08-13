@@ -2,8 +2,9 @@ FROM node:24-bookworm-slim
 
 WORKDIR /app
 
-COPY --chown=node:node package.json package-lock.json server.mjs ./
+COPY --chown=node:node package.json package-lock.json server.mjs embedded-assets.cjs ./
 COPY --chown=node:node modules ./modules
+COPY --chown=node:node plugins ./plugins
 COPY --chown=node:node web-client ./web-client
 COPY --chown=node:node assets ./assets
 
