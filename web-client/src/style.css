@@ -233,6 +233,8 @@ button { cursor: pointer; }
 .file-chip { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; padding: 6px 9px; border-radius: 9px; color: #5f6878; font-size: 11px; background: #eae7e7; }
 .file-chip > span { padding: 2px 6px; border-radius: 5px; color: #fff; background: var(--blue-600); }
 .file-chip button { margin-left: auto; border: 0; color: #7f8794; background: transparent; }
+.dm-file-status { margin-left: auto; font-size: 10px; color: var(--blue-600); }
+.dm-file-error { color: #dc2626; }
 .file-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 7px; }
 .file-chips .file-chip { margin-bottom: 0; }
 .file-preview { width: 32px; height: 32px; object-fit: cover; border-radius: 4px; }

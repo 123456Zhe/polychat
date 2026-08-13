@@ -2,9 +2,11 @@ import { createOnebotActionHandler } from './actions.js';
 import { createOnebotWs } from './ws.js';
 import { createOnebotReverse } from './reverse.js';
 import { registerOnebotEventListeners } from './events.js';
+import { configureOnebotFileUrls } from './utils.js';
 
 export function setupOnebot(ctx) {
-  const { db, roomForUser, validateMentions, hydrateMessages, broadcast, conversationMembers, socketCanAccess, isUserBanned, isUserMuted, eventBus, publicBaseUrl = '' } = ctx;
+  const { db, roomForUser, validateMentions, hydrateMessages, broadcast, conversationMembers, socketCanAccess, isUserBanned, isUserMuted, eventBus, publicBaseUrl = '', fileUrlSecret = '', fileUrlTtlMs } = ctx;
+  configureOnebotFileUrls({ secret: fileUrlSecret, ttlMs: fileUrlTtlMs });
 
   const botSockets = new Set();
   const handleAction = createOnebotActionHandler({ db, roomForUser, validateMentions, hydrateMessages, broadcast, conversationMembers, socketCanAccess, isUserBanned, isUserMuted, botSockets });

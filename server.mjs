@@ -3,7 +3,7 @@ import { readFileSync, readdirSync, mkdirSync, writeFileSync, appendFileSync, re
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import webpush from 'web-push';
 import { setupOnebot } from './modules/onebot/index.js';
@@ -37,6 +37,8 @@ const SESSION_DAYS = 30;
 const MAX_FILE_SIZE = Number(process.env.MAX_FILE_SIZE || 100 * 1024 * 1024);
 const LEGACY_FILE_SIZE = 10 * 1024 * 1024;
 const UPLOAD_CHUNK_SIZE = 1024 * 1024;
+const FILE_URL_SECRET = process.env.FILE_URL_SECRET || randomBytes(32).toString('hex');
+const FILE_URL_TTL_MS = Number(process.env.FILE_URL_TTL_MS || 7 * 24 * 3600_000);
 const INLINE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const MAX_AVATAR_SIZE = 2 * 1024 * 1024;
 const BACKUP_DIR = process.env.BACKUP_DIR || join(dirname(DB_PATH), 'backups');
@@ -466,13 +468,31 @@ function getClientIp(req) {
 function canAccessAttachment(attachmentId, user) {
   const attachment = db.prepare('SELECT * FROM attachments WHERE id = ?').get(attachmentId);
   if (!attachment) return null;
-  if (attachment.user_id === user.id || user.is_admin) return attachment;
   const linked = db.prepare(`SELECT messages.room_id, messages.dm_id
     FROM messages WHERE messages.attachment_id = ? LIMIT 1`).get(attachmentId);
   if (!linked) return null;
+  if (attachment.user_id === user.id || user.is_admin) return attachment;
   if (linked.dm_id) return isDmMember(linked.dm_id, user.id) ? attachment : null;
-  if (linked.room_id) return roomForUser(linked.room_id, user.id) ? attachment : null;
+  if (linked.room_id) {
+    const room = roomForUser(linked.room_id, user.id);
+    if (!room) return null;
+    if (room.is_private && !room.role && !user.is_admin) return null;
+    return attachment;
+  }
   return null;
+}
+
+function signPublicFileUrl(storedName, base = '') {
+  const expires = Date.now() + FILE_URL_TTL_MS;
+  const sig = createHmac('sha256', FILE_URL_SECRET).update(`${storedName}:${expires}`).digest('hex');
+  return `${base.replace(/\/+$/, '')}/api/public/files/${storedName}?expires=${expires}&sig=${sig}`;
+}
+
+function verifyPublicFileUrl(storedName, expires, sig) {
+  if (!Number.isFinite(expires) || expires < Date.now()) return false;
+  const expected = createHmac('sha256', FILE_URL_SECRET).update(`${storedName}:${expires}`).digest('hex');
+  if (typeof sig !== 'string' || sig.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
 }
 
 function isIpBanned(ip) {
@@ -498,10 +518,13 @@ function isFingerprintBanned(fingerprint) {
 
 async function readBody(req, maxLength = 70_000) {
   let raw = '';
+  let tooLarge = false;
   for await (const chunk of req) {
+    if (tooLarge) continue;
     raw += chunk;
-    if (raw.length > maxLength) throw Object.assign(new Error('请求内容过大'), { status: 413 });
+    if (raw.length > maxLength) tooLarge = true;
   }
+  if (tooLarge) throw Object.assign(new Error('请求内容过大'), { status: 413 });
   try { return raw ? JSON.parse(raw) : {}; }
   catch { throw Object.assign(new Error('JSON 格式错误'), { status: 400 }); }
 }
@@ -1898,7 +1921,9 @@ async function api(req, res, url) {
 
   const publicFileMatch = url.pathname.match(/^\/api\/public\/files\/([A-Za-z0-9]+)$/);
   if (publicFileMatch && req.method === 'GET') {
-    // 免登录能力 URL：stored_name 为 24 字节随机 hex（不可枚举），供 OneBot 机器人下载图片/附件
+    const expires = Number(url.searchParams.get('expires') || 0);
+    const sig = url.searchParams.get('sig') || '';
+    if (!verifyPublicFileUrl(publicFileMatch[1], expires, sig)) return json(res, 403, { error: '文件链接无效或已过期' });
     const file = db.prepare('SELECT * FROM attachments WHERE stored_name = ?').get(publicFileMatch[1]);
     if (!file) return json(res, 404, { error: '文件不存在' });
     try {
@@ -1958,7 +1983,7 @@ export const server = http.createServer(async (req, res) => {
 });
 
 const publicBaseUrl = (process.env.PUBLIC_URL || `http://${HOST}:${PORT}`).replace(/\/+$/, '');
-const onebot = setupOnebot({ db, eventBus, roomForUser, validateMentions, hydrateMessages, broadcast, conversationMembers, socketCanAccess, isUserBanned, isUserMuted, publicBaseUrl });
+const onebot = setupOnebot({ db, eventBus, roomForUser, validateMentions, hydrateMessages, broadcast, conversationMembers, socketCanAccess, isUserBanned, isUserMuted, publicBaseUrl, fileUrlSecret: FILE_URL_SECRET, fileUrlTtlMs: FILE_URL_TTL_MS });
 onebot.attach(server);
 if (process.env.NODE_ENV !== 'test') onebot.startReverse();
 
@@ -2028,7 +2053,29 @@ const heartbeat = setInterval(() => {
 }, 30_000);
 heartbeat.unref();
 
+export function cleanupExpiredData() {
+  const now = Date.now();
+  try {
+    db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(now);
+    db.prepare('DELETE FROM login_attempts WHERE created_at <= ?').run(now - 7 * 24 * 3600_000);
+    const expiredUploads = db.prepare('SELECT temp_name FROM upload_sessions WHERE expires_at <= ?').all(now);
+    for (const row of expiredUploads) {
+      try { unlinkSync(join(UPLOAD_DIR, row.temp_name)); } catch { /* already gone */ }
+    }
+    db.prepare('DELETE FROM upload_sessions WHERE expires_at <= ?').run(now);
+    const activeTempNames = new Set(db.prepare('SELECT temp_name FROM upload_sessions').all().map(row => row.temp_name));
+    for (const name of readdirSync(UPLOAD_DIR)) {
+      if (name.startsWith('.upload-') && name.endsWith('.part') && !activeTempNames.has(name)) {
+        try { unlinkSync(join(UPLOAD_DIR, name)); } catch { /* already gone */ }
+      }
+    }
+  } catch { /* cleanup failures are non-fatal */ }
+}
+
+const cleanupTimer = setInterval(cleanupExpiredData, 60 * 60_000);
+cleanupTimer.unref();
+
 if (process.env.NODE_ENV !== 'test') {
-  db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(Date.now());
+  cleanupExpiredData();
   server.listen(PORT, HOST, () => console.log(`PolyChat: http://${HOST}:${PORT}`));
 }

@@ -1,3 +1,20 @@
+import { createHmac } from 'node:crypto';
+
+let fileUrlSecret = '';
+let fileUrlTtlMs = 7 * 24 * 3600_000;
+
+export function configureOnebotFileUrls({ secret = '', ttlMs = fileUrlTtlMs } = {}) {
+  fileUrlSecret = secret;
+  fileUrlTtlMs = ttlMs;
+}
+
+function signedPublicFileUrl(storedName, base) {
+  if (!fileUrlSecret) return `${base}/api/public/files/${storedName}`;
+  const expires = Date.now() + fileUrlTtlMs;
+  const sig = createHmac('sha256', fileUrlSecret).update(`${storedName}:${expires}`).digest('hex');
+  return `${base}/api/public/files/${storedName}?expires=${expires}&sig=${sig}`;
+}
+
 export function onebotTS() {
   return Math.floor(Date.now() / 1000);
 }
@@ -20,8 +37,8 @@ export function onebotSegments(message, origin = '') {
   if (message.content) seg.push(...onebotTextSegments(message.content));
   const base = origin.replace(/\/+$/, '');
   if (message.attachment_id && message.attachment_stored_name) {
-    // 免登录能力 URL：stored_name 不可枚举，机器人/LLM 可直接下载
-    const file = `${base}/api/public/files/${message.attachment_stored_name}`;
+    // 免登录能力 URL：stored_name 不可枚举，带短期 HMAC 签名
+    const file = signedPublicFileUrl(message.attachment_stored_name, base);
     if (message.attachment_type?.startsWith('image/')) {
       seg.push({ type: 'image', data: { file } });
     } else {

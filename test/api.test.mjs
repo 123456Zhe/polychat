@@ -1,6 +1,7 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createHmac } from 'node:crypto';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -9,7 +10,8 @@ process.env.NODE_ENV = 'test';
 process.env.DB_PATH = join(temporary, 'test.db');
 process.env.UPLOAD_DIR = join(temporary, 'uploads');
 process.env.AVATAR_DIR = join(temporary, 'avatars');
-const { server, db } = await import('../server.mjs');
+process.env.FILE_URL_SECRET = 'test-file-secret';
+const { server, db, cleanupExpiredData } = await import('../server.mjs');
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
 
@@ -554,6 +556,7 @@ test('OneBot 机器人能读取图片和附件', async () => {
   });
   assert.equal(tokenResult.response.status, 201);
   const socket = await openSocket(`${base.replace('http:', 'ws:')}/api/onebot/ws?token=${encodeURIComponent(tokenResult.body.token.token)}`);
+  try {
 
   const nextBotMessage = () => new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('未收到机器人 message 事件')), 2000);
@@ -582,7 +585,7 @@ test('OneBot 机器人能读取图片和附件', async () => {
   const received = await botEvent;
   const imageSeg = received.message.find(seg => seg.type === 'image');
   assert.ok(imageSeg, '图片应转为 image 段');
-  assert.match(imageSeg.data.file, /^https?:\/\/.+\/api\/public\/files\/[A-Za-z0-9]+$/);
+  assert.match(imageSeg.data.file, /^https?:\/\/.+\/api\/public\/files\/[A-Za-z0-9]+\?expires=\d+&sig=[a-f0-9]+$/);
   const fetched = await fetch(imageSeg.data.file);
   assert.equal(fetched.status, 200);
   assert.equal(fetched.headers.get('content-type'), 'image/png');
@@ -594,7 +597,7 @@ test('OneBot 机器人能读取图片和附件', async () => {
   assert.equal(got.status, 'ok');
   const gotImg = got.data.message.find(seg => seg.type === 'image');
   assert.ok(gotImg, 'get_msg 应返回 image 段');
-  assert.match(gotImg.data.file, /\/api\/public\/files\/[A-Za-z0-9]+$/);
+  assert.match(gotImg.data.file, /\/api\/public\/files\/[A-Za-z0-9]+\?expires=\d+&sig=[a-f0-9]+$/);
 
   // 3) get_group_msg_history 同样返回 image 段
   const history = await onebotAction(socket, 'get_group_msg_history', { group_id: 1 });
@@ -616,16 +619,23 @@ test('OneBot 机器人能读取图片和附件', async () => {
   const fileSeg = gotText.data.message.find(seg => seg.type === 'file');
   assert.ok(fileSeg, '非图片附件应为 file 段');
   assert.equal(fileSeg.data.name, '机器人说明.txt');
-  assert.match(fileSeg.data.file, /^https?:\/\/.+\/api\/public\/files\/[A-Za-z0-9]+$/);
+  assert.match(fileSeg.data.file, /^https?:\/\/.+\/api\/public\/files\/[A-Za-z0-9]+\?expires=\d+&sig=[a-f0-9]+$/);
   const fetchedText = await fetch(fileSeg.data.file);
   assert.equal(fetchedText.status, 200);
   assert.deepEqual(Buffer.from(await fetchedText.arrayBuffer()), textFile);
 
   // 5) 未知 stored_name → 404
-  const missing = await fetch(`${base}/api/public/files/000000000000000000000000000000000000000000000000`);
+  const tampered = fileSeg.data.file.replace(/sig=[a-f0-9]+/, 'sig=0');
+  assert.equal((await fetch(tampered)).status, 403);
+  const missingName = '000000000000000000000000000000000000000000000000';
+  const expires = Date.now() + 60_000;
+  const sig = createHmac('sha256', 'test-file-secret').update(`${missingName}:${expires}`).digest('hex');
+  const missing = await fetch(`${base}/api/public/files/${missingName}?expires=${expires}&sig=${sig}`);
   assert.equal(missing.status, 404);
 
-  socket.close();
+  } finally {
+    socket.close();
+  }
 });
 
 test('P2P 直传：配置、创建、审批、信令转发与完成消息', async () => {
@@ -887,4 +897,135 @@ test('管理员全局公告：广播全体在线、普通用户无权限、可�
   assert.equal((await cleared).content, null);
   assert.equal((await api('/api/admin/announcement', { headers: memberAuth })).body.announcement, null);
   memberSocket.close();
+});
+
+test('分片上传支持断点续传、取消和 413 请求限制', async () => {
+  const user = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'chunk_user', password: 'chunk-password' }) });
+  const auth = { authorization: `Bearer ${user.body.token}` };
+  const totalSize = 2 * 1024 * 1024 + 123;
+  const init = await api('/api/uploads', { method: 'POST', headers: auth, body: JSON.stringify({ name: 'resume.bin', type: 'application/octet-stream', size: totalSize }) });
+  assert.equal(init.response.status, 201);
+  const uploadId = init.body.upload.id;
+  const chunkSize = init.body.upload.chunk_size;
+  assert.equal(chunkSize, 1024 * 1024);
+
+  const first = Buffer.alloc(chunkSize, 0x41);
+  const firstRes = await api(`/api/uploads/${uploadId}/chunks`, { method: 'PUT', headers: auth, body: JSON.stringify({ offset: 0, data: first.toString('base64') }) });
+  assert.equal(firstRes.response.status, 200);
+  assert.equal(firstRes.body.upload.offset, chunkSize);
+  const duplicate = await api(`/api/uploads/${uploadId}/chunks`, { method: 'PUT', headers: auth, body: JSON.stringify({ offset: 0, data: first.toString('base64') }) });
+  assert.equal(duplicate.response.status, 409);
+  assert.equal(duplicate.body.offset, chunkSize);
+
+  const second = Buffer.alloc(123, 0x42);
+  const secondRes = await api(`/api/uploads/${uploadId}/chunks`, { method: 'PUT', headers: auth, body: JSON.stringify({ offset: chunkSize, data: second.toString('base64') }) });
+  assert.equal(secondRes.response.status, 200);
+  assert.equal(secondRes.body.upload.offset, chunkSize + 123);
+  const thirdRes = await api(`/api/uploads/${uploadId}/chunks`, { method: 'PUT', headers: auth, body: JSON.stringify({ offset: chunkSize + 123, data: Buffer.alloc(chunkSize, 0x43).toString('base64') }) });
+  assert.equal(thirdRes.response.status, 201);
+  assert.equal(thirdRes.body.completed, true);
+  assert.ok(thirdRes.body.file.id);
+  assert.equal(db.prepare('SELECT id FROM upload_sessions WHERE id = ?').get(uploadId), undefined);
+
+  const bigInit = await api('/api/uploads', { method: 'POST', headers: auth, body: JSON.stringify({ name: 'large.bin', type: 'application/octet-stream', size: 1024 }) });
+  const oversize = Buffer.alloc(2 * 1024 * 1024, 0x43).toString('base64');
+  const tooBig = await fetch(`${base}/api/uploads/${bigInit.body.upload.id}/chunks`, { method: 'PUT', headers: auth, body: JSON.stringify({ offset: 0, data: oversize }) });
+  assert.equal(tooBig.status, 413);
+
+  const hundred = await api('/api/uploads', { method: 'POST', headers: auth, body: JSON.stringify({ name: '100m.bin', type: 'application/octet-stream', size: 100 * 1024 * 1024 }) });
+  assert.equal(hundred.response.status, 201);
+  assert.equal(hundred.body.upload.size, 100 * 1024 * 1024);
+
+  const cancelInit = await api('/api/uploads', { method: 'POST', headers: auth, body: JSON.stringify({ name: 'cancel.bin', type: 'application/octet-stream', size: 1024 }) });
+  const cancelId = cancelInit.body.upload.id;
+  const cancelTemp = db.prepare('SELECT temp_name FROM upload_sessions WHERE id = ?').get(cancelId).temp_name;
+  assert.equal(existsSync(join(process.env.UPLOAD_DIR, cancelTemp)), true);
+  assert.equal((await api(`/api/uploads/${cancelId}`, { method: 'DELETE', headers: auth })).response.status, 200);
+  assert.equal(existsSync(join(process.env.UPLOAD_DIR, cancelTemp)), false);
+  const afterCancel = await api(`/api/uploads/${cancelId}/chunks`, { method: 'PUT', headers: auth, body: JSON.stringify({ offset: 0, data: Buffer.alloc(10).toString('base64') }) });
+  assert.equal(afterCancel.response.status, 404);
+});
+
+test('20 MB 文件可通过分片上传并作为私信附件发送', async () => {
+  const sender = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'dm20_sender', password: 'dm20-password-1' }) });
+  const receiver = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'dm20_receiver', password: 'dm20-password-2' }) });
+  const senderAuth = { authorization: `Bearer ${sender.body.token}` };
+  await api('/api/friends/request', { method: 'POST', headers: senderAuth, body: JSON.stringify({ username: 'dm20_receiver' }) });
+  await api(`/api/friends/${sender.body.user.id}/accept`, { method: 'POST', headers: { authorization: `Bearer ${receiver.body.token}` } });
+  const conv = await api('/api/dm/conversations', { method: 'POST', headers: senderAuth, body: JSON.stringify({ username: 'dm20_receiver' }) });
+
+  const payload = Buffer.alloc(20 * 1024 * 1024, 0x5a);
+  const init = await api('/api/uploads', { method: 'POST', headers: senderAuth, body: JSON.stringify({ name: 'large20.bin', type: 'application/octet-stream', size: payload.length }) });
+  const upload = init.body.upload;
+  let uploadedId = null;
+  for (let offset = 0; offset < payload.length; offset += upload.chunk_size) {
+    const part = payload.subarray(offset, Math.min(offset + upload.chunk_size, payload.length));
+    const res = await api(`/api/uploads/${upload.id}/chunks`, { method: 'PUT', headers: senderAuth, body: JSON.stringify({ offset, data: part.toString('base64') }) });
+    assert.ok(res.response.status === 200 || res.response.status === 201);
+    if (res.body.completed) uploadedId = res.body.file.id;
+  }
+  assert.ok(uploadedId);
+  const sent = await api(`/api/dm/conversations/${conv.body.conversation.id}/messages`, { method: 'POST', headers: senderAuth, body: JSON.stringify({ content: '', attachment_id: uploadedId }) });
+  assert.equal(sent.response.status, 201);
+});
+
+test('过期数据清理删除会话、上传会话和孤儿 .part 文件', async () => {
+  const now = Date.now();
+  const userId = db.prepare('SELECT id FROM users ORDER BY id LIMIT 1').get().id;
+  const orphan = join(process.env.UPLOAD_DIR, '.upload-orphan.part');
+  writeFileSync(orphan, Buffer.from('x'), { flag: 'wx' });
+  db.prepare("INSERT INTO upload_sessions(id, user_id, original_name, mime_type, total_size, temp_name, received_size, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    .run('expired-upload', userId, 'old.bin', 'application/octet-stream', 1, '.upload-expired.part', 0, now - 1000);
+  writeFileSync(join(process.env.UPLOAD_DIR, '.upload-expired.part'), Buffer.alloc(0), { flag: 'wx' });
+  db.prepare('INSERT INTO login_attempts(ip_address, username, success, created_at) VALUES (?, ?, ?, ?)').run('10.0.0.99', 'ghost', 0, now - 8 * 24 * 3600_000);
+  db.prepare('INSERT INTO sessions(token, user_id, expires_at) VALUES (?, ?, ?)').run('expired-session', userId, now - 1000);
+
+  cleanupExpiredData();
+
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM upload_sessions WHERE id = 'expired-upload'").get().count, 0);
+  assert.equal(existsSync(join(process.env.UPLOAD_DIR, '.upload-expired.part')), false);
+  assert.equal(existsSync(orphan), false);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM login_attempts WHERE ip_address = '10.0.0.99'").get().count, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sessions WHERE token = 'expired-session'").get().count, 0);
+});
+
+test('附件权限矩阵：公共房、私有房、DM 与撤回后不可下载', async () => {
+  const owner = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'matrix_owner', password: 'matrix-password-1' }) });
+  const member = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'matrix_member', password: 'matrix-password-2' }) });
+  const stranger = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'matrix_stranger', password: 'matrix-password-3' }) });
+  const dmPeer = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'matrix_peer', password: 'matrix-password-4' }) });
+  const ownerAuth = { authorization: `Bearer ${owner.body.token}` };
+  const memberAuth = { authorization: `Bearer ${member.body.token}` };
+  const strangerAuth = { authorization: `Bearer ${stranger.body.token}` };
+  const dmPeerAuth = { authorization: `Bearer ${dmPeer.body.token}` };
+  const get = (id, auth) => fetch(`${base}/api/files/${id}`, { headers: auth });
+  const upload = async name => (await api('/api/files', { method: 'POST', headers: ownerAuth, body: JSON.stringify({ name, type: 'text/plain', data: Buffer.from(name).toString('base64') }) })).body.file;
+
+  const publicFile = await upload('public.txt');
+  await api('/api/rooms/1/messages', { method: 'POST', headers: ownerAuth, body: JSON.stringify({ content: '', attachment_id: publicFile.id }) });
+  assert.equal((await get(publicFile.id, ownerAuth)).status, 200);
+  assert.equal((await get(publicFile.id, strangerAuth)).status, 200);
+
+  const privateRoom = await api('/api/rooms', { method: 'POST', headers: ownerAuth, body: JSON.stringify({ name: '矩阵私有房', is_private: true }) });
+  await api(`/api/rooms/${privateRoom.body.room.id}/members`, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ username: 'matrix_member' }) });
+  const privateFile = await upload('private.txt');
+  await api(`/api/rooms/${privateRoom.body.room.id}/messages`, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ content: '', attachment_id: privateFile.id }) });
+  assert.equal((await get(privateFile.id, memberAuth)).status, 200);
+  assert.equal((await get(privateFile.id, strangerAuth)).status, 404);
+
+  await api('/api/friends/request', { method: 'POST', headers: ownerAuth, body: JSON.stringify({ username: 'matrix_peer' }) });
+  await api(`/api/friends/${owner.body.user.id}/accept`, { method: 'POST', headers: dmPeerAuth });
+  const conv = await api('/api/dm/conversations', { method: 'POST', headers: ownerAuth, body: JSON.stringify({ username: 'matrix_peer' }) });
+  assert.ok(conv.body.conversation.id);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM dm_members WHERE conversation_id = ? AND user_id = ?').get(conv.body.conversation.id, stranger.body.user.id).count, 0);
+  const dmFile = await upload('dm.txt');
+  const dmMessage = await api(`/api/dm/conversations/${conv.body.conversation.id}/messages`, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ content: '', attachment_id: dmFile.id }) });
+  assert.equal(dmMessage.response.status, 201);
+  assert.equal((await get(dmFile.id, dmPeerAuth)).status, 200);
+  assert.equal((await get(dmFile.id, strangerAuth)).status, 404);
+
+  const retracted = await api(`/api/dm/messages/${dmMessage.body.message.id}`, { method: 'DELETE', headers: ownerAuth });
+  assert.equal(retracted.response.status, 200);
+  assert.equal((await get(dmFile.id, ownerAuth)).status, 404);
+  assert.equal((await get(dmFile.id, dmPeerAuth)).status, 404);
 });
