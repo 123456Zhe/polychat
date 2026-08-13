@@ -117,6 +117,13 @@ async function makeBinary() {
     sentinelFuse: 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2',
   });
   if (!isWin) chmodSync(outFile, 0o755);
+  // SEA on macOS: the injected blob invalidates the original code signature,
+  // and macOS refuses to run an unsigned executable (killed on launch), so it
+  // must be ad-hoc re-signed after injection (Node SEA docs requirement).
+  if (process.platform === 'darwin') {
+    execFileSync('codesign', ['--sign', '-', outFile], { stdio: 'inherit' });
+    console.log('Ad-hoc signed macOS binary with codesign');
+  }
   return outFile;
 }
 
