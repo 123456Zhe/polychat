@@ -1264,3 +1264,48 @@ test('只读房：member 发言 403，owner 可发', async () => {
   const allowed = await api(`/api/rooms/${id}/messages`, { method: 'POST', headers: authA, body: JSON.stringify({ content: 'announcement' }) });
   assert.equal(allowed.response.status, 201);
 });
+
+test('加入申请：reject 收"被拒绝"通知并可重新申请、404 无申请、locked 403、公共房 400', async () => {
+  const alice = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'alice_rq2', password: 'secret-pass' }) });
+  const authA = { authorization: `Bearer ${alice.body.token}` };
+  const bob = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'bob_rq2', password: 'secret-pass' }) });
+  const authB = { authorization: `Bearer ${bob.body.token}` };
+
+  // 公共房申请 → 400（公共房需全局管理员创建）
+  const adminLogin = await api('/api/login', { method: 'POST', body: JSON.stringify({ username: 'alice', password: 'correct-horse' }) });
+  const adminAuth = { authorization: `Bearer ${adminLogin.body.token}` };
+  const pub = await api('/api/rooms', { method: 'POST', headers: adminAuth, body: JSON.stringify({ name: '公共申请房2' }) });
+  assert.equal(pub.response.status, 201);
+  const pubReq = await api(`/api/rooms/${pub.body.room.id}/join-request`, { method: 'POST', headers: authB });
+  assert.equal(pubReq.response.status, 400);
+  assert.equal(pubReq.body.error, '公共房间可直接加入，无需申请');
+
+  // locked 私有房申请 → 403
+  const lockedRoom = await api('/api/rooms', { method: 'POST', headers: authA, body: JSON.stringify({ name: '锁定申请房', is_private: true }) });
+  const lockedId = lockedRoom.body.room.id;
+  await api(`/api/rooms/${lockedId}/settings`, { method: 'PATCH', headers: authA, body: JSON.stringify({ locked: true }) });
+  const lockedReq = await api(`/api/rooms/${lockedId}/join-request`, { method: 'POST', headers: authB });
+  assert.equal(lockedReq.response.status, 403);
+
+  // 无申请审批 → 404
+  const noReq = await api(`/api/rooms/${lockedId}/join-requests/99999/approve`, { method: 'POST', headers: authA });
+  assert.equal(noReq.response.status, 404);
+
+  // reject：申请人收"被拒绝"通知，之后可重新申请（UPDATE 回 pending），重复 pending 仍 409
+  const priv = await api('/api/rooms', { method: 'POST', headers: authA, body: JSON.stringify({ name: '拒绝申请房', is_private: true }) });
+  const id = priv.body.room.id;
+  const req1 = await api(`/api/rooms/${id}/join-request`, { method: 'POST', headers: authB });
+  assert.equal(req1.response.status, 201);
+  const reject = await api(`/api/rooms/${id}/join-requests/${bob.body.user.id}/reject`, { method: 'POST', headers: authA });
+  assert.equal(reject.response.status, 200);
+  const notifs = await api('/api/notifications', { headers: authB });
+  assert.equal(notifs.body.notifications[0].title, '加入申请被拒绝');
+  const reapply = await api(`/api/rooms/${id}/join-request`, { method: 'POST', headers: authB });
+  assert.equal(reapply.response.status, 201, '被拒后应可重新申请');
+  const list = await api(`/api/rooms/${id}/join-requests`, { headers: authA });
+  assert.equal(list.body.requests.length, 1, '重新申请后回到 pending 列表');
+  assert.equal(list.body.requests[0].username, 'bob_rq2');
+  const dup = await api(`/api/rooms/${id}/join-request`, { method: 'POST', headers: authB });
+  assert.equal(dup.response.status, 409);
+  assert.equal(dup.body.error, '已提交过申请，等待审批');
+});

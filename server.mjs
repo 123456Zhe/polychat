@@ -1172,16 +1172,20 @@ async function api(req, res, url) {
     const room = roomForUser(Number(roomJoinRequestMatch[1]), user.id);
     if (!room) return json(res, 404, { error: '聊天室不存在' });
     if (room.role) return json(res, 409, { error: '你已是房间成员' });
+    if (!room.is_private) return json(res, 400, { error: '公共房间可直接加入，无需申请' });
     if (room.locked) return json(res, 403, { error: '房间已锁定，仅接受邀请' });
-    try {
-      const result = db.prepare('INSERT INTO room_join_requests(room_id, user_id, status, created_at) VALUES (?, ?, ?, ?)').run(room.id, user.id, 'pending', Date.now());
-      const managers = db.prepare("SELECT user_id FROM room_members WHERE room_id = ? AND role IN ('owner','admin')").all(room.id);
-      for (const m of managers) createNotification(m.user_id, { type: 'room', title: '新的加入申请', content: `${user.username} 申请加入房间「${room.name}」`, link: `/room/${room.id}`, data: { room_id: room.id, user_id: user.id } });
-      return json(res, 201, { request: { id: Number(result.lastInsertRowid) } });
-    } catch (error) {
-      if (String(error.message).includes('UNIQUE')) return json(res, 409, { error: '已提交过申请，等待审批' });
-      throw error;
+    const existing = db.prepare('SELECT id, status FROM room_join_requests WHERE room_id = ? AND user_id = ?').get(room.id, user.id);
+    if (existing && existing.status === 'pending') return json(res, 409, { error: '已提交过申请，等待审批' });
+    let requestId;
+    if (existing) {
+      db.prepare('UPDATE room_join_requests SET status = ?, created_at = ? WHERE id = ?').run('pending', Date.now(), existing.id);
+      requestId = existing.id;
+    } else {
+      requestId = Number(db.prepare('INSERT INTO room_join_requests(room_id, user_id, status, created_at) VALUES (?, ?, ?, ?)').run(room.id, user.id, 'pending', Date.now()).lastInsertRowid);
     }
+    const managers = db.prepare("SELECT user_id FROM room_members WHERE room_id = ? AND role IN ('owner','admin')").all(room.id);
+    for (const m of managers) createNotification(m.user_id, { type: 'room', title: '新的加入申请', content: `${user.username} 申请加入房间「${room.name}」`, link: `/room/${room.id}`, data: { room_id: room.id, user_id: user.id } });
+    return json(res, 201, { request: { id: requestId } });
   }
   const roomJoinRequestsMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/join-requests$/);
   if (roomJoinRequestsMatch && req.method === 'GET') {
@@ -1203,7 +1207,7 @@ async function api(req, res, url) {
       db.prepare("INSERT INTO room_members(room_id, user_id, role) VALUES (?, ?, 'member') ON CONFLICT(room_id, user_id) DO NOTHING").run(context.room.id, targetId);
     }
     db.prepare('UPDATE room_join_requests SET status = ? WHERE id = ?').run(action === 'approve' ? 'approved' : 'rejected', request.id);
-    createNotification(targetId, { type: 'room', title: action === 'approve' ? '加入申请已通过' : '加入申请被拒绝', content: `你申请加入「${context.room.name}」${action === 'approve' ? '已通过' : '被拒绝'}`, link: `/room/${context.room.id}` });
+    createNotification(targetId, { type: 'room', title: action === 'approve' ? '加入申请已通过' : '加入申请被拒绝', content: `你申请加入「${context.room.name}」${action === 'approve' ? '已通过' : '被拒绝'}`, link: `/room/${context.room.id}`, data: { room_id: context.room.id } });
     broadcast({ type: 'rooms' });
     return json(res, 200, { request: { status: action === 'approve' ? 'approved' : 'rejected' } });
   }
