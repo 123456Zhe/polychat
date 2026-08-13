@@ -378,6 +378,20 @@ button { cursor: pointer; }
 .md-help code { padding: 2px 6px; border-radius: 5px; color: #7c3aed; font-size: 12px; background: #f5f3ff; }
 .md-help tr:hover td { background: var(--warm-100); }
 .help-modal > .hint { margin: -3px 0 14px; color: #7b8492; font-size: 12px; letter-spacing: 0; }
+
+/* 个人图床（我的 → 我的图床） */
+.gallery-modal { width: min(760px, 100%); }
+.gallery-modal > .hint { margin: -3px 0 14px; color: #7b8492; font-size: 12px; letter-spacing: 0; line-height: 1.6; }
+.gallery-modal > input[type="file"] { display: block; width: 100%; margin-bottom: 14px; padding: 9px; border: 1px dashed var(--warm-300); border-radius: 9px; color: #586477; background: var(--warm-100); font: inherit; }
+.gallery-quota { margin: 0 0 12px; color: #586477; font-size: 13px; }
+.gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.gallery-item { overflow: hidden; border: 1px solid var(--warm-200); border-radius: 11px; background: var(--warm-100); }
+.gallery-item img { display: block; width: 100%; height: 130px; object-fit: cover; cursor: zoom-in; background: #e5e9f0; }
+.gallery-item-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+.gallery-item-actions button { padding: 8px 6px; border: 0; border-top: 1px solid var(--warm-200); border-right: 1px solid var(--warm-200); color: var(--blue-700); font-size: 12px; background: var(--white); }
+.gallery-item-actions button:last-child { border-right: 0; }
+.gallery-item-actions button:hover { background: var(--warm-100); }
+.gallery-item-actions button.danger { color: #c2413a; }
 .help-tour-entry { margin-bottom: 4px; }
 .help-tour-entry .primary { border: 0; border-radius: 9px; color: #fff; padding: 9px 15px; background: linear-gradient(135deg, var(--blue-700), var(--violet-700)); box-shadow: 0 6px 16px rgba(73,83,119,.18); }
 .feature-group { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--warm-200); }
@@ -770,6 +784,8 @@ button { cursor: pointer; }
   /* ---- 全局浮层移动端化：底部 sheet ---- */
   .modal { place-items: end center; padding: 0; background: rgba(20, 26, 40, .5); }
   .modal > section { width: 100%; max-width: 100%; max-height: 92dvh; margin: 0; padding: 22px 20px calc(22px + env(safe-area-inset-bottom)); border-radius: 20px 20px 0 0; }
+  .gallery-grid { grid-template-columns: repeat(2, 1fr); }
+  .gallery-item img { height: 110px; }
   .thread-panel { width: 100vw; max-width: 100vw; border-left: 0; }
   .notif-dropdown { position: fixed; top: auto; right: 0; bottom: 0; left: 0; z-index: 60; width: 100%; max-width: 100%; max-height: 72vh; border-radius: 18px 18px 0 0; padding-bottom: env(safe-area-inset-bottom); overflow-y: auto; }
   .at-suggestions { max-height: 40vh; }
