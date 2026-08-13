@@ -59,7 +59,7 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 
 - First registered user automatically becomes admin.
 - Server auto-creates `data/`, `data/uploads/`, `data/avatars/`, and `data/backups/` directories.
-- Environment variables: `PORT` (default 3000), `HOST` (default 127.0.0.1), `DB_PATH`, `UPLOAD_DIR`, `AVATAR_DIR`, `MAX_FILE_SIZE`, `BACKUP_ENABLED`, `BACKUP_DIR`, `BACKUP_INTERVAL_HOURS`, `MAX_BACKUPS`.
+- Environment variables: `PORT` (default 3000), `HOST` (default `0.0.0.0` — all interfaces, so LAN/public access works out of the box; set `127.0.0.1` to restrict to loopback), `DB_PATH`, `UPLOAD_DIR`, `AVATAR_DIR`, `MAX_FILE_SIZE`, `BACKUP_ENABLED`, `BACKUP_DIR`, `BACKUP_INTERVAL_HOURS`, `MAX_BACKUPS`.
 - `NODE_ENV=test` suppresses the server from listening (used by tests to bind to a random port).
 - `data/` is gitignored — do not commit database or uploaded files.
 - File upload limit: 100 MB (configurable). Avatar limit: 2 MB (PNG/JPEG/WebP/GIF only).
@@ -75,6 +75,11 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 - OneBot v11 gateway at `ws://HOST:PORT/api/onebot/ws?token=<bot_token>` (also `/api` standard path). Bots authenticate with a bot token created by an admin-approved bot request.
 
 ## Session work log
+
+### This session (默认监听 0.0.0.0)
+- `server.mjs`：`HOST` 默认从 `127.0.0.1` 改为 `0.0.0.0`（聊天服务本意是局域网/公网访问，开箱即用）；仅本机访问可设 `HOST=127.0.0.1`。
+- 连带修复：`publicBaseUrl` 默认值增加通配地址守卫——`HOST` 为 `0.0.0.0`/`::` 时回退用 `localhost` 生成 URL（否则文件链接/OneBot origin 会变成不可路由的 `http://0.0.0.0:3000`）；部署方仍可用 `PUBLIC_URL` 显式覆盖。
+- 文档同步：README 环境变量表/快速启动/单文件部署、AGENTS.md 环境变量说明、Release 正文示例（去掉显式 `HOST=0.0.0.0`，标注新默认值）。验证：启动实测绑定 `0.0.0.0`，`npm test` 25/25 通过。
 
 ### This session (单文件服务端打包)
 - **目标**：解决部署麻烦 —— 把服务端打成单个可执行文件，目标机无需装 Node、无需拷贝项目目录。

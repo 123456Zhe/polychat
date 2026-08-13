@@ -35,7 +35,10 @@ const ROOT = typeof __dirname !== 'undefined' ? __dirname : fileURLToPath(new UR
 const PUBLIC = join(ROOT, 'web');
 const KATEX_DIST = join(ROOT, 'node_modules', 'katex', 'dist');
 const PORT = Number(process.env.PORT || 3000);
-const HOST = process.env.HOST || '127.0.0.1';
+// Listen on all interfaces by default — a chat server is normally meant to be
+// reachable from the LAN / public network. Set HOST=127.0.0.1 to restrict to
+// loopback only.
+const HOST = process.env.HOST || '0.0.0.0';
 const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
 const DB_PATH = process.env.DB_PATH || join(ROOT, 'data', 'polychat.db');
 const UPLOAD_DIR = process.env.UPLOAD_DIR || join(dirname(DB_PATH), 'uploads');
@@ -1998,7 +2001,11 @@ export const server = http.createServer(async (req, res) => {
   }
 });
 
-const publicBaseUrl = (process.env.PUBLIC_URL || `http://${HOST}:${PORT}`).replace(/\/+$/, '');
+// Public-facing base URL. With the default wildcard bind (0.0.0.0) the server
+// can't know its own reachable hostname, so fall back to localhost for URLs
+// (file links, OneBot origin) unless the deployer sets PUBLIC_URL explicitly.
+const publicHost = /^(0\.0\.0\.0|::|\[::\])$/.test(HOST) ? 'localhost' : HOST;
+const publicBaseUrl = (process.env.PUBLIC_URL || `http://${publicHost}:${PORT}`).replace(/\/+$/, '');
 const onebot = setupOnebot({ db, eventBus, roomForUser, validateMentions, hydrateMessages, broadcast, conversationMembers, socketCanAccess, isUserBanned, isUserMuted, publicBaseUrl, fileUrlSecret: FILE_URL_SECRET, fileUrlTtlMs: FILE_URL_TTL_MS });
 onebot.attach(server);
 if (process.env.NODE_ENV !== 'test') onebot.startReverse();

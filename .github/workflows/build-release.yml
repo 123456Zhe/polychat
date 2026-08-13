@@ -151,27 +151,28 @@ jobs:
 
           ```bash
           scp polychat-server-linux root@你的服务器:/opt/polychat-server
-          ssh root@你的服务器 "chmod +x /opt/polychat-server && cd /opt && PORT=3000 HOST=0.0.0.0 ./polychat-server"
+          ssh root@你的服务器 "chmod +x /opt/polychat-server && cd /opt && PORT=3000 ./polychat-server"
           ```
 
           **Windows（PowerShell）**
 
           ```powershell
-          $env:PORT=3000; $env:HOST="0.0.0.0"
+          $env:PORT=3000
           .\polychat-server-win.exe
           ```
 
           **macOS**
 
           ```bash
-          chmod +x polychat-server-macos && PORT=3000 HOST=0.0.0.0 ./polychat-server-macos
+          chmod +x polychat-server-macos && PORT=3000 ./polychat-server-macos
           ```
 
           ### 使用提示
 
           - 首次启动自动在**可执行文件所在目录**创建 `data/`（SQLite 数据库、`uploads/`、`avatars/`、`backups/`）。
           - **升级**：覆盖二进制后重启即可，`data/` 数据完整保留。
-          - 常用环境变量：`PORT`（默认 3000）、`HOST`（默认 127.0.0.1）、`DB_PATH`、`UPLOAD_DIR`、`AVATAR_DIR`、`MAX_FILE_SIZE`、`BACKUP_ENABLED`（默认开）等。
+          - **默认监听所有网卡**（`HOST=0.0.0.0`），局域网/公网设备直接访问 `http://服务器IP:3000`；只想本机访问可设 `HOST=127.0.0.1`。
+          - 常用环境变量：`PORT`（默认 3000）、`HOST`（默认 `0.0.0.0`）、`DB_PATH`、`UPLOAD_DIR`、`AVATAR_DIR`、`MAX_FILE_SIZE`、`BACKUP_ENABLED`（默认开）等。
           - 公开部署建议前置 Nginx/Caddy 并启用 HTTPS（Web Push / 桌面通知需要安全上下文）。
           - 若目标平台/架构不在上表（如 Linux ARM、Intel Mac），请使用 `polychat-server.cjs`，或在该平台执行 `npm run build:server` 自建。
 

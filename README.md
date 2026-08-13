@@ -77,7 +77,7 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `PORT` | `3000` | 服务端口 |
-| `HOST` | `127.0.0.1` | 监听地址 |
+| `HOST` | `0.0.0.0` | 监听地址（默认所有网卡；只想本机访问可设 `127.0.0.1`） |
 | `DB_PATH` | `data/polychat.db` | SQLite 数据库路径 |
 | `UPLOAD_DIR` | `data/uploads` | 文件上传目录 |
 | `AVATAR_DIR` | `data/avatars` | 头像存储目录 |
@@ -170,10 +170,10 @@ GUI 登录页和 TUI 启动提示都可直接输入服务器 IP、`IP:端口` �
 ./run-tui.sh --server http://服务器地址:3000
 ```
 
-若要监听局域网地址：
+默认已监听所有网卡（`0.0.0.0`），局域网/公网设备直接访问 `http://服务器IP:3000` 即可；只想本机访问时：
 
 ```bash
-HOST=0.0.0.0 PORT=3000 ./run-server.sh
+HOST=127.0.0.1 PORT=3000 ./run-server.sh
 ```
 
 公开部署时应在服务前放置 Nginx/Caddy 并启用 HTTPS。SQLite 文件默认位于 `data/polychat.db`，可通过 `DB_PATH` 指定其他位置。上传文件默认保存在数据库同目录的 `uploads/`，可通过 `UPLOAD_DIR` 单独指定。
@@ -337,8 +337,10 @@ npm run build:all        # 或一次完成上面两步
 ```bash
 # 把 dist/polychat-server 复制到任意目录（Linux 可直接运行；Windows 为 .exe）
 scp dist/polychat-server root@服务器:/opt/polychat-server
-ssh root@服务器 'chmod +x /opt/polychat-server && cd /opt && PORT=3000 HOST=0.0.0.0 ./polychat-server'
+ssh root@服务器 'chmod +x /opt/polychat-server && cd /opt && PORT=3000 ./polychat-server'
 ```
+
+默认监听所有网卡（`0.0.0.0`），局域网/公网直接访问 `http://服务器IP:3000`；只需本机访问时加 `HOST=127.0.0.1`。
 
 - 首次运行自动在**可执行文件旁边**创建 `data/`（SQLite、uploads、avatars、backups），与开发模式同一套行为。
 - Web 界面、KaTeX 公式字体等静态资源已全部内嵌，无需携带 `web/` 或 `node_modules`。
