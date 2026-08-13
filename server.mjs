@@ -1166,6 +1166,48 @@ async function api(req, res, url) {
     return json(res, 200, { member: { role: 'member' } });
   }
 
+  const roomJoinRequestMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/join-request$/);
+  if (roomJoinRequestMatch && req.method === 'POST') {
+    const user = requireUser(req, res); if (!user) return;
+    const room = roomForUser(Number(roomJoinRequestMatch[1]), user.id);
+    if (!room) return json(res, 404, { error: '聊天室不存在' });
+    if (room.role) return json(res, 409, { error: '你已是房间成员' });
+    if (room.locked) return json(res, 403, { error: '房间已锁定，仅接受邀请' });
+    try {
+      const result = db.prepare('INSERT INTO room_join_requests(room_id, user_id, status, created_at) VALUES (?, ?, ?, ?)').run(room.id, user.id, 'pending', Date.now());
+      const managers = db.prepare("SELECT user_id FROM room_members WHERE room_id = ? AND role IN ('owner','admin')").all(room.id);
+      for (const m of managers) createNotification(m.user_id, { type: 'room', title: '新的加入申请', content: `${user.username} 申请加入房间「${room.name}」`, link: `/room/${room.id}`, data: { room_id: room.id, user_id: user.id } });
+      return json(res, 201, { request: { id: Number(result.lastInsertRowid) } });
+    } catch (error) {
+      if (String(error.message).includes('UNIQUE')) return json(res, 409, { error: '已提交过申请，等待审批' });
+      throw error;
+    }
+  }
+  const roomJoinRequestsMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/join-requests$/);
+  if (roomJoinRequestsMatch && req.method === 'GET') {
+    const context = requireRoomManager(req, res, Number(roomJoinRequestsMatch[1])); if (!context) return;
+    if (!context.room.is_private && !context.user.is_admin) return json(res, 403, { error: '只有管理员可以管理公共聊天室申请' });
+    const rows = db.prepare(`SELECT room_join_requests.id, room_join_requests.user_id, room_join_requests.status, room_join_requests.created_at, users.username
+      FROM room_join_requests JOIN users ON users.id = room_join_requests.user_id
+      WHERE room_join_requests.room_id = ? AND room_join_requests.status = 'pending' ORDER BY room_join_requests.created_at`).all(context.room.id);
+    return json(res, 200, { requests: rows });
+  }
+  const roomJoinDecisionMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/join-requests\/(\d+)\/(approve|reject)$/);
+  if (roomJoinDecisionMatch && req.method === 'POST') {
+    const context = requireRoomManager(req, res, Number(roomJoinDecisionMatch[1])); if (!context) return;
+    if (!context.room.is_private && !context.user.is_admin) return json(res, 403, { error: '只有管理员可以管理公共聊天室申请' });
+    const targetId = Number(roomJoinDecisionMatch[2]); const action = roomJoinDecisionMatch[3];
+    const request = db.prepare('SELECT * FROM room_join_requests WHERE room_id = ? AND user_id = ? AND status = ?').get(context.room.id, targetId, 'pending');
+    if (!request) return json(res, 404, { error: '申请不存在或已处理' });
+    if (action === 'approve') {
+      db.prepare("INSERT INTO room_members(room_id, user_id, role) VALUES (?, ?, 'member') ON CONFLICT(room_id, user_id) DO NOTHING").run(context.room.id, targetId);
+    }
+    db.prepare('UPDATE room_join_requests SET status = ? WHERE id = ?').run(action === 'approve' ? 'approved' : 'rejected', request.id);
+    createNotification(targetId, { type: 'room', title: action === 'approve' ? '加入申请已通过' : '加入申请被拒绝', content: `你申请加入「${context.room.name}」${action === 'approve' ? '已通过' : '被拒绝'}`, link: `/room/${context.room.id}` });
+    broadcast({ type: 'rooms' });
+    return json(res, 200, { request: { status: action === 'approve' ? 'approved' : 'rejected' } });
+  }
+
   const roomMemberMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/members$/);
   if (roomMemberMatch && req.method === 'GET') {
     const context = requireRoomAccess(req, res, Number(roomMemberMatch[1])); if (!context) return;

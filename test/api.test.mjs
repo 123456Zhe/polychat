@@ -1217,3 +1217,31 @@ test('加入房间：密码错 403、对 200 并成为成员、locked 403、无�
   assert.equal(pubJoin.response.status, 200);
   assert.equal(pubJoin.body.member.role, 'member');
 });
+
+test('加入申请：申请→审批→成为成员并收通知；重复 409；非管理员 403', async () => {
+  const alice = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'alice_rq', password: 'secret-pass' }) });
+  const authA = { authorization: `Bearer ${alice.body.token}` };
+  const bob = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'bob_rq', password: 'secret-pass' }) });
+  const authB = { authorization: `Bearer ${bob.body.token}` };
+  const room = await api('/api/rooms', { method: 'POST', headers: authA, body: JSON.stringify({ name: '申请房', is_private: true }) });
+  const id = room.body.room.id;
+
+  const req1 = await api(`/api/rooms/${id}/join-request`, { method: 'POST', headers: authB });
+  assert.equal(req1.response.status, 201);
+  const req2 = await api(`/api/rooms/${id}/join-request`, { method: 'POST', headers: authB });
+  assert.equal(req2.response.status, 409, '重复申请应 409');
+
+  const list = await api(`/api/rooms/${id}/join-requests`, { headers: authA });
+  assert.equal(list.body.requests.length, 1);
+  assert.equal(list.body.requests[0].username, 'bob_rq');
+
+  const nonManager = await api(`/api/rooms/${id}/join-requests`, { headers: authB });
+  assert.equal(nonManager.response.status, 403, '成员无审批权限');
+
+  const approve = await api(`/api/rooms/${id}/join-requests/${bob.body.user.id}/approve`, { method: 'POST', headers: authA });
+  assert.equal(approve.response.status, 200);
+  const readOk = await api(`/api/rooms/${id}/messages`, { headers: authB });
+  assert.equal(readOk.response.status, 200, '审批后成为成员可读');
+  const notif = await api('/api/notifications/unread-count', { headers: authB });
+  assert.ok(Number(notif.body.count) >= 1, '申请人应收到通知');
+});
