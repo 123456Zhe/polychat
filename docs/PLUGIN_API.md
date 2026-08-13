@@ -9,6 +9,7 @@ PolyChat 从 v1.0 起把非核心功能做成插件。任何插件都遵守**统
 - 插件目录 / npm 包名：`polychat-plugin-<name>`（如 `polychat-plugin-backup`）。
 - 加载器按该前缀自动发现（`plugins/` 目录与 `node_modules`）。
 - 插件 `manifest.name` 使用 `<name>`（不带前缀），全局唯一。
+- 每个插件是**独立 git 仓库**（`https://github.com/123456Zhe/polychat-plugin-<name>`），同时作为内置插件随主仓库打包（git subtree 同步，见 `docs/PLUGINS.md`）。
 
 ## 2. 插件布局
 

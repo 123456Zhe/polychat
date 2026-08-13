@@ -41,11 +41,36 @@
    - Schema 照旧自动迁移（幂等），数据零丢失。
 4. 可选：用 `DISABLED_PLUGINS=backup,p2p` 按部署裁剪功能（黑名单优先于配置文件）。
 
-## 三、插件目录结构
+## 三、插件目录结构（独立仓库 + 内置打包）
+
+每个插件是独立的 GitHub 仓库（公开，可作市场安装源），同时以 git subtree 方式同步进主仓库 `plugins/` 作为内置打包（构建/测试/SEA/Docker 零变化）：
+
+| 插件 | 独立仓库 | 内置目录 |
+|---|---|---|
+| `backup` | https://github.com/123456Zhe/polychat-plugin-backup | `plugins/polychat-plugin-backup/` |
+| `health` | https://github.com/123456Zhe/polychat-plugin-health | `plugins/polychat-plugin-health/` |
+| `announcement` | https://github.com/123456Zhe/polychat-plugin-announcement | `plugins/polychat-plugin-announcement/` |
+| `web-push` | https://github.com/123456Zhe/polychat-plugin-web-push | `plugins/polychat-plugin-web-push/` |
+| `p2p` | https://github.com/123456Zhe/polychat-plugin-p2p | `plugins/polychat-plugin-p2p/` |
+| `onebot` | https://github.com/123456Zhe/polychat-plugin-onebot | `plugins/polychat-plugin-onebot/` |
+
+### subtree 同步工作流
+
+插件代码的主副本在主仓库 `plugins/` 下；改动需要同步到独立仓库时：
+
+```bash
+# 主仓库 → 插件仓库
+git subtree push --prefix=plugins/polychat-plugin-<name> https://github.com/123456Zhe/polychat-plugin-<name>.git main
+
+# 插件仓库 → 主仓库（拉入更新）
+git subtree pull --prefix=plugins/polychat-plugin-<name> https://github.com/123456Zhe/polychat-plugin-<name>.git main
+```
+
+> 独立仓库既承载版本化发布（各自 README/版本号），也是 WebUI 插件市场的安装源。
 
 ```
 plugins/
-├── polychat-plugin-backup/        # 内置插件（也可整体拆成独立 git 仓库 / 发布 npm）
+├── polychat-plugin-backup/        # 内置插件（subtree 同步自独立仓库）
 ├── polychat-plugin-health/
 ├── polychat-plugin-announcement/
 ├── polychat-plugin-web-push/
