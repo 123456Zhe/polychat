@@ -1,6 +1,6 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 
 // 个人图床：本地 / 七牛 Kodo 双后端（GALLERY_* / QINIU_* 环境变量可覆盖）。
 export default {
@@ -10,7 +10,7 @@ export default {
   enabledByDefault: true,
   defaultConfig: { quota_mb: 500, storage: 'local' },
   setup(ctx) {
-    const { registry, db, json, requireUser, readBody, maxFileSize, uploadDir, env, pluginConfig, logAudit } = ctx;
+    const { registry, db, json, requireUser, readBody, maxFileSize, uploadDir, env, pluginConfig, logAudit, fileUrlSecret, fileUrlTtlMs, verifyPublicFileUrl } = ctx;
 
     const IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
     const QUOTA_BYTES = Number(env.GALLERY_QUOTA_MB || pluginConfig.quota_mb) * 1024 * 1024;
@@ -23,6 +23,15 @@ export default {
       return db.prepare('SELECT COALESCE(SUM(size), 0) AS used FROM gallery_images WHERE user_id = ?').get(userId).used;
     }
     function extOf(mime) { return MIME_EXT[mime]; }
+
+    // 与核心 signPublicFileUrl 相同的 HMAC-SHA256 签名（fileUrlSecret），但路径指向本插件的文件端点。
+    // 默认 base='' 返回相对路径（与 avatar_url 等 API 约定一致，客户端按自身 origin 访问），
+    // 避免 publicBaseUrl 与真实访问地址不一致导致外链失效。
+    function buildGalleryUrl(row, base = '') {
+      const expires = Date.now() + fileUrlTtlMs;
+      const sig = createHmac('sha256', fileUrlSecret).update(`${row.stored_name}:${expires}`).digest('hex');
+      return `${base.replace(/\/+$/, '')}/api/gallery/${row.id}/file?expires=${expires}&sig=${sig}`;
+    }
 
     // readBody 只接受 JSON：`raw += chunk`（Buffer 转 utf8 字符串，二进制有损）后 JSON.parse，
     // 对图片原始字节必然抛 400「JSON 格式错误」。因此上传走原始流读取（Buffer.concat），
@@ -55,11 +64,47 @@ export default {
       return json(res, 201, { image: { id: Number(result.lastInsertRowid), filename: `image${extOf(mime)}`, mime, size: bytes.length, storage: 'local' } });
     });
 
-    // B2 最小列表（brief 测试要求 GET 可见）；B3 扩展为删除 + 签名外链
-    registry.registerApiRoute('GET', '/api/gallery', async (req, res) => {
+    // B3 完整列表：分页 + 配额用量 + 签名外链 url（stored_name 保留，B2 既有测试依赖）
+    registry.registerApiRoute('GET', '/api/gallery', async (req, res, url) => {
       const user = requireUser(req, res); if (!user) return;
-      const images = db.prepare('SELECT id, filename, mime, size, stored_name, storage, created_at FROM gallery_images WHERE user_id = ? ORDER BY id DESC').all(user.id);
-      return json(res, 200, { images, used_mb: usedBytes(user.id) / (1024 * 1024) });
+      const offset = Number(url.searchParams.get('offset') || 0);
+      const limit = Math.min(Number(url.searchParams.get('limit') || 50), 100);
+      const rows = db.prepare('SELECT * FROM gallery_images WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(user.id, limit, offset);
+      const used = db.prepare('SELECT COALESCE(SUM(size), 0) AS used FROM gallery_images WHERE user_id = ?').get(user.id).used;
+      return json(res, 200, {
+        images: rows.map(r => ({ id: r.id, filename: r.filename, mime: r.mime, size: r.size, storage: r.storage, created_at: r.created_at, stored_name: r.stored_name, url: buildGalleryUrl(r) })),
+        quota_mb: QUOTA_BYTES / 1024 / 1024, used_mb: used / 1024 / 1024
+      });
+    });
+
+    // 参数化路由：核心分发对字符串 pattern 做精确匹配，`:id` 需用 RegExp（handler 内再解析 id）
+    const galleryItemMatch = /^\/api\/gallery\/\d+$/;
+    registry.registerApiRoute('DELETE', galleryItemMatch, async (req, res, url) => {
+      const user = requireUser(req, res); if (!user) return;
+      const id = Number(url.pathname.match(/\/api\/gallery\/(\d+)$/)[1]);
+      const row = db.prepare('SELECT * FROM gallery_images WHERE id = ?').get(id);
+      if (!row) return json(res, 404, { error: '图片不存在' });
+      if (row.user_id !== user.id && !user.is_admin) return json(res, 403, { error: '无权删除他人图片' });
+      if (row.storage === 'local') { try { unlinkSync(join(galleryDir(), row.stored_name)); } catch { /* stale */ } }
+      db.prepare('DELETE FROM gallery_images WHERE id = ?').run(id);
+      logAudit(user.id, 'gallery_delete', id);
+      return json(res, 200, { ok: true });
+    });
+
+    const galleryFileMatch = /^\/api\/gallery\/\d+\/file$/;
+    registry.registerApiRoute('GET', galleryFileMatch, async (req, res, url) => {
+      const id = Number(url.pathname.match(/\/api\/gallery\/(\d+)\/file$/)[1]);
+      const expires = Number(url.searchParams.get('expires') || 0);
+      const sig = url.searchParams.get('sig') || '';
+      const row = db.prepare('SELECT * FROM gallery_images WHERE id = ?').get(id);
+      if (!row) return json(res, 404, { error: '图片不存在' });
+      if (!verifyPublicFileUrl(row.stored_name, expires, sig)) return json(res, 403, { error: '链接无效或已过期' });
+      if (row.storage === 'qiniu') return json(res, 501, { error: '七牛模式未实现' }); // B4 改为 redirectToQiniuUrl(res, row.stored_name)
+      try {
+        const bytes = readFileSync(join(galleryDir(), row.stored_name));
+        res.writeHead(200, { 'content-type': row.mime, 'content-length': bytes.length, 'cache-control': 'public, max-age=86400', 'x-content-type-options': 'nosniff' });
+        return res.end(bytes);
+      } catch { return json(res, 404, { error: '文件数据不存在' }); }
     });
   }
 };

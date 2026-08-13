@@ -90,3 +90,42 @@ test('图床上传：本地落盘 201、列表可见；非图片 400；超大 41
   });
   assert.equal(big.status, 413);
 });
+
+test('图床列表/删除/文件：外链 200、伪造签名 403、他人 403、删除后 404', async () => {
+  const authA = await registerUser('gal_l');
+  const authB = await registerUser('gal_lb');
+
+  const up = await api('/api/gallery', {
+    method: 'POST', headers: { authorization: authA.authorization, 'content-type': 'image/png' }, body: PNG
+  });
+  assert.equal(up.status, 201);
+  const id = (await up.json()).image.id;
+
+  // 列表：含 url 外链与配额用量
+  const list = await api('/api/gallery', { headers: authA });
+  const listBody = await list.json();
+  const img = listBody.images[0];
+  assert.ok(img.url.includes('/api/gallery/'), 'url 应为图床文件链接');
+  assert.ok(listBody.quota_mb > 0, '应返回配额 quota_mb');
+  assert.ok(listBody.used_mb >= 0, '应返回用量 used_mb');
+
+  // 签名外链可下载
+  const fileResp = await fetch(base + img.url);
+  assert.equal(fileResp.status, 200);
+  assert.equal(fileResp.headers.get('content-type'), 'image/png');
+
+  // 伪造签名 → 403
+  const badSig = img.url.replace(/sig=[^&]+/, 'sig=deadbeef');
+  const tampered = await fetch(base + badSig);
+  assert.equal(tampered.status, 403, '伪造签名应 403');
+
+  // 他人删除 → 403
+  const denied = await api(`/api/gallery/${id}`, { method: 'DELETE', headers: authB });
+  assert.equal(denied.status, 403, '他人删除应 403');
+
+  // 本人删除 → 200，随后文件 404
+  const del = await api(`/api/gallery/${id}`, { method: 'DELETE', headers: authA });
+  assert.equal(del.status, 200);
+  const gone = await fetch(base + img.url);
+  assert.equal(gone.status, 404, '删除后文件应 404');
+});

@@ -1975,6 +1975,7 @@ const pluginCtx = {
   root: ROOT, db, eventBus, registry, server, env: process.env,
   dbPath: DB_PATH, uploadDir: UPLOAD_DIR, avatarDir: AVATAR_DIR,
   maxFileSize: MAX_FILE_SIZE, publicBaseUrl, fileUrlSecret: FILE_URL_SECRET, fileUrlTtlMs: FILE_URL_TTL_MS,
+  verifyPublicFileUrl,
   json, requireUser, requireAdmin, readBody, logAudit, getClientIp, publicUser,
   hydrateMessages, broadcast, broadcastDm, conversationMembers, socketCanAccess,
   onlineUsers, sendToUser, userOnline, createNotification, isUserBanned, isUserMuted,
