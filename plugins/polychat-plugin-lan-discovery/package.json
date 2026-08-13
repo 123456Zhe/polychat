@@ -1,0 +1,15 @@
+{
+  "name": "polychat-plugin-lan-discovery",
+  "version": "1.0.0",
+  "description": "PolyChat 插件：局域网发现端点 GET /api/discovery（服务器元信息，未来客户端自动发现预留）",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "keywords": ["polychat", "polychat-plugin", "lan", "discovery"],
+  "license": "MIT"
+}
