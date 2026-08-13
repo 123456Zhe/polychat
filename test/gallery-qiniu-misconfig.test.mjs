@@ -42,3 +42,20 @@ test('图床七牛模式：缺 QINIU_* 配置上传 503 且错误明确', async 
   const body = await up.json();
   assert.equal(body.error, '七牛模式未配置 QINIU_* 环境变量');
 });
+
+test('图床七牛模式：QINIU_* 齐全但 zone 未知也按未配置处理（503 fail fast）', async () => {
+  // qiniuMac() 读取的是活 env（process.env），运行时设置即可生效。
+  process.env.QINIU_ACCESS_KEY = 'ak';
+  process.env.QINIU_SECRET_KEY = 'sk';
+  process.env.QINIU_BUCKET = 'test-bucket';
+  process.env.QINIU_ZONE = 'no_such_zone';
+  process.env.QINIU_DOMAIN = 'cdn.example.com';
+  const reg = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'gal_qiniu_zone', password: PASSWORD }) });
+  assert.equal(reg.status, 201);
+  const auth = { authorization: `Bearer ${(await reg.json()).token}` };
+  const up = await api('/api/gallery', {
+    method: 'POST', headers: { authorization: auth.authorization, 'content-type': 'image/png' }, body: PNG
+  });
+  assert.equal(up.status, 503);
+  assert.equal((await up.json()).error, '七牛模式未配置 QINIU_* 环境变量');
+});

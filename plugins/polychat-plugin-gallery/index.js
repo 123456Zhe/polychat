@@ -62,15 +62,19 @@ export default {
     // ── 七牛 Kodo 后端（storage=qiniu，服务端中转上传）────────────────────────
     // 缺任一 QINIU_* 环境变量即视为未配置（返回 null，调用方回 503「七牛模式未配置
     // QINIU_* 环境变量」）。zone 取 qiniu.zone['Zone_' + zone]：Zone_z0 华东 /
-    // Zone_z1 华北 / Zone_z2 华南 / Zone_na0 北美 / Zone_as0 新加坡。
+    // Zone_z1 华北 / Zone_z2 华南 / Zone_na0 北美 / Zone_as0 新加坡；
+    // zone 未命中同样按未配置处理（503 fail fast），避免静默走 uc 查区。
+    // useHttpsDomain: true —— 上传/删除强制 HTTPS（默认 http 明文不可接受）。
     function qiniuMac() {
       const ak = env.QINIU_ACCESS_KEY, sk = env.QINIU_SECRET_KEY;
       const bucket = env.QINIU_BUCKET, zone = env.QINIU_ZONE;
       const domain = env.QINIU_DOMAIN;
       if (!ak || !sk || !bucket || !zone || !domain) return null;
+      const zoneConfig = qiniu.zone[`Zone_${zone}`];
+      if (!zoneConfig) return null;
       const mac = new qiniu.auth.digest.Mac(ak, sk);
-      const config = new qiniu.conf.Config();
-      config.zone = qiniu.zone[`Zone_${zone}`];
+      const config = new qiniu.conf.Config({ useHttpsDomain: true });
+      config.zone = zoneConfig;
       return { mac, bucket, config, domain, privateBucket: env.QINIU_PRIVATE === 'true' };
     }
     function qiniuKey(userId, mime) {
