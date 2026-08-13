@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHmac, randomBytes } from 'node:crypto';
+import qiniu from 'qiniu';
 
 // 个人图床：本地 / 七牛 Kodo 双后端（GALLERY_* / QINIU_* 环境变量可覆盖）。
 export default {
@@ -33,6 +34,17 @@ export default {
       return `${base.replace(/\/+$/, '')}/api/gallery/${row.id}/file?expires=${expires}&sig=${sig}`;
     }
 
+    // 列表外链：本地后端返回服务器签名中转链接；七牛后端直接返回 Kodo 下载 URL
+    //（公开空间 https://<domain>/<key>，私有空间为带 deadline 的签名 URL）。
+    function rowUrl(row) {
+      if (row.storage === 'qiniu') {
+        const q = qiniuMac();
+        if (!q) return null;
+        return qiniuDownloadUrl(q, row.stored_name);
+      }
+      return buildGalleryUrl(row);
+    }
+
     // readBody 只接受 JSON：`raw += chunk`（Buffer 转 utf8 字符串，二进制有损）后 JSON.parse，
     // 对图片原始字节必然抛 400「JSON 格式错误」。因此上传走原始流读取（Buffer.concat），
     // 上限 maxFileSize 防超限（超限抛 status 413，由服务端统一转为 413 响应）。
@@ -47,6 +59,52 @@ export default {
       return Buffer.concat(chunks);
     }
 
+    // ── 七牛 Kodo 后端（storage=qiniu，服务端中转上传）────────────────────────
+    // 缺任一 QINIU_* 环境变量即视为未配置（返回 null，调用方回 503「七牛模式未配置
+    // QINIU_* 环境变量」）。zone 取 qiniu.zone['Zone_' + zone]：Zone_z0 华东 /
+    // Zone_z1 华北 / Zone_z2 华南 / Zone_na0 北美 / Zone_as0 新加坡。
+    function qiniuMac() {
+      const ak = env.QINIU_ACCESS_KEY, sk = env.QINIU_SECRET_KEY;
+      const bucket = env.QINIU_BUCKET, zone = env.QINIU_ZONE;
+      const domain = env.QINIU_DOMAIN;
+      if (!ak || !sk || !bucket || !zone || !domain) return null;
+      const mac = new qiniu.auth.digest.Mac(ak, sk);
+      const config = new qiniu.conf.Config();
+      config.zone = qiniu.zone[`Zone_${zone}`];
+      return { mac, bucket, config, domain, privateBucket: env.QINIU_PRIVATE === 'true' };
+    }
+    function qiniuKey(userId, mime) {
+      return `gallery/${userId}/${Date.now()}-${randomBytes(4).toString('hex')}${extOf(mime)}`;
+    }
+    function uploadToQiniu(q, key, bytes) {
+      const putPolicy = new qiniu.rs.PutPolicy({ scope: `${q.bucket}:${key}`, expires: 3600 });
+      const token = putPolicy.uploadToken(q.mac);
+      return new Promise((resolve, reject) => {
+        new qiniu.form_up.FormUploader(q.config).put(token, key, bytes, new qiniu.form_up.PutExtra(), (err, resp) => err ? reject(err) : resolve(resp));
+      });
+    }
+    function qiniuDelete(q, key) {
+      return new Promise((resolve, reject) => {
+        new qiniu.rs.BucketManager(q.mac, q.config).delete(q.bucket, key, (err, resp) => err ? reject(err) : resolve(resp));
+      });
+    }
+    // 下载外链：公开空间 `https://<domain>/<key>`；私有空间（QINIU_PRIVATE=true）
+    // 用 BucketManager.privateDownloadUrl 生成带 deadline 的签名 URL（单位秒）。
+    function qiniuDownloadUrl(q, key) {
+      const domain = /^https?:\/\//i.test(q.domain) ? q.domain : `https://${q.domain}`;
+      if (q.privateBucket) {
+        const deadline = Math.floor(Date.now() / 1000) + 3600;
+        return new qiniu.rs.BucketManager(q.mac, q.config).privateDownloadUrl(domain, key, deadline);
+      }
+      return `${domain}/${key}`;
+    }
+    function redirectToQiniuUrl(res, key) {
+      const q = qiniuMac();
+      if (!q) return json(res, 503, { error: '七牛模式未配置 QINIU_* 环境变量' });
+      res.writeHead(302, { location: qiniuDownloadUrl(q, key), 'cache-control': 'no-store' });
+      return res.end();
+    }
+
     registry.registerApiRoute('POST', '/api/gallery', async (req, res) => {
       const user = requireUser(req, res); if (!user) return;
       const mime = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
@@ -55,7 +113,20 @@ export default {
       if (!bytes.length) return json(res, 400, { error: '空文件' });
       if (bytes.length > maxFileSize) return json(res, 413, { error: '超过单文件大小上限' });
       if (usedBytes(user.id) + bytes.length > QUOTA_BYTES) return json(res, 413, { error: '超出图床配额' });
-      if (STORAGE === 'qiniu') return json(res, 503, { error: '七牛模式未配置（缺 QINIU_* 环境变量）' }); // B4 替换
+      if (STORAGE === 'qiniu') {
+        const q = qiniuMac();
+        if (!q) return json(res, 503, { error: '七牛模式未配置 QINIU_* 环境变量' });
+        const key = qiniuKey(user.id, mime);
+        try {
+          await uploadToQiniu(q, key, bytes);
+        } catch (e) {
+          return json(res, 500, { error: `七牛上传失败：${e.message || e}` });
+        }
+        const result = db.prepare('INSERT INTO gallery_images(user_id, filename, mime, size, stored_name, storage, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .run(user.id, `image${extOf(mime)}`, mime, bytes.length, key, 'qiniu', Date.now());
+        logAudit(user.id, 'gallery_upload', Number(result.lastInsertRowid));
+        return json(res, 201, { image: { id: Number(result.lastInsertRowid), filename: `image${extOf(mime)}`, mime, size: bytes.length, storage: 'qiniu' } });
+      }
       const storedName = `${user.id}-${Date.now()}-${randomBytes(4).toString('hex')}${extOf(mime)}`;
       writeFileSync(join(galleryDir(), storedName), bytes, { flag: 'wx', mode: 0o600 });
       const result = db.prepare('INSERT INTO gallery_images(user_id, filename, mime, size, stored_name, storage, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
@@ -72,7 +143,7 @@ export default {
       const rows = db.prepare('SELECT * FROM gallery_images WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(user.id, limit, offset);
       const used = db.prepare('SELECT COALESCE(SUM(size), 0) AS used FROM gallery_images WHERE user_id = ?').get(user.id).used;
       return json(res, 200, {
-        images: rows.map(r => ({ id: r.id, filename: r.filename, mime: r.mime, size: r.size, storage: r.storage, created_at: r.created_at, stored_name: r.stored_name, url: buildGalleryUrl(r) })),
+        images: rows.map(r => ({ id: r.id, filename: r.filename, mime: r.mime, size: r.size, storage: r.storage, created_at: r.created_at, stored_name: r.stored_name, url: rowUrl(r) })),
         quota_mb: QUOTA_BYTES / 1024 / 1024, used_mb: used / 1024 / 1024
       });
     });
@@ -85,7 +156,13 @@ export default {
       const row = db.prepare('SELECT * FROM gallery_images WHERE id = ?').get(id);
       if (!row) return json(res, 404, { error: '图片不存在' });
       if (row.user_id !== user.id && !user.is_admin) return json(res, 403, { error: '无权删除他人图片' });
-      if (row.storage === 'local') { try { unlinkSync(join(galleryDir(), row.stored_name)); } catch { /* stale */ } }
+      if (row.storage === 'qiniu') {
+        const q = qiniuMac();
+        if (!q) return json(res, 503, { error: '七牛模式未配置 QINIU_* 环境变量' });
+        try { await qiniuDelete(q, row.stored_name); } catch { /* 桶内对象可能已不存在，DB 记录照删 */ }
+      } else {
+        try { unlinkSync(join(galleryDir(), row.stored_name)); } catch { /* stale */ }
+      }
       db.prepare('DELETE FROM gallery_images WHERE id = ?').run(id);
       logAudit(user.id, 'gallery_delete', id);
       return json(res, 200, { ok: true });
@@ -99,7 +176,7 @@ export default {
       const row = db.prepare('SELECT * FROM gallery_images WHERE id = ?').get(id);
       if (!row) return json(res, 404, { error: '图片不存在' });
       if (!verifyPublicFileUrl(row.stored_name, expires, sig)) return json(res, 403, { error: '链接无效或已过期' });
-      if (row.storage === 'qiniu') return json(res, 501, { error: '七牛模式未实现' }); // B4 改为 redirectToQiniuUrl(res, row.stored_name)
+      if (row.storage === 'qiniu') return redirectToQiniuUrl(res, row.stored_name);
       try {
         const bytes = readFileSync(join(galleryDir(), row.stored_name));
         res.writeHead(200, { 'content-type': row.mime, 'content-length': bytes.length, 'cache-control': 'public, max-age=86400', 'x-content-type-options': 'nosniff' });
