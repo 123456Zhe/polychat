@@ -89,37 +89,6 @@ jobs:
             macOS)   mv dist/polychat-server dist/polychat-server-macos ;;
             *)       mv dist/polychat-server dist/polychat-server-linux ;;
           esac
-      # SEA binary crash isolation (macOS): postject/LIEF declares the
-      # __NODE_SEA_BLOB section but the blob bytes are NOT actually written to
-      # the file (nodejs/node#63466: fuse set, resource missing → SIGSEGV).
-      # Probe confirms the gap and tests writing the blob at the declared
-      # section offset via python3 before re-signing.
-      - name: Diagnose SEA crash on macOS
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          NODE_BIN="$(node -p 'process.execPath')"
-          mkdir -p probe && cd probe
-          printf 'console.log("probe-bare-ok");\n' > bare.cjs
-          ../node_modules/.bin/esbuild bare.cjs --bundle --platform=node --format=cjs --outfile=bare-bundle.cjs
-          printf '{"main":"bare-bundle.cjs","output":"bare.blob","disableExperimentalSEAWarning":true}' > sea-config.json
-          "$NODE_BIN" --experimental-sea-config sea-config.json
-          cp "$NODE_BIN" probe-x
-          codesign --remove-signature probe-x 2>/dev/null || true
-          node -e "require('postject').inject('probe-x','NODE_SEA_BLOB',require('node:fs').readFileSync('bare.blob'),{sentinelFuse:'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2'}).then(()=>console.log('injected'))"
-          BLOB_SIZE=$(stat -f%z bare.blob)
-          SEC_OFF=$(otool -l probe-x | grep -A10 "sectname __NODE_SEA_BLOB" | grep -m1 " offset " | awk '{print $2}')
-          SEC_SIZE=$(otool -l probe-x | grep -A10 "sectname __NODE_SEA_BLOB" | grep -m1 "size 0x" | awk '{print $2}')
-          echo "blob=$BLOB_SIZE bytes, section offset=$SEC_OFF, section size=$SEC_SIZE"
-          echo "=== current content at declared offset ==="
-          python3 -c "f=open('probe-x','rb'); f.seek($SEC_OFF); data=f.read(32); print(' '.join('{:02x}'.format(b) for b in data[:16])); print(repr(data)); f.close()"
-          echo "=== run before write ==="
-          codesign --sign - probe-x
-          ./probe-x && echo "PROBE OK before write" || echo "PROBE crashed before write (exit $?)"
-          echo "=== python3: write blob at declared offset, re-sign, run ==="
-          python3 -c "dst=open('probe-x','r+b'); blob=open('bare.blob','rb').read(); dst.seek($SEC_OFF); dst.write(blob); dst.close(); print('wrote', len(blob), 'bytes at', $SEC_OFF)"
-          codesign --sign - probe-x
-          ./probe-x && echo "PROBE OK after write" || echo "PROBE crashed after write (exit $?)"
       - name: Smoke-test the binary before publishing
         shell: bash
         run: |

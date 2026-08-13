@@ -112,20 +112,24 @@ async function makeBinary() {
   mkdirSync(DIST_DIR, { recursive: true });
   copyFileSync(process.execPath, outFile);
 
-  // macOS: nodejs.org binaries are shipped signed. The sealed signature can
-  // make postject's Mach-O injection fail *silently* — it flips the SEA fuse
-  // byte but never inserts the blob, which crashes the binary at startup
-  // (SIGSEGV in BlobDeserializer, see nodejs/node#63466). Remove the existing
-  // signature before injection (per the Node SEA manual-flow docs), then
-  // ad-hoc re-sign afterwards — otherwise macOS refuses to run the binary.
+  // macOS: nodejs.org binaries are shipped signed. Strip the existing signature
+  // before injection (per the Node SEA manual-flow docs) so LIEF can rewrite
+  // the Mach-O cleanly, then ad-hoc re-sign afterwards — otherwise macOS
+  // refuses to run the injected binary.
   if (process.platform === 'darwin') {
     execFileSync('codesign', ['--remove-signature', outFile], { stdio: 'inherit' });
   }
 
   const { inject } = await import('postject');
-  await inject(outFile, 'NODE_SEA_BLOB', readFileSync(SEA_BLOB), {
+  const injectOptions = {
     sentinelFuse: 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2',
-  });
+  };
+  // macOS: node's BlobDeserializer looks the blob up in segment "NODE_SEA"
+  // (Node SEA docs mandate `--macho-segment-name NODE_SEA`). Without it the
+  // blob lands in postject's default __POSTJECT segment, postject_find_resource
+  // returns NULL and the binary SIGSEGVs at startup.
+  if (process.platform === 'darwin') injectOptions.machoSegmentName = 'NODE_SEA';
+  await inject(outFile, 'NODE_SEA_BLOB', readFileSync(SEA_BLOB), injectOptions);
   if (!isWin) chmodSync(outFile, 0o755);
   if (process.platform === 'darwin') {
     execFileSync('codesign', ['--sign', '-', outFile], { stdio: 'inherit' });
