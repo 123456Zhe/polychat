@@ -275,6 +275,10 @@ button { cursor: pointer; }
 .room-modal label { display: grid; gap: 7px; margin: 13px 0; color: #596579; font-size: 12px; font-weight: 700; }
 .modal .error { margin: 10px 0 0; color: #c2413a; font-size: 12px; letter-spacing: 0; }
 .room-modal input:not([type="checkbox"]), .member-invite input, .member-invite select { min-width: 0; padding: 10px; border: 1px solid var(--warm-300); border-radius: 9px; color: #374151; background: var(--warm-100); font: inherit; }
+.room-modal label:has(input[type="checkbox"]) { display: flex; align-items: center; gap: 8px; margin: 10px 0; cursor: pointer; }
+.room-modal label:has(input[type="checkbox"]) input { width: 16px; height: 16px; margin: 0; accent-color: var(--blue-700); }
+.room-modal .member button.danger { color: #c2413a; border-color: #fecaca; background: #fff7f7; }
+.room-modal .hint { color: #89919e; font-size: 12px; letter-spacing: 0; margin-top: 8px; }
 .privacy-choice { display: flex !important; grid-template-columns: auto 1fr; align-items: start; padding: 12px; border: 1px solid var(--warm-200); border-radius: 10px; cursor: pointer; }
 .privacy-choice input { width: 17px; height: 17px; margin: 1px 9px 0 0; accent-color: var(--blue-700); }
 .privacy-choice span { display: grid; gap: 3px; }

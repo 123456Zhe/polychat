@@ -17,6 +17,8 @@ const searchOpen = ref(false), searchText = ref(''), searchResults = ref([]), me
 const createRoomOpen = ref(false), roomDraft = ref({ name: '', is_private: false }), memberName = ref(''), memberRole = ref('member');
 const openMessageActions = ref(null), reactionPickerFor = ref(null);
 const imagePreview = ref(''), roomManageOpen = ref(false), roomNameDraft = ref('');
+const roomSettingsDraft = ref({ locked: false, hidden: false, readonly: false, password: '' });
+const joinRequests = ref([]);
 const joinOpen = ref(false), joinError = ref(''), joinPassword = ref(''), joinPending = ref(false);
 const sidebarOpen = ref(false), isMobile = ref(false);
 const mobileTab = ref('chats'), roomActionsOpen = ref(false);
@@ -647,7 +649,7 @@ async function inviteMember() { if (!memberName.value.trim() || !room.value) ret
 async function removeMember(member) { if (!room.value) return; try { await api(`/api/rooms/${room.value.id}/members/${member.id}`, { method: 'DELETE' }); await loadMembers(); } catch (e) { notify(e.message); } }
 function newRoom() { roomDraft.value = { name: '', is_private: !isAdmin.value }; createRoomOpen.value = true; }
 async function createRoom() { if (!roomDraft.value.name.trim()) return; try { const result = await api('/api/rooms', { method: 'POST', body: JSON.stringify(roomDraft.value) }); createRoomOpen.value = false; await loadRooms(); await choose(result.room); } catch (e) { notify(e.message); } }
-function openRoomManage() { roomNameDraft.value = room.value?.name || ''; roomManageOpen.value = true; }
+function openRoomManage() { roomNameDraft.value = room.value?.name || ''; roomManageOpen.value = true; loadRoomSettings(); loadJoinRequests(); }
 async function saveRoom() { if (!room.value || !roomNameDraft.value.trim()) return; try { const result = await api(`/api/rooms/${room.value.id}`, { method: 'PUT', body: JSON.stringify({ name: roomNameDraft.value }) }); room.value = { ...room.value, ...result.room }; rooms.value = rooms.value.map(item => item.id === room.value.id ? room.value : item); roomManageOpen.value = false; notify('房间已更新'); } catch (e) { notify(e.message); } }
 const announcementDraft = ref(''), announcementOpen = ref(false);
 function openAnnouncement() { announcementDraft.value = room.value?.announcement || ''; announcementOpen.value = true; }
@@ -661,6 +663,26 @@ function copyInviteLink(code) { const link = `${location.origin}/#/invite/${code
 async function searchUsers() { if (!inviteSearchQuery.value.trim()) { inviteSearchResults.value = []; return; } try { inviteSearchResults.value = (await api(`/api/users/search?q=${encodeURIComponent(inviteSearchQuery.value)}`)).users; } catch { inviteSearchResults.value = []; } }
 async function inviteUser(username) { if (!room.value || !username) return; try { await api(`/api/rooms/${room.value.id}/members`, { method: 'POST', body: JSON.stringify({ username, role: 'member' }) }); inviteSearchQuery.value = ''; inviteSearchResults.value = []; await loadMembers(); notify(`已邀请 ${username}`); } catch (e) { notify(e.message); } }
 async function deleteRoom() { if (!room.value || !confirm(`删除 #${room.value.name} 及全部消息？此操作不可恢复。`)) return; try { await api(`/api/rooms/${room.value.id}`, { method: 'DELETE' }); roomManageOpen.value = false; room.value = null; await loadRooms(); notify('房间已删除'); } catch (e) { notify(e.message); } }
+async function loadRoomSettings() {
+  if (!room.value) return;
+  roomSettingsDraft.value = { locked: !!room.value.locked, hidden: !!room.value.hidden, readonly: !!room.value.readonly, password: '' };
+}
+async function saveRoomSettings() {
+  if (!room.value) return;
+  try {
+    const body = { locked: roomSettingsDraft.value.locked, hidden: roomSettingsDraft.value.hidden, readonly: roomSettingsDraft.value.readonly };
+    if (roomSettingsDraft.value.password) body.password = roomSettingsDraft.value.password;
+    await api(`/api/rooms/${room.value.id}/settings`, { method: 'PATCH', body: JSON.stringify(body) });
+    notify('房间设置已保存');
+  } catch (e) { notify(e.message); }
+}
+async function loadJoinRequests() {
+  if (!room.value) return;
+  try { joinRequests.value = (await api(`/api/rooms/${room.value.id}/join-requests`)).requests; } catch { joinRequests.value = []; }
+}
+async function decideJoinRequest(userId, action) {
+  try { await api(`/api/rooms/${room.value.id}/join-requests/${userId}/${action}`, { method: 'POST' }); await loadJoinRequests(); await loadMembers(); notify(action === 'approve' ? '已通过' : '已拒绝'); } catch (e) { notify(e.message); }
+}
 const inviteCodeInput = ref(''), inviteCodeOpen = ref(false);
 function openInviteCodePrompt() { inviteCodeInput.value = ''; inviteCodeOpen.value = true; }
 async function joinByInviteCode() { if (!inviteCodeInput.value.trim()) return; try { const result = await api(`/api/invite/${inviteCodeInput.value.trim()}`, { method: 'POST' }); inviteCodeOpen.value = false; if (result.room) { const room = rooms.value.find(item => item.id === result.room.id) || result.room; await choose(room); } notify('已通过邀请码加入房间'); } catch (e) { notify(e.message); } }
@@ -1062,7 +1084,7 @@ onBeforeUnmount(() => { shutdownRealtime(); document.removeEventListener('visibi
   <div v-if="joinOpen" class="modal"><section class="room-modal"><button class="close" @click="joinOpen = false">×</button><h2>输入房间密码</h2><input v-model="joinPassword" type="password" placeholder="房间密码" autofocus @keyup.enter="joinRoomWithPassword"><p v-if="joinError" class="error">{{ joinError }}</p><div class="theme-actions"><button class="primary" @click="joinRoomWithPassword">加入</button><button @click="joinOpen = false">取消</button></div></section></div>
   <div v-if="createRoomOpen" class="modal"><section class="room-modal"><button class="close" @click="createRoomOpen = false">×</button><p>NEW ROOM</p><h2>创建聊天室</h2><label>名称<input v-model="roomDraft.name" autofocus maxlength="30" placeholder="例如：项目讨论"></label><label class="privacy-choice"><input v-model="roomDraft.is_private" type="checkbox"><span><b>私有聊天室</b><small>只有被邀请的成员可以发现、查看和发送消息。</small></span></label><div class="theme-actions"><button class="primary" @click="createRoom">创建</button><button @click="createRoomOpen = false">取消</button></div></section></div>
   <div v-if="membersOpen" class="modal"><section class="members-modal"><button class="close" @click="membersOpen = false">×</button><p>ROOM ACCESS</p><h2>管理成员</h2><p class="hint">私有房间只对以下成员可见。</p><div class="invite-search"><input v-model="inviteSearchQuery" placeholder="搜索用户并邀请…" @input="searchUsers"><div v-if="inviteSearchResults.length" class="invite-search-results"><div v-for="u in inviteSearchResults" :key="u.id" class="invite-search-item" @click="inviteUser(u.username)">{{ u.username }}</div></div></div><form class="member-invite" @submit.prevent="inviteMember"><input v-model="memberName" placeholder="输入用户名"><select v-model="memberRole"><option value="member">成员</option><option value="admin">房间管理员</option></select><button class="primary">邀请</button></form><div class="member" v-for="member in roomMembers" :key="member.id"><span>{{ member.username }}</span><small>{{ member.role === 'owner' ? '房主' : member.role === 'admin' ? '管理员' : '成员' }}</small><button v-if="member.role !== 'owner'" @click="removeMember(member)">移除</button></div><h3>邀请码</h3><div class="invite-code-actions"><button @click="createInviteCode(null, null)">永久邀请码</button><button @click="createInviteCode(1, null)">一次性</button><button @click="createInviteCode(null, 24)">24小时</button></div><div v-for="code in inviteCodes" :key="code.id" class="invite-code"><span class="code-value">{{ code.code }}</span><small v-if="code.max_uses">{{ code.use_count }}/{{ code.max_uses }}</small><small v-else>{{ code.use_count }} 次</small><small v-if="code.expires_at">过期 {{ new Date(code.expires_at).toLocaleDateString() }}</small><button @click="copyInviteLink(code.code)">复制</button><button class="danger" @click="deleteInviteCode(code.id)">删除</button></div></section></div>
-  <div v-if="roomManageOpen" class="modal"><section class="room-modal"><button class="close" @click="roomManageOpen = false">×</button><p>ROOM SETTINGS</p><h2>房间设置</h2><label>名称<input v-model="roomNameDraft" maxlength="30"></label><div class="theme-actions"><button class="primary" @click="saveRoom">保存更改</button><button class="danger-button" @click="deleteRoom">删除房间</button></div></section></div>
+  <div v-if="roomManageOpen" class="modal"><section class="room-modal"><button class="close" @click="roomManageOpen = false">×</button><p>ROOM SETTINGS</p><h2>房间设置</h2><label>名称<input v-model="roomNameDraft" maxlength="30"></label><div class="theme-actions"><button class="primary" @click="saveRoom">保存更改</button><button class="danger-button" @click="deleteRoom">删除房间</button></div><h3>房间权限</h3><label><input v-model="roomSettingsDraft.locked" type="checkbox"> 锁定（禁止新成员加入）</label><label><input v-model="roomSettingsDraft.hidden" type="checkbox"> 隐藏（不在房间列表显示）</label><label><input v-model="roomSettingsDraft.readonly" type="checkbox"> 只读（仅房主/管理员可发言）</label><label>加入密码 <input v-model="roomSettingsDraft.password" type="password" placeholder="留空不改 / 填新值"></label><button class="primary" @click="saveRoomSettings">保存房间设置</button><h3>加入申请 <button @click="loadJoinRequests">刷新</button></h3><div v-for="rq in joinRequests" :key="rq.id" class="member"><span>{{ rq.username }}</span><button @click="decideJoinRequest(rq.user_id, 'approve')">通过</button><button class="danger" @click="decideJoinRequest(rq.user_id, 'reject')">拒绝</button></div><p v-if="!joinRequests.length" class="hint">暂无待审批申请</p></section></div>
   <div v-if="imagePreview" class="image-lightbox" @click.self="imagePreview = ''"><button class="close" @click="imagePreview = ''">×</button><img :src="imagePreview" alt="图片预览"></div>
   <div v-if="pinsOpen" class="modal"><section class="pins-modal"><button class="close" @click="pinsOpen = false">×</button><p>PINNED</p><h2>置顶消息</h2><div v-if="!pinnedMessages.length" class="modal-empty">暂无置顶消息</div><article v-for="message in pinnedMessages" :key="message.id" class="pin-card"><b>{{ message.username }}</b><small>{{ time(message.pinned_at || message.created_at) }}</small><div class="markdown" v-html="markdown(message.content)"></div><button v-if="isAdmin || room?.role === 'owner' || room?.role === 'admin'" @click="unpinMessage(message)">取消置顶</button></article></section></div>
   <div v-if="announcementOpen" class="modal"><section><button class="close" @click="announcementOpen = false">×</button><p>ANNOUNCEMENT</p><h2>房间公告</h2><textarea v-model="announcementDraft" class="modal-textarea" rows="5" placeholder="输入公告内容…"></textarea><div class="theme-actions"><button class="primary" @click="saveAnnouncement">保存</button><button @click="announcementOpen = false">取消</button></div></section></div>
