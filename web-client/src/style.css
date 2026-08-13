@@ -570,6 +570,54 @@ button { cursor: pointer; }
 .bot-request-info { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
 .bot-request-info b { font-size: 14px; color: #2a3142; }
 .bot-request-info small { font-size: 11px; color: #98a1ae; }
+
+/* ── 插件管理 tab（管理面板）── */
+.plugin-tab .bot-request-form { grid-template-columns: 1fr auto; }
+.plugin-tab .member-actions button,
+.plugin-tab .bot-request-form button {
+  padding: 7px 10px;
+  border: 1px solid #d6d1d1;
+  border-radius: 8px;
+  color: #586477;
+  background: #fff;
+}
+.plugin-tab .member-actions button:hover:not(:disabled),
+.plugin-tab .bot-request-form button:hover:not(:disabled) { border-color: var(--blue-400); color: var(--slate-900); }
+.plugin-tab .member-actions .primary,
+.plugin-tab .bot-request-form .primary {
+  border: 0;
+  border-radius: 9px;
+  color: #fff;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--blue-700), var(--violet-700));
+  box-shadow: 0 6px 16px rgba(73, 83, 119, .18);
+}
+.plugin-tab .member-actions .danger { border-color: #fecaca; color: #c2413a; background: #fff7f7; }
+.plugin-tab .plugin-upload {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 10px 0 4px;
+  padding: 9px 13px;
+  border: 1px dashed var(--warm-300);
+  border-radius: 9px;
+  color: #5f6b7d;
+  font-size: 13px;
+  cursor: pointer;
+  background: var(--warm-100);
+}
+.plugin-tab .plugin-upload:hover { border-color: var(--blue-500); color: var(--blue-700); }
+.plugin-tab .plugin-upload input { display: none; }
+.plugin-tab .plugin-delete-config {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 2px;
+  color: #6b7686;
+  font-size: 12px;
+  cursor: pointer;
+}
+.plugin-tab .plugin-delete-config input { accent-color: var(--blue-600); }
 .status-badge.pending { color: #d97706; background: #fffbeb; }
 .status-badge.approved { color: #16a34a; background: #f0fdf4; }
 .status-badge.rejected { color: #dc2626; background: #fef2f2; }
