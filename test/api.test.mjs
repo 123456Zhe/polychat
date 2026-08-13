@@ -1159,3 +1159,61 @@ test('房间设置：公共房仅全局管理员可修改，非管理员 room-ad
   assert.equal(ok.response.status, 200);
   assert.equal(ok.body.settings.locked, true);
 });
+
+test('加入房间：密码错 403、对 200 并成为成员、locked 403、无密码私有房引导申请、公共房直接加入', async () => {
+  const alice = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'alice_j', password: 'secret-pass' }) });
+  const authA = { authorization: `Bearer ${alice.body.token}` };
+  const bob = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'bob_j', password: 'secret-pass' }) });
+  const authB = { authorization: `Bearer ${bob.body.token}` };
+  const room = await api('/api/rooms', { method: 'POST', headers: authA, body: JSON.stringify({ name: '密码房', is_private: true }) });
+  assert.equal(room.response.status, 201);
+  const id = room.body.room.id;
+  const setPwd = await api(`/api/rooms/${id}/settings`, { method: 'PATCH', headers: authA, body: JSON.stringify({ password: 'secret-pass' }) });
+  assert.equal(setPwd.response.status, 200);
+
+  const wrong = await api(`/api/rooms/${id}/join`, { method: 'POST', headers: authB, body: JSON.stringify({ password: 'wrong-pass' }) });
+  assert.equal(wrong.response.status, 403);
+  assert.equal(wrong.body.error, '房间密码错误');
+  const readDenied = await api(`/api/rooms/${id}/messages`, { headers: authB });
+  assert.equal(readDenied.response.status, 403, '未加入成员仍不可读私有房消息');
+
+  const ok = await api(`/api/rooms/${id}/join`, { method: 'POST', headers: authB, body: JSON.stringify({ password: 'secret-pass' }) });
+  assert.equal(ok.response.status, 200);
+  assert.equal(ok.body.member.role, 'member');
+  const readOk = await api(`/api/rooms/${id}/messages`, { headers: authB });
+  assert.equal(readOk.response.status, 200);
+
+  // 已是成员 → 200
+  const again = await api(`/api/rooms/${id}/join`, { method: 'POST', headers: authB, body: JSON.stringify({ password: 'secret-pass' }) });
+  assert.equal(again.response.status, 200);
+
+  // locked：第三人无法加入
+  const carol = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'carol_j', password: 'secret-pass' }) });
+  const authC = { authorization: `Bearer ${carol.body.token}` };
+  await api(`/api/rooms/${id}/settings`, { method: 'PATCH', headers: authA, body: JSON.stringify({ locked: true }) });
+  const locked = await api(`/api/rooms/${id}/join`, { method: 'POST', headers: authC, body: JSON.stringify({ password: 'secret-pass' }) });
+  assert.equal(locked.response.status, 403);
+  assert.equal(locked.body.error, '房间已锁定，仅接受邀请');
+
+  // 无密码私有房：非成员 → 403 引导申请
+  const dave = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'dave_j', password: 'secret-pass' }) });
+  const authD = { authorization: `Bearer ${dave.body.token}` };
+  const evelyn = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'evelyn_j', password: 'secret-pass' }) });
+  const authE = { authorization: `Bearer ${evelyn.body.token}` };
+  const priv = await api('/api/rooms', { method: 'POST', headers: authD, body: JSON.stringify({ name: '私有申请房', is_private: true }) });
+  assert.equal(priv.response.status, 201);
+  const privId = priv.body.room.id;
+  const noPwd = await api(`/api/rooms/${privId}/join`, { method: 'POST', headers: authE, body: JSON.stringify({}) });
+  assert.equal(noPwd.response.status, 403);
+  assert.equal(noPwd.body.error, '私有房间需申请加入');
+
+  // 公共房未设密码：非成员直接加入 200
+  const adminLogin = await api('/api/login', { method: 'POST', body: JSON.stringify({ username: 'alice', password: 'correct-horse' }) });
+  const adminAuth = { authorization: `Bearer ${adminLogin.body.token}` };
+  const pub = await api('/api/rooms', { method: 'POST', headers: adminAuth, body: JSON.stringify({ name: '公共加入房' }) });
+  assert.equal(pub.response.status, 201);
+  const pubId = pub.body.room.id;
+  const pubJoin = await api(`/api/rooms/${pubId}/join`, { method: 'POST', headers: authE, body: JSON.stringify({}) });
+  assert.equal(pubJoin.response.status, 200);
+  assert.equal(pubJoin.body.member.role, 'member');
+});

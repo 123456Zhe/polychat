@@ -1148,6 +1148,24 @@ async function api(req, res, url) {
     return json(res, 200, { settings });
   }
 
+  const roomJoinMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/join$/);
+  if (roomJoinMatch && req.method === 'POST') {
+    const user = requireUser(req, res); if (!user) return;
+    const room = roomForUser(Number(roomJoinMatch[1]), user.id);
+    if (!room) return json(res, 404, { error: '聊天室不存在' });
+    if (room.role) return json(res, 200, { member: { role: room.role } });
+    if (room.locked) return json(res, 403, { error: '房间已锁定，仅接受邀请' });
+    const { password = '' } = await readBody(req);
+    if (room.password_hash) {
+      if (!checkPassword(String(password), room.password_hash)) return json(res, 403, { error: '房间密码错误' });
+    } else if (room.is_private) {
+      return json(res, 403, { error: '私有房间需申请加入' });
+    }
+    db.prepare("INSERT INTO room_members(room_id, user_id, role) VALUES (?, ?, 'member') ON CONFLICT(room_id, user_id) DO NOTHING").run(room.id, user.id);
+    broadcast({ type: 'rooms' });
+    return json(res, 200, { member: { role: 'member' } });
+  }
+
   const roomMemberMatch = url.pathname.match(/^\/api\/rooms\/(\d+)\/members$/);
   if (roomMemberMatch && req.method === 'GET') {
     const context = requireRoomAccess(req, res, Number(roomMemberMatch[1])); if (!context) return;
