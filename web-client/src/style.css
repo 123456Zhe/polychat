@@ -92,6 +92,7 @@ button { cursor: pointer; }
 .chat nav button:hover { color: #fff; background: rgba(255,255,255,.07); }
 .chat nav button.active { color: #fff; background: linear-gradient(100deg, rgba(111,141,168,.54), rgba(93,82,124,.48)); box-shadow: inset 3px 0 var(--blue-400); }
 .chat nav button > span { color: var(--blue-400); font-size: 17px; }
+.chat nav button > span.room-badge { font-size: 12px; }
 .chat nav button > b { overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .chat nav button > small { color: #aebbc9; font-size: 10px; }
 .chat nav button .unread {
@@ -272,6 +273,7 @@ button { cursor: pointer; }
 .search-results span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .edit-area { min-height: 180px; margin-top: 4px; resize: vertical; font: 13px/1.5 inherit; }
 .room-modal label { display: grid; gap: 7px; margin: 13px 0; color: #596579; font-size: 12px; font-weight: 700; }
+.modal .error { margin: 10px 0 0; color: #c2413a; font-size: 12px; letter-spacing: 0; }
 .room-modal input:not([type="checkbox"]), .member-invite input, .member-invite select { min-width: 0; padding: 10px; border: 1px solid var(--warm-300); border-radius: 9px; color: #374151; background: var(--warm-100); font: inherit; }
 .privacy-choice { display: flex !important; grid-template-columns: auto 1fr; align-items: start; padding: 12px; border: 1px solid var(--warm-200); border-radius: 10px; cursor: pointer; }
 .privacy-choice input { width: 17px; height: 17px; margin: 1px 9px 0 0; accent-color: var(--blue-700); }
@@ -725,6 +727,7 @@ button { cursor: pointer; }
   .m-list-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
   .m-list-main b { overflow: hidden; color: inherit; font-size: 15px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
   .m-list-main small { color: #8b94a2; font-size: 12px; }
+  .m-list-item .room-badge { flex: none; font-size: 13px; }
   .m-list-item .unread { flex: none; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: #dc2626; color: #fff; font-size: 11px; line-height: 20px; text-align: center; }
   .m-empty { padding: 36px 20px; color: #8b94a2; font-size: 13px; text-align: center; }
 
