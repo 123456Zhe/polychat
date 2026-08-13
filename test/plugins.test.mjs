@@ -73,6 +73,15 @@ test('管理员可列出插件名称与状态', async () => {
   assert.equal(plugins.find(p => p.name === 'onebot').source, 'builtin');
 });
 
+test('公开插件状态端点 /api/plugins 无需登录返回启用状态', async () => {
+  const res = await api('/api/plugins');
+  assert.equal(res.status, 200);
+  const plugins = (await res.json()).plugins;
+  assert.ok(plugins.some(p => p.name === 'onebot' && p.enabled));
+  assert.ok(plugins.some(p => p.name === 'health' && p.enabled));
+  assert.ok(plugins.some(p => p.name === 'p2p' && !p.enabled)); // 配置中禁用
+});
+
 test('外部插件：PLUGINS_DIR 投放 polychat-plugin-demo 生效，内置同名冲突内置优先', async () => {
   const pluginsDir = join(temporary, 'external-plugins');
   const demoDir = join(pluginsDir, 'polychat-plugin-demo');

@@ -773,6 +773,10 @@ async function api(req, res, url) {
     if (!requireAdmin(req, res)) return;
     return json(res, 200, { plugins: registry.listPlugins() });
   }
+  // 插件状态公开查询：Web 端据此禁用未启用插件的 UI（如 onebot 停用 → 机器人管理页）
+  if (req.method === 'GET' && url.pathname === '/api/plugins') {
+    return json(res, 200, { plugins: registry.listPlugins() });
+  }
 
   const adminUserMatch = url.pathname.match(/^\/api\/admin\/users\/(\d+)\/admin$/);
   if (adminUserMatch && req.method === 'PUT') {
