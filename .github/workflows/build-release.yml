@@ -89,6 +89,26 @@ jobs:
             macOS)   mv dist/polychat-server dist/polychat-server-macos ;;
             *)       mv dist/polychat-server dist/polychat-server-linux ;;
           esac
+      # SEA binary crash isolation (only needed on macOS so far): build two
+      # minimal SEA probes through the same pipeline — bare, then with
+      # node:sqlite — to tell whether the crash is SEA itself or node:sqlite.
+      - name: Diagnose SEA crash on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p probe && cd probe
+          printf 'console.log("probe-bare");\nconsole.log("probe-ok");\n' > bare.cjs
+          printf 'console.log("probe-sqlite");\nconst { DatabaseSync } = require("node:sqlite");\nconst d = new DatabaseSync(":memory:");\nd.exec("create table t(a)");\nconsole.log("probe-sqlite-ok");\n' > sqlite.cjs
+          for p in bare sqlite; do
+            ../node_modules/.bin/esbuild $p.cjs --bundle --platform=node --format=cjs --outfile=$p-bundle.cjs
+            printf '{"main":"%s-bundle.cjs","output":"%s.blob","disableExperimentalSEAWarning":true}' "$p" "$p" > sea-config.json
+            node --experimental-sea-config sea-config.json
+            cp "$(node -p 'process.execPath')" probe-$p
+            node -e "require('postject').inject('probe-$p','NODE_SEA_BLOB',require('node:fs').readFileSync('$p.blob'),{sentinelFuse:'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2'}).then(()=>console.log('injected $p'))"
+            codesign --sign - probe-$p
+            echo "--- running probe-$p ---"
+            ./probe-$p || echo "PROBE $p CRASHED (exit $?)"
+          done
       - name: Smoke-test the binary before publishing
         shell: bash
         run: |
@@ -100,11 +120,13 @@ jobs:
           PORT=41234 "$BIN" > server-check.log 2>&1 &
           PID=$!
           trap 'kill $PID 2>/dev/null || true' EXIT
-          sleep 2
+          sleep 3
           curl -fsS http://127.0.0.1:41234/api/health
           curl -fsS -o /dev/null http://127.0.0.1:41234/
           curl -fsS -o /dev/null http://127.0.0.1:41234/vendor/katex.min.css
           echo "server binary OK"
+          echo "--- server-check.log (if any output) ---"
+          cat server-check.log 2>/dev/null || true
       - name: Upload server artifacts
         uses: actions/upload-artifact@v4
         with:
