@@ -1245,3 +1245,22 @@ test('加入申请：申请→审批→成为成员并收通知；重复 409；�
   const notif = await api('/api/notifications/unread-count', { headers: authB });
   assert.ok(Number(notif.body.count) >= 1, '申请人应收到通知');
 });
+
+test('只读房：member 发言 403，owner 可发', async () => {
+  const alice = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'alice_ro', password: 'secret-pass' }) });
+  const authA = { authorization: `Bearer ${alice.body.token}` };
+  const bob = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'bob_ro', password: 'secret-pass' }) });
+  const authB = { authorization: `Bearer ${bob.body.token}` };
+  const room = await api('/api/rooms', { method: 'POST', headers: authA, body: JSON.stringify({ name: '只读房', is_private: true }) });
+  assert.equal(room.response.status, 201);
+  const id = room.body.room.id;
+  const set = await api(`/api/rooms/${id}/settings`, { method: 'PATCH', headers: authA, body: JSON.stringify({ readonly: true }) });
+  assert.equal(set.response.status, 200);
+  await api(`/api/rooms/${id}/members`, { method: 'POST', headers: authA, body: JSON.stringify({ username: 'bob_ro' }) });
+
+  const denied = await api(`/api/rooms/${id}/messages`, { method: 'POST', headers: authB, body: JSON.stringify({ content: 'hi' }) });
+  assert.equal(denied.response.status, 403);
+  assert.equal(denied.body.error, '房间为只读模式');
+  const allowed = await api(`/api/rooms/${id}/messages`, { method: 'POST', headers: authA, body: JSON.stringify({ content: 'announcement' }) });
+  assert.equal(allowed.response.status, 201);
+});

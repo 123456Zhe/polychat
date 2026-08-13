@@ -1533,6 +1533,9 @@ async function api(req, res, url) {
     const roomId = Number(messageMatch[1]);
     const context = requireRoomAccess(req, res, roomId); if (!context) return;
     const user = context.user;
+    if (context.room.readonly && !user.is_admin && !['owner', 'admin'].includes(context.room.role)) {
+      return json(res, 403, { error: '房间为只读模式' });
+    }
     if (isUserBanned(user)) return json(res, 403, { error: '账号已被封禁', banned_until: user.banned_until });
     if (isUserMuted(user)) return json(res, 403, { error: '你已被禁言，无法发送消息', muted_until: user.muted_until });
     const { content = '', attachment_id = null, reply_to = null, thread_root = null } = await readBody(req);
