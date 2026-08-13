@@ -1039,12 +1039,13 @@ async function api(req, res, url) {
     const user = requireUser(req, res); if (!user) return;
     const rooms = db.prepare(`SELECT rooms.id, rooms.name, rooms.created_at, rooms.is_private, room_members.role,
       rooms.announcement, rooms.announcement_by, rooms.announcement_updated_at,
+      rooms.locked, rooms.hidden, rooms.readonly, rooms.password_hash IS NOT NULL AS has_password,
       announcers.username AS announcement_username,
       (SELECT COUNT(*) FROM messages WHERE messages.room_id = rooms.id) AS message_count
       FROM rooms LEFT JOIN room_members ON room_members.room_id = rooms.id AND room_members.user_id = ?
       LEFT JOIN users AS announcers ON announcers.id = rooms.announcement_by
-      WHERE rooms.is_private = 0 OR room_members.user_id IS NOT NULL OR ? = 1 ORDER BY rooms.id`).all(user.id, user.is_admin ? 1 : 0);
-    return json(res, 200, { rooms });
+      WHERE rooms.hidden = 0 OR room_members.user_id IS NOT NULL OR ? = 1 ORDER BY rooms.id`).all(user.id, user.is_admin ? 1 : 0);
+    return json(res, 200, { rooms: rooms.map(r => ({ ...r, is_private: Boolean(r.is_private), locked: Boolean(r.locked), hidden: Boolean(r.hidden), readonly: Boolean(r.readonly), has_password: Boolean(r.has_password) })) });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/events') {

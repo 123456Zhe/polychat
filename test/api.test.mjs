@@ -213,8 +213,10 @@ test('消息支持回复、编辑、撤回、表情、搜索与私有房间权�
   const ownerAuth = { authorization: `Bearer ${owner.body.token}` }, guestAuth = { authorization: `Bearer ${guest.body.token}` };
   const privateRoom = await api('/api/rooms', { method: 'POST', headers: ownerAuth, body: JSON.stringify({ name: '私有功能测试', is_private: true }) });
   const roomId = privateRoom.body.room.id;
-  const hidden = await api('/api/rooms', { headers: guestAuth });
-  assert.equal(hidden.body.rooms.some(room => room.id === roomId), false);
+  // A2：私有房对非成员在列表可见（is_private=true），但消息仍不可读
+  const listed = await api('/api/rooms', { headers: guestAuth });
+  assert.equal(listed.body.rooms.some(room => room.id === roomId), true);
+  assert.equal(listed.body.rooms.find(room => room.id === roomId).is_private, true);
   assert.equal((await api(`/api/rooms/${roomId}/messages`, { headers: guestAuth })).response.status, 403);
 
   const first = await api(`/api/rooms/${roomId}/messages`, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ content: '可搜索的原消息' }) });
@@ -841,8 +843,9 @@ test('房主移除成员：被踢者收到 room_kicked 事件与通知', async (
   const notifPayload = await notified;
   assert.equal(notifPayload.notification.type, 'room');
   assert.equal(notifPayload.notification.title, '你已被移出房间');
-  // 被踢后不再看到私有房间
-  assert.equal((await api('/api/rooms', { headers: guestAuth })).body.rooms.some(room => room.id === roomId), false);
+  // A2：被踢后房间列表仍可见（私有房对所有人可见），但消息访问被拒绝
+  assert.equal((await api('/api/rooms', { headers: guestAuth })).body.rooms.some(room => room.id === roomId), true);
+  assert.equal((await api(`/api/rooms/${roomId}/messages`, { headers: guestAuth })).response.status, 403);
   // 陌生人对该房间没有管理权限
   const stranger = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'kick_stranger', password: 'kick-password-3' }) });
   const denied = await api(`/api/rooms/${roomId}/members/${stranger.body.user.id}`, { method: 'DELETE', headers: { authorization: `Bearer ${stranger.body.token}` } });
@@ -1035,4 +1038,30 @@ test('房间开关：新列与加入申请表存在（迁移生效）', async ()
   for (const c of ['locked', 'hidden', 'password_hash', 'readonly']) assert.ok(cols.includes(c), `rooms 缺列 ${c}`);
   const joinTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='room_join_requests'").get();
   assert.ok(joinTable, '缺少 room_join_requests 表');
+});
+
+test('房间列表：私有房非成员可见（🔒）、hidden 房仅成员可见', async () => {
+  const bob = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'bob_list', password: 'bob-list-password' }) });
+  const authB = { authorization: `Bearer ${bob.body.token}` };
+  const alice = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'alice_list', password: 'alice-list-password' }) });
+  const authA = { authorization: `Bearer ${alice.body.token}` };
+
+  const priv = await api('/api/rooms', { method: 'POST', headers: authA, body: JSON.stringify({ name: '私有房列表', is_private: true }) });
+  // 非管理员不能创建公共房：hidden 房改由管理员 alice 创建；A3 的 settings 端点未实现，直接改库置 hidden=1
+  const adminLogin = await api('/api/login', { method: 'POST', body: JSON.stringify({ username: 'alice', password: 'correct-horse' }) });
+  const adminAuth = { authorization: `Bearer ${adminLogin.body.token}` };
+  const hidden = await api('/api/rooms', { method: 'POST', headers: adminAuth, body: JSON.stringify({ name: '隐藏房列表' }) });
+  db.prepare('UPDATE rooms SET hidden = 1 WHERE id = ?').run(hidden.body.room.id);
+
+  const listB = await api('/api/rooms', { headers: authB });
+  const names = listB.body.rooms.map(r => r.name);
+  assert.ok(names.includes('私有房列表'), '非成员应看到私有房名');
+  assert.ok(!names.includes('隐藏房列表'), '非成员不应看到 hidden 房');
+
+  // 已是成员 → hidden 房可见
+  await api(`/api/rooms/${hidden.body.room.id}/members`, { method: 'POST', headers: adminAuth, body: JSON.stringify({ username: 'bob_list' }) });
+  const listB2 = await api('/api/rooms', { headers: authB });
+  assert.ok(listB2.body.rooms.some(r => r.name === '隐藏房列表'), '成员应看到 hidden 房');
+  const privItem = listB2.body.rooms.find(r => r.name === '私有房列表');
+  assert.equal(privItem.is_private, true);
 });
