@@ -89,16 +89,16 @@ jobs:
             macOS)   mv dist/polychat-server dist/polychat-server-macos ;;
             *)       mv dist/polychat-server dist/polychat-server-linux ;;
           esac
-      # SEA binary crash isolation (macOS): postject/LIEF declares a __POSTJECT
-      # section but node's BlobDeserializer still NULL-derefs (nodejs/node#63466).
-      # Probe locates where the blob magic actually landed vs the declared
-      # section offset, and tests copying the blob over the declared offset.
+      # SEA binary crash isolation (macOS): postject/LIEF declares the
+      # __NODE_SEA_BLOB section but the blob bytes are NOT actually written to
+      # the file (nodejs/node#63466: fuse set, resource missing → SIGSEGV).
+      # Probe confirms the gap and tests writing the blob at the declared
+      # section offset via python3 before re-signing.
       - name: Diagnose SEA crash on macOS
         if: runner.os == 'macOS'
         shell: bash
         run: |
           NODE_BIN="$(node -p 'process.execPath')"
-          "$NODE_BIN" -e 'console.log("plain-node-ok")'
           mkdir -p probe && cd probe
           printf 'console.log("probe-bare-ok");\n' > bare.cjs
           ../node_modules/.bin/esbuild bare.cjs --bundle --platform=node --format=cjs --outfile=bare-bundle.cjs
@@ -107,19 +107,29 @@ jobs:
           cp "$NODE_BIN" probe-x
           codesign --remove-signature probe-x 2>/dev/null || true
           node -e "require('postject').inject('probe-x','NODE_SEA_BLOB',require('node:fs').readFileSync('bare.blob'),{sentinelFuse:'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2'}).then(()=>console.log('injected'))"
-          echo "=== where does the blob magic actually land? ==="
-          grep -abo "NODE_SEA_BLOB" probe-x | head -5
-          echo "=== declared __POSTJECT section ==="
-          otool -l probe-x | grep -A10 "sectname __NODE_SEA_BLOB" | head -12
-          echo "=== run before dd ==="
-          codesign --sign - probe-x
-          ./probe-x && echo "PROBE OK" || echo "PROBE crashed before dd (exit $?)"
-          echo "=== dd blob over declared section offset, re-sign, run ==="
+          BLOB_SIZE=$(stat -f%z bare.blob)
           SEC_OFF=$(otool -l probe-x | grep -A10 "sectname __NODE_SEA_BLOB" | grep -m1 " offset " | awk '{print $2}')
-          echo "section offset: $SEC_OFF (file size: $(stat -f%z probe-x))"
-          dd if=bare.blob of=probe-x bs=1 seek=$SEC_OFF conv=notrunc 2>/dev/null
+          SEC_SIZE=$(otool -l probe-x | grep -A10 "sectname __NODE_SEA_BLOB" | grep -m1 "size 0x" | awk '{print $2}')
+          echo "blob=$BLOB_SIZE bytes, section offset=$SEC_OFF, section size=$SEC_SIZE"
+          echo "=== current content at declared offset ==="
+          python3 -c "
+with open('probe-x','rb') as f:
+    f.seek($SEC_OFF); data=f.read(32)
+print(' '.join(f'{b:02x}' for b in data[:16]))
+print(repr(data))
+"
+          echo "=== run before write ==="
           codesign --sign - probe-x
-          ./probe-x && echo "PROBE OK after dd" || echo "PROBE crashed after dd (exit $?)"
+          ./probe-x && echo "PROBE OK before write" || echo "PROBE crashed before write (exit $?)"
+          echo "=== python3: write blob at declared offset, re-sign, run ==="
+          python3 -c "
+with open('bare.blob','rb') as src, open('probe-x','r+b') as dst:
+    blob=src.read()
+    dst.seek($SEC_OFF); dst.write(blob)
+print('wrote', len(blob), 'bytes at', $SEC_OFF)
+"
+          codesign --sign - probe-x
+          ./probe-x && echo "PROBE OK after write" || echo "PROBE crashed after write (exit $?)"
       - name: Smoke-test the binary before publishing
         shell: bash
         run: |
