@@ -12,7 +12,8 @@ export default {
   setup(ctx) {
     const { registry, json, requireUser, db, env, onlineUsers } = ctx;
     const startTime = Date.now();
-    const version = JSON.parse(readFileSync(join(ctx.root, 'package.json'), 'utf8')).version || '1.0.0';
+    let version = '1.0.0';
+    try { version = JSON.parse(readFileSync(join(ctx.root, 'package.json'), 'utf8')).version || '1.0.0'; } catch { /* 独立 SEA 部署无 package.json */ }
     registry.registerApiRoute('GET', '/api/discovery', (req, res) => {
       const user = requireUser(req, res); if (!user) return;
       const rooms = db.prepare('SELECT COUNT(*) AS c FROM rooms').get().c;
