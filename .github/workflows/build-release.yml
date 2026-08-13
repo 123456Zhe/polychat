@@ -112,22 +112,12 @@ jobs:
           SEC_SIZE=$(otool -l probe-x | grep -A10 "sectname __NODE_SEA_BLOB" | grep -m1 "size 0x" | awk '{print $2}')
           echo "blob=$BLOB_SIZE bytes, section offset=$SEC_OFF, section size=$SEC_SIZE"
           echo "=== current content at declared offset ==="
-          python3 -c "
-with open('probe-x','rb') as f:
-    f.seek($SEC_OFF); data=f.read(32)
-print(' '.join(f'{b:02x}' for b in data[:16]))
-print(repr(data))
-"
+          python3 -c "f=open('probe-x','rb'); f.seek($SEC_OFF); data=f.read(32); print(' '.join('{:02x}'.format(b) for b in data[:16])); print(repr(data)); f.close()"
           echo "=== run before write ==="
           codesign --sign - probe-x
           ./probe-x && echo "PROBE OK before write" || echo "PROBE crashed before write (exit $?)"
           echo "=== python3: write blob at declared offset, re-sign, run ==="
-          python3 -c "
-with open('bare.blob','rb') as src, open('probe-x','r+b') as dst:
-    blob=src.read()
-    dst.seek($SEC_OFF); dst.write(blob)
-print('wrote', len(blob), 'bytes at', $SEC_OFF)
-"
+          python3 -c "dst=open('probe-x','r+b'); blob=open('bare.blob','rb').read(); dst.seek($SEC_OFF); dst.write(blob); dst.close(); print('wrote', len(blob), 'bytes at', $SEC_OFF)"
           codesign --sign - probe-x
           ./probe-x && echo "PROBE OK after write" || echo "PROBE crashed after write (exit $?)"
       - name: Smoke-test the binary before publishing
