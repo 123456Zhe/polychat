@@ -42,7 +42,7 @@ chmod +x gradlew
 
 或直接用 Android Studio 打开 `android-app/` 目录运行。
 
-CI：推送到 GitHub main 分支可手动触发 Release 构建（`.github/workflows/build-signed-apk.yml`）。
+CI：推送到 GitHub main 分支可手动触发 Release 构建（`.github/workflows/build-release.yml`），产物同时包含签名 APK 与单文件服务端二进制。
 
 ## 签名与覆盖安装
 

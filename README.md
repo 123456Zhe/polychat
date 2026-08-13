@@ -315,6 +315,40 @@ curl -I http://127.0.0.1:3000/
 
 浏览器系统通知 API 只在 HTTPS（以及本机开发用的 `localhost`）安全上下文中可用。公网 HTTP 下房间未读角标和页面标题提醒仍可工作，但桌面通知必须先为域名配置受信任的 HTTPS 证书。
 
+## 单文件服务端
+
+不想在目标机器上安装 Node.js / 拷贝整个项目？可以把服务端打包成**一个独立的可执行文件**（Node SEA 单文件应用）：
+
+```bash
+npm run web:build        # 先构建 Web 前端（只在 web/ 有改动时需要）
+npm run build:server     # 打包单文件（自动内嵌 web/ 与 KaTeX 静态资源）
+npm run build:all        # 或一次完成上面两步
+```
+
+构建产物（`dist/` 与中间文件 `build/` 均已被 gitignore）：
+
+| 产物 | 说明 |
+|---|---|
+| `dist/polychat-server` | **独立可执行二进制**（Linux），目标机无需安装 Node；复制这一个文件即可部署 |
+| `dist/polychat-server.cjs` | 单文件 JS 版，仍需 Node ≥ 22.5（用于调试 / CI） |
+
+部署只需一个文件：
+
+```bash
+# 把 dist/polychat-server 复制到任意目录（Linux 可直接运行；Windows 为 .exe）
+scp dist/polychat-server root@服务器:/opt/polychat-server
+ssh root@服务器 'chmod +x /opt/polychat-server && cd /opt && PORT=3000 HOST=0.0.0.0 ./polychat-server'
+```
+
+- 首次运行自动在**可执行文件旁边**创建 `data/`（SQLite、uploads、avatars、backups），与开发模式同一套行为。
+- Web 界面、KaTeX 公式字体等静态资源已全部内嵌，无需携带 `web/` 或 `node_modules`。
+- 二进制内含构建时使用的 Node 运行时：请在**与部署目标相同平台**（并尽量相同 Node 大版本）上构建；Linux / Windows / macOS 需分别构建。
+- 升级时重新构建并覆盖二进制即可，`data/` 目录保持不变。
+
+### 通过 GitHub Release 发布
+
+仓库的 `.github/workflows/build-release.yml` 会在手动触发时（输入版本号）并行构建 **签名 APK + 单文件服务端二进制**，并把两者发布到同一个 GitHub Release。服务端二进制用 matrix 在 **Linux / macOS / Windows** 三个平台分别构建（各内含对应平台的 Node 运行时），Release 正文自带部署与安全提示（三平台部署命令、备用 `polychat-server.cjs`、APK 安装说明等）。
+
 ## API 摘要
 
 除注册与登录外，请用浏览器会话 Cookie，或发送 `Authorization: Bearer <token>`。

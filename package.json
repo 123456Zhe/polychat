@@ -8,7 +8,9 @@
     "start": "node server.mjs",
     "test": "node --test test/*.test.mjs",
     "web:dev": "vite --config web-client/vite.config.js",
-    "web:build": "vite build --config web-client/vite.config.js"
+    "web:build": "vite build --config web-client/vite.config.js",
+    "build:server": "node scripts/build-server.mjs",
+    "build:all": "npm run web:build && npm run build:server"
   },
   "engines": {
     "node": ">=22.5"
@@ -24,6 +26,8 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.1",
+    "esbuild": "^0.25.12",
+    "postject": "^1.0.0-alpha.6",
     "vite": "^6.0.5"
   }
 }

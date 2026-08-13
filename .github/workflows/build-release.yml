@@ -1,0 +1,210 @@
+name: Build Release (APK + Single-file Server)
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version name (tag v<version>, used in APK + release)
+        required: true
+        default: 1.2.0
+
+jobs:
+  # ---------- 1. Android signed APK ----------
+  apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Configure release signing
+        working-directory: android-app
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_B64" -a -n "$STORE_PASSWORD" -a -n "$KEY_ALIAS" -a -n "$KEY_PASSWORD"
+          echo "$KEYSTORE_B64" | base64 --decode > polychat-release.keystore
+          printf 'storeFile=polychat-release.keystore\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > keystore.properties
+      - name: Update version name
+        working-directory: android-app
+        run: sed -i "s/versionName = .*/versionName = \"${{ inputs.version }}\"/" app/build.gradle.kts
+      - name: Build Signed APK
+        working-directory: android-app
+        run: ./gradlew assembleRelease
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: android-app/app/build/outputs/apk/release/app-release.apk
+          retention-days: 14
+
+  # ---------- 2. Single-file server binary (SEA) ----------
+  # Built on all 3 platforms: each runner builds with *its own* Node, and the
+  # produced binary embeds that runtime — so it runs standalone on the matching
+  # host with no Node installed. The binary is platform-bound, hence the matrix.
+  server:
+    name: Build single-file server
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: server-linux
+            upload: |
+              dist/polychat-server-linux
+              dist/polychat-server.cjs
+          - os: macos-latest
+            artifact: server-macos
+            upload: dist/polychat-server-macos
+          - os: windows-latest
+            artifact: server-win
+            upload: dist/polychat-server-win.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build web frontend
+        run: npm run web:build
+      - name: Build single-file server binary
+        run: npm run build:server
+      - name: Rename binary per platform
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows) mv dist/polychat-server.exe dist/polychat-server-win.exe ;;
+            macOS)   mv dist/polychat-server dist/polychat-server-macos ;;
+            *)       mv dist/polychat-server dist/polychat-server-linux ;;
+          esac
+      - name: Smoke-test the binary before publishing
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows) BIN=./dist/polychat-server-win.exe ;;
+            macOS)   BIN=./dist/polychat-server-macos ;;
+            *)       BIN=./dist/polychat-server-linux ;;
+          esac
+          PORT=41234 "$BIN" > server-check.log 2>&1 &
+          PID=$!
+          trap 'kill $PID 2>/dev/null || true' EXIT
+          sleep 2
+          curl -fsS http://127.0.0.1:41234/api/health
+          curl -fsS -o /dev/null http://127.0.0.1:41234/
+          curl -fsS -o /dev/null http://127.0.0.1:41234/vendor/katex.min.css
+          echo "server binary OK"
+      - name: Upload server artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.upload }}
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------- 3. Combine both into one GitHub Release with hints ----------
+  release:
+    name: Publish release v${{ inputs.version }}
+    needs: [apk, server]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Write release notes with deployment hints
+        run: |
+          cat > release-body.md <<'MD'
+          # 📦 PolyChat v__VERSION__ 发布
+
+          本次 Release 包含 **可执行服务端**（免装 Node）与 **Android 客户端** 安装包。
+
+          ---
+
+          ## 🖥️ 服务端（单文件可执行，免装 Node）
+
+          > 已内嵌 Node 运行时 + Web 界面 + KaTeX 字体，**一个文件即是完整服务端**，目标机器无需安装任何依赖。
+
+          本 Release 提供三个平台的可执行文件（均内含对应平台的 Node 运行时）：
+
+          | 文件 | 平台 |
+          |---|---|
+          | `polychat-server-linux` | Linux x64 |
+          | `polychat-server-macos` | macOS（Apple Silicon） |
+          | `polychat-server-win.exe` | Windows x64 |
+
+          ### 部署（约 1 分钟）
+
+          **Linux**
+
+          ```bash
+          scp polychat-server-linux root@你的服务器:/opt/polychat-server
+          ssh root@你的服务器 "chmod +x /opt/polychat-server && cd /opt && PORT=3000 HOST=0.0.0.0 ./polychat-server"
+          ```
+
+          **Windows（PowerShell）**
+
+          ```powershell
+          $env:PORT=3000; $env:HOST="0.0.0.0"
+          .\polychat-server-win.exe
+          ```
+
+          **macOS**
+
+          ```bash
+          chmod +x polychat-server-macos && PORT=3000 HOST=0.0.0.0 ./polychat-server-macos
+          ```
+
+          ### 使用提示
+
+          - 首次启动自动在**可执行文件所在目录**创建 `data/`（SQLite 数据库、`uploads/`、`avatars/`、`backups/`）。
+          - **升级**：覆盖二进制后重启即可，`data/` 数据完整保留。
+          - 常用环境变量：`PORT`（默认 3000）、`HOST`（默认 127.0.0.1）、`DB_PATH`、`UPLOAD_DIR`、`AVATAR_DIR`、`MAX_FILE_SIZE`、`BACKUP_ENABLED`（默认开）等。
+          - 公开部署建议前置 Nginx/Caddy 并启用 HTTPS（Web Push / 桌面通知需要安全上下文）。
+          - 若目标平台/架构不在上表（如 Linux ARM、Intel Mac），请使用 `polychat-server.cjs`，或在该平台执行 `npm run build:server` 自建。
+
+          ### 备用 · `polychat-server.cjs`
+
+          跨平台的单文件 JS 版，需要 **Node ≥ 22.5**：
+
+          ```bash
+          node polychat-server.cjs
+          ```
+
+          ---
+
+          ## 📱 Android 客户端 · `app-release.apk`
+
+          - 已签名安装包，直接传到手机安装；系统会提示"未知来源应用"，允许即可。
+          - 安装后如需连接你自己的服务器，在登录页/设置中填入 `http://服务器IP:3000`。
+
+          ---
+
+          ## 🔒 安全提示
+
+          - 首个注册账号自动成为管理员，请妥善保管密码。
+          - 内置登录限速、审计日志、管理员封禁/禁言、数据导出与账户删除。
+          - 建议定期备份 `data/`（服务端默认每 24 小时自动备份到 `data/backups/`）。
+          MD
+          sed -i "s/__VERSION__/${{ inputs.version }}/g" release-body.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: PolyChat v${{ inputs.version }}
+          body_path: release-body.md
+          files: |
+            app-release.apk
+            polychat-server-linux
+            polychat-server-macos
+            polychat-server-win.exe
+            polychat-server.cjs

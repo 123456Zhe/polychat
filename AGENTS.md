@@ -37,6 +37,7 @@ Run `npm install` once before starting the server or building the web frontend. 
 | Run Node tests | `npm test` (runs `node --test test/*.test.mjs`) |
 | Web dev server | `npm run web:dev` (Vite on :5173, proxies `/api` to :3000) |
 | Web production build | `npm run web:build` (outputs to `web/`) |
+| Single-file server build | `npm run build:server` → `dist/polychat-server` (Node SEA binary, self-contained) + `dist/polychat-server.cjs` (bundled JS). `npm run build:all` = web:build + build:server |
 | Run GUI client | `./run-gui.sh` (needs Python + Flet in `.venv-gui/`) |
 | Run TUI client | `./run-tui.sh` |
 | Build GUI standalone | `./build-gui.sh` (creates `dist/PolyChat-GUI/`) |
@@ -74,6 +75,17 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 - OneBot v11 gateway at `ws://HOST:PORT/api/onebot/ws?token=<bot_token>` (also `/api` standard path). Bots authenticate with a bot token created by an admin-approved bot request.
 
 ## Session work log
+
+### This session (单文件服务端打包)
+- **目标**：解决部署麻烦 —— 把服务端打成单个可执行文件，目标机无需装 Node、无需拷贝项目目录。
+- **实现**（`scripts/build-server.mjs` + `server.mjs` 小改 + `embedded-assets.cjs` 占位）：
+  - esbuild 把 `server.mjs` + `modules/onebot/` + `ws` + `web-push` 全部打进单个 CJS 文件（`build/server.cjs`，devDeps 增加 `esbuild`、`postject`）。
+  - **静态资源内嵌**：esbuild 虚拟插件拦截 `./embedded-assets.cjs`，生成 `web/`（129 个文件）+ KaTeX vendor（css/js/60 字体）的 base64 映射注入 bundle；`server.mjs` 顶部 `import embeddedAssets from './embedded-assets.cjs'`（dev/测试读占位文件 → `null` → 照旧读磁盘，`staticFile` 内嵌映射优先、磁盘回退）。
+  - **Node SEA**：`--experimental-sea-config` 生成 blob → 复制 `process.execPath` → postject 注入 → 输出 `dist/polychat-server`（Linux 可执行，约 128MB，含 Node 运行时）；同时保留 `dist/polychat-server.cjs`（单文件 JS 版）。
+  - 关键坑：SEA 入口只能按 CJS 加载（ESM 输出报 `Unexpected token 'export'`）；CJS 下 esbuild 把 `import.meta.url` 编成 `{}` → 会崩，`server.mjs` 改为 `typeof __dirname !== 'undefined' ? __dirname : fileURLToPath(...)` 双系统兼容，并用 `logOverride: { 'empty-import-meta': 'silent' }` 消警告；SEA 需全量 bundle（运行期 `require('ws')` 会 `ERR_UNKNOWN_BUILTIN_MODULE`）。
+  - 新 npm scripts：`build:server`、`build:all`（= web:build + build:server）。`build/`、`dist/` 已在 gitignore。
+- **验证**：独立空目录部署实测——单文件启动自动建 `data/`，`/api/health`、注册/登录/建房/发消息/拉消息、WebSocket 实时广播（`message` 事件）、重启持久化、内嵌静态资源（index.html、`/assets/*.js`、`/vendor/katex.min.js` 与字体）、404 均通过；`dist/polychat-server.cjs` 也能直接 `node` 跑；`npm test` 25/25 通过（dev 磁盘回退未受影响）。构建注意事项：二进制内含构建时 Node，须在部署同平台构建。
+- **GitHub Release 一体化发布**：`.github/workflows/build-signed-apk.yml` 改名 `.github/workflows/build-release.yml`（`build-android.yml` 调试 workflow 不变）。手动触发输入版本号后并行跑 4 类 job：`apk`（签名 APK，上传 artifact `android-apk`）；`server`（**matrix 3 平台** ubuntu/macos/windows，各用 setup-node 24 → `npm ci` → `web:build` → `build:server`，把二进制 mv 成 `polychat-server-linux`/`-macos`/`-win.exe` 后**先启动做冒烟自检** health/index/vendor-katex，`shell:bash` 保证三平台可跑，`fail-fast:false`，按平台传独立 artifact；`polychat-server.cjs` 只在 linux artifact 传一份避免 merge 冲突）；`release`（`needs:[apk,server]`，download-artifact `merge-multiple` 合并 4 个 artifact → heredoc 生成含三平台部署/安全提示的 Release 正文 → `softprops/action-gh-release` 一次上传 apk + 3 平台二进制 + cjs）。正文用 `__VERSION__` 占位 + `sed` 替换，避免 `${{ }}` 出现在 heredoc 内。postject 的 WASM 以 base64 内嵌在 JS（无外部 .wasm），跨平台可行。已本地验证：YAML 解析、9 个 run 脚本 `bash -n`、正文渲染全部通过。
 
 ### This session (借鉴 LanTalk：房主踢人通知 / 全局公告 / Markdown 速查 / 智能检测)
 - **房主踢人增强**（服务端 `server.mjs`）：`DELETE /api/rooms/:id/members/:userId` 移除成员后给被踢者推送 `room_kicked` WS 事件（`room_id` + `room_name`）+ 创建「你已被移出房间」通知；Web 端 `handleSocketEvent` 收到 `room_kicked` 后自动退出该房间并 toast 提示（`backToMobileHome()`）。

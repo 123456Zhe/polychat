@@ -7,6 +7,10 @@ import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypt
 import { WebSocketServer } from 'ws';
 import webpush from 'web-push';
 import { setupOnebot } from './modules/onebot/index.js';
+// Embedded static assets (web/ + KaTeX vendor files). `null` in dev/test runs —
+// the single-file build (`npm run build:server`) swaps this module for the real
+// asset map so the bundled/SEA server is fully self-contained.
+import embeddedAssets from './embedded-assets.cjs';
 
 function createEventBus() {
   const listeners = new Map();
@@ -24,7 +28,10 @@ function createEventBus() {
 }
 const eventBus = createEventBus();
 
-const ROOT = fileURLToPath(new URL('.', import.meta.url));
+// Source directory. In dev (ESM) `import.meta.url` points at server.mjs; in the
+// single-file build (CJS bundle / SEA binary) `__dirname` resolves to wherever
+// the artifact lives — data/ and web/ are then created/read next to it.
+const ROOT = typeof __dirname !== 'undefined' ? __dirname : fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC = join(ROOT, 'web');
 const KATEX_DIST = join(ROOT, 'node_modules', 'katex', 'dist');
 const PORT = Number(process.env.PORT || 3000);
@@ -1945,6 +1952,15 @@ async function api(req, res, url) {
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf' };
 function staticFile(res, pathname) {
+  // Single-file build: assets live in the embedded map (web/ + KaTeX vendor).
+  if (embeddedAssets) {
+    const key = pathname === '/' ? '/index.html' : pathname;
+    const asset = embeddedAssets[key];
+    if (!asset) return json(res, 404, { error: '页面不存在' });
+    const cacheControl = key === '/index.html' || key === '/sw.js' ? 'no-cache' : 'public, max-age=31536000, immutable';
+    res.writeHead(200, { 'content-type': asset.type, 'cache-control': cacheControl });
+    return res.end(Buffer.from(asset.body, 'base64'));
+  }
   let vendorFile = null;
   if (pathname === '/vendor/katex.min.css') vendorFile = join(KATEX_DIST, 'katex.min.css');
   else if (pathname === '/vendor/katex.min.js') vendorFile = join(KATEX_DIST, 'katex.min.js');
