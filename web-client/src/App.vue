@@ -368,8 +368,9 @@ async function handleSocketEvent(event) {
   }
   if (event.type === 'rooms') return loadRooms();
   if (event.type === 'room_settings' && room.value && event.room_id === room.value.id) {
-    Object.assign(room.value, { locked: event.locked, readonly: event.readonly, has_password: event.has_password });
+    Object.assign(room.value, { locked: event.locked, hidden: event.hidden, readonly: event.readonly, has_password: event.has_password });
     await loadRooms();
+    return;
   }
   if (event.type === 'message_update') {
     if (room.value?.id === event.room_id) await refreshMessage(event.message_id);
@@ -470,7 +471,8 @@ async function requestJoin() {
 }
 async function choose(item) {
   if (item.is_private && !item.role && !isAdmin.value) {
-    room.value = item; conversation.value = null; view.value = 'rooms';
+    room.value = item; conversation.value = null; view.value = 'rooms'; messages.value = []; clearUnread(item.id);
+    if (item.locked) { notify('房间已锁定，仅接受邀请'); return; }
     if (item.has_password) { joinOpen.value = true; joinError.value = ''; joinPassword.value = ''; return; }
     return requestJoin();
   }
