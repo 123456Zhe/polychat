@@ -139,14 +139,14 @@ export default {
         }
         const result = db.prepare('INSERT INTO gallery_images(user_id, filename, mime, size, stored_name, storage, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
           .run(user.id, `image${extOf(mime)}`, mime, bytes.length, key, 'qiniu', Date.now());
-        logAudit(user.id, 'gallery_upload', Number(result.lastInsertRowid));
+        logAudit(user.id, 'gallery_upload', null, `图片 id ${Number(result.lastInsertRowid)}`);
         return json(res, 201, { image: { id: Number(result.lastInsertRowid), filename: `image${extOf(mime)}`, mime, size: bytes.length, storage: 'qiniu' } });
       }
       const storedName = `${user.id}-${Date.now()}-${randomBytes(4).toString('hex')}${extOf(mime)}`;
       writeFileSync(join(galleryDir(), storedName), bytes, { flag: 'wx', mode: 0o600 });
       const result = db.prepare('INSERT INTO gallery_images(user_id, filename, mime, size, stored_name, storage, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
         .run(user.id, `image${extOf(mime)}`, mime, bytes.length, storedName, 'local', Date.now());
-      logAudit(user.id, 'gallery_upload', Number(result.lastInsertRowid));
+      logAudit(user.id, 'gallery_upload', null, `图片 id ${Number(result.lastInsertRowid)}`);
       return json(res, 201, { image: { id: Number(result.lastInsertRowid), filename: `image${extOf(mime)}`, mime, size: bytes.length, storage: 'local' } });
     });
 
@@ -179,7 +179,7 @@ export default {
         try { unlinkSync(join(galleryDir(), row.stored_name)); } catch { /* stale */ }
       }
       db.prepare('DELETE FROM gallery_images WHERE id = ?').run(id);
-      logAudit(user.id, 'gallery_delete', id);
+      logAudit(user.id, 'gallery_delete', null, `图片 id ${id}`);
       return json(res, 200, { ok: true });
     });
 

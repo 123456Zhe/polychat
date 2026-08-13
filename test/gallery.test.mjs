@@ -151,3 +151,15 @@ test('注销账户：图床记录与文件一并清理', async () => {
   assert.equal(rows.c, 0, '注销后 gallery_images 行应清空');
   assert.ok(!existsSync(localPath), '注销后本地图床文件应删除');
 });
+
+test('图床上传多张：图片 rowid 与 user id 错开时仍 201（audit 第三参不引用图片 id）', async () => {
+  const auth = await registerUser('gal_fk');
+  // gallery_images.id 为 AUTOINCREMENT，多张上传后图片 rowid 必然超过已注册用户 id 范围，
+  // 若 logAudit 第三参（target_user_id）误传图片 id，audit_logs 的 NO ACTION 外键会拒插 → 上传 500。
+  for (let i = 0; i < 12; i++) {
+    const up = await api('/api/gallery', {
+      method: 'POST', headers: { authorization: auth.authorization, 'content-type': 'image/png' }, body: PNG
+    });
+    assert.equal(up.status, 201, `第 ${i + 1} 张上传应 201（图片 rowid 与 user id 错开）`);
+  }
+});
