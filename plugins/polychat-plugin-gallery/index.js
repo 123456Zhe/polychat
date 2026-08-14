@@ -6,7 +6,7 @@ import { Client } from 'minio';
 // 个人图床：本地 / S3 兼容双后端（GALLERY_* / S3_* 环境变量可覆盖，QINIU_* 为兼容别名）。
 export default {
   name: 'gallery',
-  version: '1.0.0',
+  version: '1.1.0',
   description: '个人图床：上传/配额/外链，支持本地与 S3 兼容后端（MinIO/R2/七牛等）',
   enabledByDefault: true,
   defaultConfig: { quota_mb: 500, storage: 'local' },
