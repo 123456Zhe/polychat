@@ -252,10 +252,30 @@ db.exec(`
     mime TEXT NOT NULL,
     size INTEGER NOT NULL,
     stored_name TEXT NOT NULL,
-    storage TEXT NOT NULL DEFAULT 'local' CHECK(storage IN ('local', 'qiniu')),
+    storage TEXT NOT NULL DEFAULT 'local' CHECK(storage IN ('local', 's3')),
     created_at INTEGER NOT NULL
   );
 `);
+// gallery_images.storage 支持 's3'（图床后端通用 S3 兼容化）；旧 'qiniu' 行统一改写为 's3'。
+// CHECK 约束无法 ALTER，故整表重建（模式与上方 messages 迁移一致）。
+if (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='gallery_images'").get().sql.includes("'qiniu'")) {
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec(`CREATE TABLE gallery_images_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    filename TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    stored_name TEXT NOT NULL,
+    storage TEXT NOT NULL DEFAULT 'local' CHECK(storage IN ('local', 's3')),
+    created_at INTEGER NOT NULL
+  )`);
+  db.exec(`INSERT INTO gallery_images_new(id, user_id, filename, mime, size, stored_name, storage, created_at)
+    SELECT id, user_id, filename, mime, size, stored_name, CASE WHEN storage='qiniu' THEN 's3' ELSE storage END, created_at FROM gallery_images`);
+  db.exec('DROP TABLE gallery_images');
+  db.exec('ALTER TABLE gallery_images_new RENAME TO gallery_images');
+  db.exec('PRAGMA foreign_keys = ON');
+}
 db.exec(`CREATE TABLE IF NOT EXISTS bot_tokens (
   token TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
