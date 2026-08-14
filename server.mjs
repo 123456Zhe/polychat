@@ -798,7 +798,7 @@ async function api(req, res, url) {
     db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
     db.prepare('UPDATE messages SET content = \'[已删除]\', attachment_id = NULL, deleted_at = CURRENT_TIMESTAMP WHERE user_id = ?').run(user.id);
     db.prepare('DELETE FROM attachments WHERE user_id = ?').run(user.id);
-    // 图床：清理数据库行 + 本地文件（qiniu 模式对象经插件清理服务，插件停用时跳过）
+    // 图床：清理数据库行 + 本地文件（S3 模式对象经插件清理服务，插件停用时跳过）
     const galleryRows = db.prepare('SELECT id, stored_name, storage FROM gallery_images WHERE user_id = ?').all(user.id);
     db.prepare('DELETE FROM gallery_images WHERE user_id = ?').run(user.id);
     for (const g of galleryRows) {
@@ -807,7 +807,7 @@ async function api(req, res, url) {
       }
     }
     const galleryCleanup = registry.service('gallery-cleanup');
-    if (galleryCleanup) for (const g of galleryRows.filter(x => x.storage === 'qiniu')) { try { await galleryCleanup.deleteObject(g.stored_name); } catch { /* non-fatal */ } }
+    if (galleryCleanup) for (const g of galleryRows.filter(x => x.storage === 's3')) { try { await galleryCleanup.deleteObject(g.stored_name); } catch { /* non-fatal */ } }
     db.prepare('DELETE FROM room_members WHERE user_id = ?').run(user.id);
     db.prepare('DELETE FROM message_reactions WHERE user_id = ?').run(user.id);
     db.prepare('DELETE FROM push_subscriptions WHERE user_id = ?').run(user.id);
