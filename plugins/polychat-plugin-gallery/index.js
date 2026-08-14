@@ -1,13 +1,13 @@
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHmac, randomBytes } from 'node:crypto';
-import qiniu from 'qiniu';
+import { Client } from 'minio';
 
-// 个人图床：本地 / 七牛 Kodo 双后端（GALLERY_* / QINIU_* 环境变量可覆盖）。
+// 个人图床：本地 / S3 兼容双后端（GALLERY_* / S3_* 环境变量可覆盖，QINIU_* 为兼容别名）。
 export default {
   name: 'gallery',
   version: '1.0.0',
-  description: '个人图床：上传/配额/外链，支持本地与七牛 Kodo 双后端',
+  description: '个人图床：上传/配额/外链，支持本地与 S3 兼容后端（MinIO/R2/七牛等）',
   enabledByDefault: true,
   defaultConfig: { quota_mb: 500, storage: 'local' },
   setup(ctx) {
@@ -34,13 +34,13 @@ export default {
       return `${base.replace(/\/+$/, '')}/api/gallery/${row.id}/file?expires=${expires}&sig=${sig}`;
     }
 
-    // 列表外链：本地后端返回服务器签名中转链接；七牛后端直接返回 Kodo 下载 URL
-    //（公开空间 https://<domain>/<key>，私有空间为带 deadline 的签名 URL）。
-    function rowUrl(row) {
-      if (row.storage === 'qiniu') {
-        const q = qiniuMac();
-        if (!q) return null;
-        return qiniuDownloadUrl(q, row.stored_name);
+    // 列表外链：本地后端返回服务器签名中转链接；S3 后端返回下载 URL
+    //（公开桶 CDN 直连 https://<domain>/<key>，或 presign 签名 URL）。
+    async function rowUrl(row) {
+      if (row.storage === 's3') {
+        const s3 = s3Client();
+        if (!s3) return null;
+        return s3DownloadUrl(s3, row.stored_name);
       }
       return buildGalleryUrl(row);
     }
@@ -59,64 +59,64 @@ export default {
       return Buffer.concat(chunks);
     }
 
-    // ── 七牛 Kodo 后端（storage=qiniu，服务端中转上传）────────────────────────
-    // 缺任一 QINIU_* 环境变量即视为未配置（返回 null，调用方回 503「七牛模式未配置
-    // QINIU_* 环境变量」）。zone 取 qiniu.zone['Zone_' + zone]：Zone_z0 华东 /
-    // Zone_z1 华北 / Zone_z2 华南 / Zone_na0 北美 / Zone_as0 新加坡；
-    // zone 未命中同样按未配置处理（503 fail fast），避免静默走 uc 查区。
-    // useHttpsDomain: true —— 上传/删除强制 HTTPS（默认 http 明文不可接受）。
-    function qiniuMac() {
-      const ak = env.QINIU_ACCESS_KEY, sk = env.QINIU_SECRET_KEY;
-      const bucket = env.QINIU_BUCKET, zone = env.QINIU_ZONE;
-      const domain = env.QINIU_DOMAIN;
-      if (!ak || !sk || !bucket || !zone || !domain) return null;
-      const zoneConfig = qiniu.zone[`Zone_${zone}`];
-      if (!zoneConfig) return null;
-      const mac = new qiniu.auth.digest.Mac(ak, sk);
-      const config = new qiniu.conf.Config({ useHttpsDomain: true });
-      config.zone = zoneConfig;
-      return { mac, bucket, config, domain, privateBucket: env.QINIU_PRIVATE === 'true' };
+    // ── S3 兼容后端（storage=s3，服务端中转上传）────────────────────────
+    // 配置：S3_* 为主，QINIU_* 为兼容别名（先读 S3_*，缺失回退 QINIU_*），
+    // 缺任一必填项（AK/SK/BUCKET/ENDPOINT）即视为未配置（返回 null，调用方回 503
+    // 「S3 模式未配置 S3_* 环境变量」）。ENDPOINT 形如
+    // `https://s3-cn-east-1.qiniucs.com`（七牛）/ `https://<account>.r2.cloudflarestorage.com`（R2）/
+    // `http://minio:9000`（MinIO）。旧 QINIU_ZONE 已废弃（区域信息含在 ENDPOINT 中）。
+    function s3Env(key) { return env[`S3_${key}`] || env[`QINIU_${key}`] || undefined; }
+    function s3Client() {
+      const ak = s3Env('ACCESS_KEY'), sk = s3Env('SECRET_KEY');
+      const bucket = s3Env('BUCKET'), endpoint = s3Env('ENDPOINT');
+      if (!ak || !sk || !bucket || !endpoint) return null;
+      const url = new URL(/^https?:\/\//i.test(endpoint) ? endpoint : `https://${endpoint}`);
+      const region = s3Env('REGION') || 'us-east-1';
+      return {
+        bucket,
+        domain: s3Env('DOMAIN'),
+        privateBucket: s3Env('PRIVATE') === 'true',
+        client: new Client({
+          endPoint: url.hostname,
+          port: url.port ? Number(url.port) : (url.protocol === 'http:' ? 80 : 443),
+          useSSL: url.protocol === 'https:',
+          accessKey: ak,
+          secretKey: sk,
+          region
+        })
+      };
     }
-    function qiniuKey(userId, mime) {
+    function s3Key(userId, mime) {
       return `gallery/${userId}/${Date.now()}-${randomBytes(4).toString('hex')}${extOf(mime)}`;
     }
-    function uploadToQiniu(q, key, bytes) {
-      const putPolicy = new qiniu.rs.PutPolicy({ scope: `${q.bucket}:${key}`, expires: 3600 });
-      const token = putPolicy.uploadToken(q.mac);
-      return new Promise((resolve, reject) => {
-        new qiniu.form_up.FormUploader(q.config).put(token, key, bytes, new qiniu.form_up.PutExtra(), (err, resp) => err ? reject(err) : resolve(resp));
-      });
+    async function s3PutObject(s3, key, bytes, mime) {
+      await s3.client.putObject(s3.bucket, key, bytes, { 'Content-Type': mime });
     }
-    function qiniuDelete(q, key) {
-      return new Promise((resolve, reject) => {
-        new qiniu.rs.BucketManager(q.mac, q.config).delete(q.bucket, key, (err, resp) => err ? reject(err) : resolve(resp));
-      });
+    async function s3RemoveObject(s3, key) {
+      await s3.client.removeObject(s3.bucket, key);
     }
-    // 下载外链：公开空间 `https://<domain>/<key>`；私有空间（QINIU_PRIVATE=true）
-    // 用 BucketManager.privateDownloadUrl 生成带 deadline 的签名 URL（单位秒）。
-    function qiniuDownloadUrl(q, key) {
-      const domain = /^https?:\/\//i.test(q.domain) ? q.domain : `https://${q.domain}`;
-      if (q.privateBucket) {
-        const deadline = Math.floor(Date.now() / 1000) + 3600;
-        return new qiniu.rs.BucketManager(q.mac, q.config).privateDownloadUrl(domain, key, deadline);
-      }
-      return `${domain}/${key}`;
+    // 下载外链：S3_PRIVATE=true 或未设 S3_DOMAIN → presign 1 小时签名 URL（公开/私有桶通吃）；
+    // 否则（公开桶 + S3_DOMAIN）直接 `https://<domain>/<key>`（CDN 直连，沿用旧 QINIU_DOMAIN 行为）。
+    async function s3DownloadUrl(s3, key) {
+      if (s3.privateBucket || !s3.domain) return s3.client.presignedGetObject(s3.bucket, key, 3600);
+      const domain = /^https?:\/\//i.test(s3.domain) ? s3.domain : `https://${s3.domain}`;
+      return `${domain.replace(/\/+$/, '')}/${key}`;
     }
-    function redirectToQiniuUrl(res, key) {
-      const q = qiniuMac();
-      if (!q) return json(res, 503, { error: '七牛模式未配置 QINIU_* 环境变量' });
-      res.writeHead(302, { location: qiniuDownloadUrl(q, key), 'cache-control': 'no-store' });
+    async function redirectToS3Url(res, key) {
+      const s3 = s3Client();
+      if (!s3) return json(res, 503, { error: 'S3 模式未配置 S3_* 环境变量' });
+      res.writeHead(302, { location: await s3DownloadUrl(s3, key), 'cache-control': 'no-store' });
       return res.end();
     }
 
     // 清理服务：账户注销时核心经 registry.service('gallery-cleanup') 安全调用
-    //（插件停用时服务不存在，核心跳过七牛对象删除；本地文件由核心直接 unlink）。
-    // 复用上面的 qiniuDelete（BucketManager.delete，useHttpsDomain 强制 HTTPS）。
+    //（插件停用时服务不存在，核心跳过 S3 对象删除；本地文件由核心直接 unlink）。
+    // 复用上面的 s3RemoveObject。
     registry.provide('gallery-cleanup', {
       deleteObject: async (key) => {
-        const q = qiniuMac();
-        if (!q) return; // 七牛未配置 → 无可删，静默返回
-        await qiniuDelete(q, key);
+        const s3 = s3Client();
+        if (!s3) return; // S3 未配置 → 无可删，静默返回
+        await s3RemoveObject(s3, key);
       }
     });
 
@@ -128,19 +128,19 @@ export default {
       if (!bytes.length) return json(res, 400, { error: '空文件' });
       if (bytes.length > maxFileSize) return json(res, 413, { error: '超过单文件大小上限' });
       if (usedBytes(user.id) + bytes.length > QUOTA_BYTES) return json(res, 413, { error: '超出图床配额' });
-      if (STORAGE === 'qiniu') {
-        const q = qiniuMac();
-        if (!q) return json(res, 503, { error: '七牛模式未配置 QINIU_* 环境变量' });
-        const key = qiniuKey(user.id, mime);
+      if (STORAGE === 's3' || STORAGE === 'qiniu') {
+        const s3 = s3Client();
+        if (!s3) return json(res, 503, { error: 'S3 模式未配置 S3_* 环境变量' });
+        const key = s3Key(user.id, mime);
         try {
-          await uploadToQiniu(q, key, bytes);
+          await s3PutObject(s3, key, bytes, mime);
         } catch (e) {
-          return json(res, 500, { error: `七牛上传失败：${e.message || e}` });
+          return json(res, 500, { error: `S3 上传失败：${e.message || e}` });
         }
         const result = db.prepare('INSERT INTO gallery_images(user_id, filename, mime, size, stored_name, storage, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-          .run(user.id, `image${extOf(mime)}`, mime, bytes.length, key, 'qiniu', Date.now());
+          .run(user.id, `image${extOf(mime)}`, mime, bytes.length, key, 's3', Date.now());
         logAudit(user.id, 'gallery_upload', null, `图片 id ${Number(result.lastInsertRowid)}`);
-        return json(res, 201, { image: { id: Number(result.lastInsertRowid), filename: `image${extOf(mime)}`, mime, size: bytes.length, storage: 'qiniu' } });
+        return json(res, 201, { image: { id: Number(result.lastInsertRowid), filename: `image${extOf(mime)}`, mime, size: bytes.length, storage: 's3' } });
       }
       const storedName = `${user.id}-${Date.now()}-${randomBytes(4).toString('hex')}${extOf(mime)}`;
       writeFileSync(join(galleryDir(), storedName), bytes, { flag: 'wx', mode: 0o600 });
@@ -158,7 +158,7 @@ export default {
       const rows = db.prepare('SELECT * FROM gallery_images WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(user.id, limit, offset);
       const used = db.prepare('SELECT COALESCE(SUM(size), 0) AS used FROM gallery_images WHERE user_id = ?').get(user.id).used;
       return json(res, 200, {
-        images: rows.map(r => ({ id: r.id, filename: r.filename, mime: r.mime, size: r.size, storage: r.storage, created_at: r.created_at, stored_name: r.stored_name, url: rowUrl(r) })),
+        images: await Promise.all(rows.map(async r => ({ id: r.id, filename: r.filename, mime: r.mime, size: r.size, storage: r.storage, created_at: r.created_at, stored_name: r.stored_name, url: await rowUrl(r) }))),
         quota_mb: QUOTA_BYTES / 1024 / 1024, used_mb: used / 1024 / 1024
       });
     });
@@ -171,10 +171,10 @@ export default {
       const row = db.prepare('SELECT * FROM gallery_images WHERE id = ?').get(id);
       if (!row) return json(res, 404, { error: '图片不存在' });
       if (row.user_id !== user.id && !user.is_admin) return json(res, 403, { error: '无权删除他人图片' });
-      if (row.storage === 'qiniu') {
-        const q = qiniuMac();
-        if (!q) return json(res, 503, { error: '七牛模式未配置 QINIU_* 环境变量' });
-        try { await qiniuDelete(q, row.stored_name); } catch { /* 桶内对象可能已不存在，DB 记录照删 */ }
+      if (row.storage === 's3') {
+        const s3 = s3Client();
+        if (!s3) return json(res, 503, { error: 'S3 模式未配置 S3_* 环境变量' });
+        try { await s3RemoveObject(s3, row.stored_name); } catch { /* 桶内对象可能已不存在，DB 记录照删 */ }
       } else {
         try { unlinkSync(join(galleryDir(), row.stored_name)); } catch { /* stale */ }
       }
@@ -191,7 +191,7 @@ export default {
       const row = db.prepare('SELECT * FROM gallery_images WHERE id = ?').get(id);
       if (!row) return json(res, 404, { error: '图片不存在' });
       if (!verifyPublicFileUrl(row.stored_name, expires, sig)) return json(res, 403, { error: '链接无效或已过期' });
-      if (row.storage === 'qiniu') return redirectToQiniuUrl(res, row.stored_name);
+      if (row.storage === 's3') return redirectToS3Url(res, row.stored_name);
       try {
         const bytes = readFileSync(join(galleryDir(), row.stored_name));
         res.writeHead(200, { 'content-type': row.mime, 'content-length': bytes.length, 'cache-control': 'public, max-age=86400', 'x-content-type-options': 'nosniff' });
