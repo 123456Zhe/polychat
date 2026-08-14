@@ -124,7 +124,7 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 | `web-push` | 离线 Web Push 推送 | 失去离线提醒（站内实时不受影响） |
 | `p2p` | 私信 P2P 大文件直传 | 大文件回退为服务器分片上传 |
 | `onebot` | OneBot 机器人网关 | 失去 Bot 接入 |
-| `gallery` | 个人图床（本地/七牛双后端） | 失去图床上传与外链 |
+| `gallery` | 个人图床（本地/S3 兼容双后端） | 失去图床上传与外链 |
 | `lan-discovery` | `GET /api/discovery` 局域网发现 | 失去发现端点（404） |
 
 - **默认全部启用**，API 表面不变；按部署裁剪用 `DISABLED_PLUGINS=backup,p2p`。
