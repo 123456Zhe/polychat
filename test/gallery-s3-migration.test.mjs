@@ -11,9 +11,11 @@ const temporary = mkdtempSync(join(tmpdir(), 'polychat-gallery-migration-'));
 const dbPath = join(temporary, 'test.db');
 {
   const pre = new DatabaseSync(dbPath);
+  // 预建阶段模拟旧部署；node:sqlite 默认开启外键，显式关闭以便在无 users 表时插入旧记录
+  pre.exec('PRAGMA foreign_keys = OFF');
   pre.exec(`CREATE TABLE gallery_images (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     filename TEXT NOT NULL,
     mime TEXT NOT NULL,
     size INTEGER NOT NULL,
@@ -45,4 +47,5 @@ test('gallery_images 迁移：storage 旧值 qiniu 改写为 s3，数据保留�
   const sql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='gallery_images'").get().sql;
   assert.ok(sql.includes("'s3'"));
   assert.ok(!sql.includes("'qiniu'"));
+  assert.ok(sql.includes('REFERENCES users(id) ON DELETE CASCADE'));
 });
