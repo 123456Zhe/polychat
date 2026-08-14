@@ -245,7 +245,6 @@ button { cursor: pointer; }
 .composer { box-shadow: none; }
 .compose-row .send { border-radius: 10px; }
 .compose-row .send:hover { filter: brightness(1.06); }
-.link-attach { font-size: 16px; }
 
 .composer > small { display: block; margin-top: 6px; color: #9a9fab; font-size: 9px; text-align: right; }
 .file-chip { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; padding: 6px 9px; border-radius: 9px; color: #5f6878; font-size: 11px; background: #eae7e7; }
