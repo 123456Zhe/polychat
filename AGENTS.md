@@ -78,6 +78,13 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 
 ## Session work log
 
+### This session (图床后端改为通用 S3 兼容)
+- **背景**：图床插件的云存储后端原为七牛官方 SDK（`qiniu` npm 包）。本次改为**通用 S3 兼容协议**（`minio` SDK ^8.0.7），不再锁定七牛——MinIO / Cloudflare R2 / 七牛 Kodo 等任意 S3 兼容服务商只改配置即可接入。
+- **配置（`S3_*` 为主，`QINIU_*` 兼容别名）**：`S3_ACCESS_KEY`/`S3_SECRET_KEY`/`S3_BUCKET`/`S3_ENDPOINT` 必填（缺任一 503「S3 模式未配置 S3_* 环境变量」），`S3_REGION` 默认 `us-east-1`，`S3_DOMAIN` 可选（公开桶 CDN 直连），`S3_PRIVATE` 默认 false（true 时即使设了 DOMAIN 也走 presign 签名 URL）；先读 `S3_*` 缺失回退 `QINIU_*`，旧 `QINIU_ZONE` 废弃（区域含在 ENDPOINT 中），`GALLERY_STORAGE=qiniu` 旧值仍激活 S3 后端。线上旧部署升级后**需补设 `S3_ENDPOINT`**（如七牛 `https://s3-cn-east-1.qiniucs.com`）才恢复 S3 后端。
+- **实现**：`plugins/polychat-plugin-gallery/index.js` 三操作等价替换——`putObject`（上传，服务端中转）/ `removeObject`（删除）/ `presignedGetObject`（外链，1 小时签名）；`gallery_images.storage` 标记 `qiniu` → `s3`（server.mjs 表重建迁移，CHECK 扩为 `('local','s3')`，旧行批量改写、数据与 FK 保留）；注销清理 filter 同步改为 `'s3'`（修复了迁移后 S3 对象注销泄漏的隐患）；插件 manifest 版本 1.1.0 + package.json 声明 `minio` 依赖（独立仓库 npm 安装用）。
+- **测试**：`test/gallery-s3-misconfig.test.mjs`（缺配置 503 / 别名缺 ENDPOINT 503 / ENDPOINT 不可达 500，替换原 qiniu-misconfig 文件）+ `test/gallery-s3-migration.test.mjs`（旧表重建迁移）。56/56 通过；`web:build` 干净；SEA 构建含 minio 无 qiniu 残留，dist 冒烟（health / S3 未配置 503 / 本地模式全流程）全绿。
+- **已推送**：main（设计文档 + 计划 + 9 实现 commit + minio 依赖）；subtree 已同步 `123456Zhe/polychat-plugin-gallery`。
+
 ### This session (房间开关 + 图床插件 + 发现端点 + 证书自动化)
 - **房间开关与门禁（A1-A8）**：`rooms` 表新增 `locked`/`hidden`/`password_hash`/`readonly` 列 + `room_join_requests` 表（Schema 集中迁移）；`PUT /api/rooms/:id/settings` 设置开关（房主/房间管理员，公开房限定管理员）；门禁守卫——locked 仅接受邀请、hidden 不出现在公开列表（成员/管理员仍可见）、密码入房 `POST /api/rooms/:id/join`、readonly 拦非管理员发言；公开房可 `POST /api/rooms/:id/request-join` 申请、管理员 approve/reject（带通知，拒后可重申请）；Web 端房间设置开关 + 锁定/隐藏/只读徽章 + 密码加入弹窗 + 申请审批 UI（桌面+移动）。
 - **个人图床插件（B1-B6）**：新增内置插件 `polychat-plugin-gallery`（独立仓库 `123456Zhe/polychat-plugin-gallery`，subtree 同步）；`gallery_images` 表集中建在核心；`POST /api/gallery` 上传（图片 MIME 校验 + 每用户配额 `GALLERY_QUOTA_MB`）、`GET /api/gallery` 列表（含外链）、`DELETE /api/gallery/:id`、`GET /api/gallery/:id/file` 签名文件端点；本地后端落盘 `data/uploads/gallery/` + 七牛 Kodo 后端（`GALLERY_STORAGE=qiniu` + `QINIU_*`，服务端中转上传/删除/下载外链，`useHttpsDomain` 强制 HTTPS、私有空间签名 URL，缺任一 `QINIU_*` 上传 503）；注销账户时图床记录与文件一并清理（经 `gallery-cleanup` 服务，顺带修复 audit_logs FK 缺陷）；Web 端「我的图床」页（上传/配额/外链复制/删除）。新增 `qiniu`、`proxy-agent` 依赖（SEA 可打包）。
