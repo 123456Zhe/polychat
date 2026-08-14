@@ -11,5 +11,8 @@
     "node": ">=22.5"
   },
   "keywords": ["polychat", "polychat-plugin", "gallery", "image", "s3", "minio", "object-storage"],
+  "dependencies": {
+    "minio": "^8.0.7"
+  },
   "license": "MIT"
 }
