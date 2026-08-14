@@ -1,7 +1,7 @@
 {
   "name": "polychat-plugin-gallery",
-  "version": "1.0.0",
-  "description": "PolyChat 插件：个人图床，上传/配额/外链，支持本地与七牛 Kodo 双后端",
+  "version": "1.1.0",
+  "description": "PolyChat 插件：个人图床，上传/配额/外链，支持本地与 S3 兼容后端（MinIO/R2/七牛等）",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -10,6 +10,6 @@
   "engines": {
     "node": ">=22.5"
   },
-  "keywords": ["polychat", "polychat-plugin", "gallery", "image", "qiniu"],
+  "keywords": ["polychat", "polychat-plugin", "gallery", "image", "s3", "minio", "object-storage"],
   "license": "MIT"
 }

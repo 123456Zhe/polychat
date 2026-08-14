@@ -103,13 +103,14 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 | `MAX_BACKUPS` | `7` | 保留备份数量 |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | 空 | Web Push VAPID 密钥（`web-push` 插件，缺省自动生成并持久化） |
 | `VAPID_SUBJECT` | `mailto:polychat@example.com` | Web Push 订阅者标识 |
-| `GALLERY_STORAGE` | `local` | 图床存储后端：`local` 本地 / `qiniu` 七牛 Kodo（`gallery` 插件） |
+| `GALLERY_STORAGE` | `local` | 图床存储后端：`local` 本地 / `s3` S3 兼容（`gallery` 插件；旧值 `qiniu` 兼容） |
 | `GALLERY_QUOTA_MB` | `500` | 每用户图床配额（MB） |
-| `QINIU_ACCESS_KEY` / `QINIU_SECRET_KEY` | 空 | 七牛 AK/SK（`gallery` 插件七牛后端，缺任一 `QINIU_*` 则上传返回 503） |
-| `QINIU_BUCKET` | 空 | 七牛存储空间名 |
-| `QINIU_ZONE` | 空 | 七牛区域：`z0` 华东 / `z1` 华北 / `z2` 华南 / `na0` 北美 / `as0` 新加坡 |
-| `QINIU_DOMAIN` | 空 | 七牛访问域名（源站或 CDN，须为 HTTPS） |
-| `QINIU_PRIVATE` | `false` | 七牛空间为私有（外链返回带时效的签名 URL） |
+| `S3_ACCESS_KEY` / `S3_SECRET_KEY` | 空 | S3 AK/SK（`gallery` 插件 S3 后端，缺任一必填项则上传返回 503；`QINIU_ACCESS_KEY`/`QINIU_SECRET_KEY` 为兼容别名） |
+| `S3_BUCKET` | 空 | S3 桶名（别名 `QINIU_BUCKET`） |
+| `S3_ENDPOINT` | 空 | S3 端点，如 `https://s3-cn-east-1.qiniucs.com`（七牛）、`https://<account>.r2.cloudflarestorage.com`（R2）、`http://minio:9000`（MinIO） |
+| `S3_REGION` | `us-east-1` | S3 区域（多数 S3 兼容服务不校验） |
+| `S3_DOMAIN` | 空 | 公开桶直连域名/CDN（别名 `QINIU_DOMAIN`） |
+| `S3_PRIVATE` | `false` | S3 桶为私有，外链返回签名 URL（别名 `QINIU_PRIVATE`） |
 
 ## 插件系统
 
