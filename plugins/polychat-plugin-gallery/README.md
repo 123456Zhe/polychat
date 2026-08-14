@@ -11,7 +11,8 @@
 - `quota_mb`：每用户配额（MB），默认 `500`
 - `storage`：后端类型，`local` | `s3`，默认 `local`
 
-S3 环境变量（`S3_*` 为主，`QINIU_*` 兼容回退，线上旧部署可零改动升级）：
+S3 环境变量（`S3_*` 为主，`QINIU_*` 兼容回退）：
+- 旧 `QINIU_*` 部署升级后需补设 `S3_ENDPOINT`（旧 `QINIU_ZONE` 已废弃），补上即恢复 S3 后端
 - `S3_ACCESS_KEY` / `S3_SECRET_KEY`（必填，别名 `QINIU_ACCESS_KEY` / `QINIU_SECRET_KEY`）
 - `S3_BUCKET`（必填，别名 `QINIU_BUCKET`）
 - `S3_ENDPOINT`（必填，如 `https://s3-cn-east-1.qiniucs.com`）
