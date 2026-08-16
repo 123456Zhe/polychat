@@ -2019,7 +2019,8 @@ setupPlugins(pluginCtx, registry);
 const webSocketServer = new WebSocketServer({ noServer: true });
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  if (url.pathname === '/api/onebot/ws' || url.pathname === '/api') return;
+  // /api/* 的 WS 升级交给插件自行处理（onebot 的 /api/onebot/ws、sanguosha 的 /api/sanguosha/ws 等），核心只负责 /ws。
+  if (url.pathname === '/api' || url.pathname.startsWith('/api/')) return;
   if (url.pathname !== '/ws') return socket.destroy();
   const token = url.searchParams.get('token');
   if (token && !req.headers.authorization) req.headers.authorization = `Bearer ${token}`;
