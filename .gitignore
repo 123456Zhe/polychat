@@ -21,3 +21,6 @@ android-app/**/build/
 android-app/.idea/
 android-app/captures/
 .zcode/
+
+# 本地投放的外部插件（独立仓库，见 docs/PLUGINS.md）
+/plugins/polychat-plugin-sanguosha
