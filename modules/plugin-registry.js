@@ -24,6 +24,7 @@ export function createPluginRegistry() {
   const services = {};                // name -> service
   const serviceOwners = {};           // name -> owner
   const enabledPlugins = [];          // plugin records (for /api/plugins list)
+  const clientAssets = new Map();     // plugin name -> { css: [path], js: [path], basePath: string }
 
   return {
     // Collections read by the core dispatcher.
@@ -46,12 +47,24 @@ export function createPluginRegistry() {
     registerCleanup(fn, owner = null) {
       cleanupFns.push({ fn, owner });
     },
+    registerClientAssets(name, assets, owner = null) {
+      // assets: { css: ['style.css'], js: ['index.js'] }
+      // Files are served from the plugin's client/ directory
+      clientAssets.set(name, { ...assets, basePath: `/api/plugins/${name}/client`, owner });
+    },
     provide(name, service, owner = null) {
       services[name] = service;
       serviceOwners[name] = owner;
     },
     service(name) {
       return services[name];
+    },
+    getClientAssets() {
+      const result = [];
+      for (const [name, assets] of clientAssets) {
+        result.push({ name, css: (assets.css || []).map(f => `${assets.basePath}/${f}`), js: (assets.js || []).map(f => `${assets.basePath}/${f}`) });
+      }
+      return result;
     },
 
     // Hot removal: drop every registration owned by a plugin (uninstall/disable).
@@ -76,6 +89,7 @@ export function createPluginRegistry() {
           delete serviceOwners[key];
         }
       }
+      clientAssets.delete(name);
     },
 
     // Bookkeeping used by the plugin loader (name/status/description listing).

@@ -31,6 +31,7 @@ import p2pPlugin from '../plugins/polychat-plugin-p2p/index.js';
 import onebotPlugin from '../plugins/polychat-plugin-onebot/index.js';
 import galleryPlugin from '../plugins/polychat-plugin-gallery/index.js';
 import lanDiscoveryPlugin from '../plugins/polychat-plugin-lan-discovery/index.js';
+import mdEditorPlugin from '../plugins/polychat-plugin-md-editor/index.js';
 
 const PLUGIN_PREFIX = 'polychat-plugin-';
 const CONFIG_VERSION = 1;
@@ -46,13 +47,17 @@ const BUILTIN_MODULES = {
   p2p: p2pPlugin,
   onebot: onebotPlugin,
   gallery: galleryPlugin,
-  'lan-discovery': lanDiscoveryPlugin
+  'lan-discovery': lanDiscoveryPlugin,
+  'md-editor': mdEditorPlugin
 };
 const BUILTINS = Object.values(BUILTIN_MODULES);
 
 // Runtime state for hot management (enable/disable/uninstall).
 const installed = new Map();  // name -> { meta, record, cleanup, source, modulePath }
 const cleanups = new Map();   // name -> cleanup fn returned by setup()
+
+// Exported for server.mjs client-file serving.
+export { installed };
 
 // Serialize management operations (install/uninstall/enable) to avoid races.
 let managementQueue = Promise.resolve();
@@ -98,6 +103,7 @@ function pluginRegistryFor(registry, name) {
     registerWsMessage: (type, handler) => registry.registerWsMessage(type, handler, name),
     registerHeartbeat: (fn) => registry.registerHeartbeat(fn, name),
     registerCleanup: (fn) => registry.registerCleanup(fn, name),
+    registerClientAssets: (assets) => registry.registerClientAssets(name, assets, name),
     provide: (serviceName, service) => registry.provide(serviceName, service, name)
   };
 }
@@ -149,6 +155,11 @@ function saveConfig(config) {
 function install(meta, ctx, registry, config, disabledEnv, source, modulePath = '', installMethod = null) {
   const entry = migratePluginConfig(meta, config);
   const enabled = !disabledEnv.has(meta.name) && entry.enabled !== false;
+  // Resolve modulePath for built-in plugins (needed for client asset serving)
+  if (!modulePath && source === 'builtin') {
+    const dir = join(pluginDir(ctx), `${PLUGIN_PREFIX}${meta.name}`);
+    if (existsSync(dir)) modulePath = dir;
+  }
   const record = { name: meta.name, version: meta.version, description: meta.description, source, enabled: false };
   if (installMethod) record.install_method = installMethod;
   if (!enabled) {

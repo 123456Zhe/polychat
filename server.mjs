@@ -8,7 +8,8 @@ import { WebSocketServer } from 'ws';
 import { createPluginRegistry } from './modules/plugin-registry.js';
 import {
   setupPlugins, setupExternalPlugins,
-  installPluginFromUrl, installPluginFromUpload, uninstallPlugin, setPluginEnabled, listMarketPlugins
+  installPluginFromUrl, installPluginFromUpload, uninstallPlugin, setPluginEnabled, listMarketPlugins,
+  installed
 } from './modules/plugin-loader.js';
 // Embedded static assets (web/ + KaTeX vendor files). `null` in dev/test runs —
 // the single-file build (`npm run build:server`) swaps this module for the real
@@ -842,6 +843,27 @@ async function api(req, res, url) {
     const plugins = registry.listPlugins().map(({ name, version, description, enabled, source, install_method }) => ({ name, version, description, enabled, source, install_method }));
     return json(res, 200, { plugins });
   }
+  // 插件客户端资产清单：Web 端据此动态加载插件的 CSS/JS
+  if (req.method === 'GET' && url.pathname === '/api/plugins/client-assets') {
+    return json(res, 200, { assets: registry.getClientAssets() });
+  }
+  // 插件客户端文件服务：GET /api/plugins/:name/client/:file
+  const pluginClientMatch = url.pathname.match(/^\/api\/plugins\/([A-Za-z0-9_-]+)\/client\/(.+)$/);
+  if (pluginClientMatch && req.method === 'GET') {
+    const [, pluginName, fileName] = pluginClientMatch;
+    const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '');
+    if (safeName !== fileName || !safeName) return json(res, 400, { error: '无效文件名' });
+    const pluginEntry = installed.get(pluginName);
+    if (!pluginEntry || !pluginEntry.modulePath) return json(res, 404, { error: '插件不存在' });
+    const filePath = join(pluginEntry.modulePath, 'client', safeName);
+    try {
+      const content = readFileSync(filePath);
+      const ext = safeName.split('.').pop();
+      const types = { js: 'application/javascript', css: 'text/css', html: 'text/html', json: 'application/json', png: 'image/png', svg: 'image/svg+xml' };
+      res.writeHead(200, { 'Content-Type': types[ext] || 'application/octet-stream', 'Cache-Control': 'public, max-age=300' });
+      return res.end(content);
+    } catch { return json(res, 404, { error: '文件不存在' }); }
+  }
   // 插件市场：GitHub 上的 polychat-plugin-* 仓库（或 PLUGIN_MARKET_REGISTRY 自建源）
   if (req.method === 'GET' && url.pathname === '/api/admin/plugins/market') {
     if (!requireAdmin(req, res)) return;
@@ -1648,9 +1670,20 @@ async function api(req, res, url) {
     if (!message) return json(res, 404, { error: '消息不存在' });
     const context = requireRoomAccess(req, res, message.room_id); if (!context) return;
     if (message.user_id !== user.id && !user.is_admin && !['owner', 'admin'].includes(context.room.role)) return json(res, 403, { error: '没有撤回此消息的权限' });
-    db.prepare("UPDATE messages SET content = '', attachment_id = NULL, deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(message.id);
+    db.prepare("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(message.id);
     broadcast({ type: 'message_update', room_id: message.room_id, message_id: message.id }, message.room_id);
     return json(res, 200, { ok: true });
+  }
+  // 查看已撤回消息的原始内容
+  const originalMatch = url.pathname.match(/^\/api\/messages\/(\d+)\/original$/);
+  if (originalMatch && req.method === 'GET') {
+    const user = requireUser(req, res); if (!user) return;
+    const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(Number(originalMatch[1]));
+    if (!message) return json(res, 404, { error: '消息不存在' });
+    if (!message.deleted_at) return json(res, 400, { error: '消息未被撤回' });
+    const context = requireRoomAccess(req, res, message.room_id); if (!context) return;
+    if (message.user_id !== user.id && !user.is_admin && !['owner', 'admin'].includes(context.room.role)) return json(res, 403, { error: '没有查看撤回内容的权限' });
+    return json(res, 200, { content: message.content, attachment_id: message.attachment_id, username: message.user_id ? (db.prepare('SELECT username FROM users WHERE id = ?').get(message.user_id)?.username || '') : '' });
   }
   const reactionMatch = url.pathname.match(/^\/api\/messages\/(\d+)\/reactions$/);
   if (reactionMatch && req.method === 'POST') {
@@ -1794,9 +1827,20 @@ async function api(req, res, url) {
       return json(res, 200, { ok: true, message: hydrateMessages([db.prepare(`SELECT ${dmMessageColumns} FROM messages JOIN users ON users.id = messages.user_id LEFT JOIN messages AS parent ON parent.id = messages.reply_to LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id LEFT JOIN attachments ON attachments.id = messages.attachment_id LEFT JOIN p2p_transfers ON p2p_transfers.id = messages.p2p_transfer_id WHERE messages.id = ?`).get(message.id)], user.id)[0] });
     }
     if (message.user_id !== user.id && !user.is_admin) return json(res, 403, { error: '没有撤回此消息的权限' });
-    db.prepare("UPDATE messages SET content = '', attachment_id = NULL, deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(message.id);
+    db.prepare("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(message.id);
     broadcastDm(message.dm_id, { type: 'dm_message_update', conversation_id: message.dm_id, message_id: message.id });
     return json(res, 200, { ok: true });
+  }
+  // 查看已撤回 DM 消息的原始内容
+  const dmOriginalMatch = url.pathname.match(/^\/api\/dm\/messages\/(\d+)\/original$/);
+  if (dmOriginalMatch && req.method === 'GET') {
+    const user = requireUser(req, res); if (!user) return;
+    const message = db.prepare('SELECT * FROM messages WHERE id = ? AND dm_id IS NOT NULL').get(Number(dmOriginalMatch[1]));
+    if (!message) return json(res, 404, { error: '消息不存在' });
+    if (!message.deleted_at) return json(res, 400, { error: '消息未被撤回' });
+    if (!db.prepare('SELECT 1 FROM dm_members WHERE conversation_id = ? AND user_id = ?').get(message.dm_id, user.id)) return json(res, 403, { error: '无权访问该会话' });
+    if (message.user_id !== user.id && !user.is_admin) return json(res, 403, { error: '没有查看撤回内容的权限' });
+    return json(res, 200, { content: message.content, attachment_id: message.attachment_id, username: message.user_id ? (db.prepare('SELECT username FROM users WHERE id = ?').get(message.user_id)?.username || '') : '' });
   }
 
   const dmReactionMatch = url.pathname.match(/^\/api\/dm\/messages\/(\d+)\/reactions$/);

@@ -1029,8 +1029,9 @@ test('附件权限矩阵：公共房、私有房、DM 与撤回后不可下载',
 
   const retracted = await api(`/api/dm/messages/${dmMessage.body.message.id}`, { method: 'DELETE', headers: ownerAuth });
   assert.equal(retracted.response.status, 200);
-  assert.equal((await get(dmFile.id, ownerAuth)).status, 404);
-  assert.equal((await get(dmFile.id, dmPeerAuth)).status, 404);
+  // 撤回后附件仍可访问（支持查看撤回内容）
+  assert.equal((await get(dmFile.id, ownerAuth)).status, 200);
+  assert.equal((await get(dmFile.id, dmPeerAuth)).status, 200);
 });
 
 test('房间开关：新列与加入申请表存在（迁移生效）', async () => {
@@ -1308,4 +1309,37 @@ test('加入申请：reject 收"被拒绝"通知并可重新申请、404 无申�
   const dup = await api(`/api/rooms/${id}/join-request`, { method: 'POST', headers: authB });
   assert.equal(dup.response.status, 409);
   assert.equal(dup.body.error, '已提交过申请，等待审批');
+});
+
+test('插件客户端资产：/api/plugins/client-assets 返回 md-editor 资产', async () => {
+  const res = await api('/api/plugins/client-assets');
+  assert.equal(res.response.status, 200);
+  const mdEditor = res.body.assets.find(a => a.name === 'md-editor');
+  assert.ok(mdEditor, 'md-editor 插件应注册客户端资产');
+  assert.ok(mdEditor.js.length > 0, '应有 JS 资产');
+  assert.ok(mdEditor.js[0].includes('/api/plugins/md-editor/client/'), 'JS 路径应正确');
+});
+
+test('撤回消息查看原内容：/api/messages/:id/original 返回原始内容', async () => {
+  const owner = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'orig_owner', password: 'orig-pwd-123' }) });
+  const ownerAuth = { authorization: `Bearer ${owner.body.token}` };
+  const room = await api('/api/rooms', { method: 'POST', headers: ownerAuth, body: JSON.stringify({ name: '原内容测试房', is_private: true }) });
+  const roomId = room.body.room.id;
+  const msg = await api(`/api/rooms/${roomId}/messages`, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ content: '这是原始消息内容' }) });
+  const msgId = msg.body.message.id;
+  // 撤回前查看原内容应返回 400
+  const before = await api(`/api/messages/${msgId}/original`, { headers: ownerAuth });
+  assert.equal(before.response.status, 400);
+  // 撤回
+  await api(`/api/messages/${msgId}`, { method: 'DELETE', headers: ownerAuth });
+  // 撤回后查看原内容
+  const after = await api(`/api/messages/${msgId}/original`, { headers: ownerAuth });
+  assert.equal(after.response.status, 200);
+  assert.equal(after.body.content, '这是原始消息内容');
+  // 非管理员/非作者无权查看
+  const stranger = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: 'orig_stranger', password: 'orig-stranger-123' }) });
+  const strangerAuth = { authorization: `Bearer ${stranger.body.token}` };
+  await api(`/api/rooms/${roomId}/members`, { method: 'POST', headers: ownerAuth, body: JSON.stringify({ username: 'orig_stranger', role: 'member' }) });
+  const denied = await api(`/api/messages/${msgId}/original`, { headers: strangerAuth });
+  assert.equal(denied.response.status, 403);
 });
