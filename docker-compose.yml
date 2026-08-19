@@ -6,7 +6,7 @@ services:
     container_name: polychat
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       HOST: 0.0.0.0
       PORT: 3000
@@ -21,6 +21,19 @@ services:
       FILE_URL_TTL_MS: ${FILE_URL_TTL_MS:-604800000}
       PLUGINS_DIR: /app/data/plugins
       PLUGIN_MARKET_REGISTRY: ${PLUGIN_MARKET_REGISTRY:-}
+      GALLERY_STORAGE: ${GALLERY_STORAGE:-}
+      GALLERY_QUOTA_MB: ${GALLERY_QUOTA_MB:-}
+      QINIU_ACCESS_KEY: ${QINIU_ACCESS_KEY:-}
+      QINIU_SECRET_KEY: ${QINIU_SECRET_KEY:-}
+      QINIU_BUCKET: ${QINIU_BUCKET:-}
+      QINIU_ZONE: ${QINIU_ZONE:-}
+      QINIU_DOMAIN: ${QINIU_DOMAIN:-}
+      QINIU_PRIVATE: ${QINIU_PRIVATE:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_REGION: ${S3_REGION:-}
+      STEP_PLAN_API_KEY: ${STEP_PLAN_API_KEY:-}
+      STEP_PLAN_BASE_URL: ${STEP_PLAN_BASE_URL:-}
+      STEP_PLAN_MODEL: ${STEP_PLAN_MODEL:-}
     volumes:
       # data 卷同时承载插件目录（外部安装的插件随容器重建保留；内置插件仍在镜像 /app/plugins）
       - ./data:/app/data

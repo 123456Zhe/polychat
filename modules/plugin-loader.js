@@ -156,9 +156,15 @@ function install(meta, ctx, registry, config, disabledEnv, source, modulePath = 
   const entry = migratePluginConfig(meta, config);
   const enabled = !disabledEnv.has(meta.name) && entry.enabled !== false;
   // Resolve modulePath for built-in plugins (needed for client asset serving)
+  // Built-in plugins always live under <root>/plugins/, regardless of PLUGINS_DIR
   if (!modulePath && source === 'builtin') {
-    const dir = join(pluginDir(ctx), `${PLUGIN_PREFIX}${meta.name}`);
-    if (existsSync(dir)) modulePath = dir;
+    const builtinDir = join(ctx.root, 'plugins', `${PLUGIN_PREFIX}${meta.name}`);
+    if (existsSync(builtinDir)) modulePath = builtinDir;
+    else {
+      // Fallback: check PLUGINS_DIR (external plugin may shadow built-in)
+      const dir = join(pluginDir(ctx), `${PLUGIN_PREFIX}${meta.name}`);
+      if (existsSync(dir)) modulePath = dir;
+    }
   }
   const record = { name: meta.name, version: meta.version, description: meta.description, source, enabled: false };
   if (installMethod) record.install_method = installMethod;

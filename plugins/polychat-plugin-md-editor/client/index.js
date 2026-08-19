@@ -34,10 +34,10 @@
     style.textContent = `
       .md-editor-wrap { position: relative; }
       .md-editor-expand-btn {
-        display: inline-flex; align-items: center; justify-content: center;
-        width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--warm-200, #e5e7eb);
+        display: inline-flex; align-items: center; justify-content: center; gap: 3px;
+        height: 28px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--warm-200, #e5e7eb);
         background: var(--warm-100, #f9fafb); color: #6b7280; cursor: pointer;
-        font-size: 14px; transition: all 0.15s;
+        font-size: 12px; transition: all 0.15s; white-space: nowrap;
       }
       .md-editor-expand-btn:hover { background: var(--warm-200, #e5e7eb); color: #374151; }
       .md-editor-expand-btn.active { background: var(--accent, #5b9bd5); color: #fff; border-color: var(--accent, #5b9bd5); }
@@ -92,8 +92,8 @@
       const expandBtn = document.createElement('button');
       expandBtn.type = 'button';
       expandBtn.className = 'md-editor-expand-btn';
-      expandBtn.title = '展开 Markdown 编辑器（分屏预览）';
-      expandBtn.textContent = '⟁';
+      expandBtn.title = '展开 Markdown 编辑器 — 左侧编写、右侧实时预览';
+      expandBtn.innerHTML = '⟁ <span>编辑器</span>';
       expandBtn.addEventListener('click', () => toggleExpand());
       mdBtn.parentElement.insertBefore(expandBtn, mdBtn.nextSibling);
 
@@ -129,8 +129,8 @@
       const btn = composer.querySelector('.md-editor-expand-btn');
       if (btn) {
         btn.classList.toggle('active', expanded);
-        btn.title = expanded ? '收起编辑器' : '展开 Markdown 编辑器（分屏预览）';
-        btn.textContent = expanded ? '⟃' : '⟁';
+        btn.title = expanded ? '收起编辑器' : '展开 Markdown 编辑器 — 左侧编写、右侧实时预览';
+        btn.innerHTML = expanded ? '⟃ <span>收起</span>' : '⟁ <span>编辑器</span>';
       }
       // 触发预览更新
       if (expanded && composer._mdEditorUpdate) composer._mdEditorUpdate();
