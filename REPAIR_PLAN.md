@@ -38,7 +38,7 @@
 
 - [ ] Web 动态加载 KaTeX、P2P 和管理面板，降低约 633 KB 首屏 JS。
 - [ ] Android release 启用 R8，补充 Hilt/Retrofit/kotlinx serialization 规则验证。
-- [ ] 逐步拆分 `server.mjs` 的认证、上传、房间、DM 和管理路由。
+- [x] 逐步拆分 `server.mjs` 的认证、上传、房间、DM 和管理路由（2026-09-30 完成：2160 行纯搬运拆为 `lib/` 10 模块 + `routes/` 7 模块 + `lib/router.js`，`server.mjs` 剩 173 行组装层；零行为变更，58 测试全过）。
 - [ ] 补 P2P 接受/拒绝/超时/ICE 失败及回退路径的自动化测试。
 
 ## 验证要求
