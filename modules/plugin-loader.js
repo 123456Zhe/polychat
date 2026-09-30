@@ -20,7 +20,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import AdmZip from 'adm-zip';
 
 import backupPlugin from '../plugins/polychat-plugin-backup/index.js';
@@ -450,7 +450,7 @@ export async function setupExternalPlugins(ctx, registry) {
   for (const [name, href] of found) {
     try {
       const mod = await import(href);
-      install(normalizePlugin(mod?.default || mod), ctx, registry, config, disabledEnv, 'external');
+      install(normalizePlugin(mod?.default || mod), ctx, registry, config, disabledEnv, 'external', dirname(fileURLToPath(href)));
     } catch (error) {
       console.error(`External plugin "${name}" failed to load:`, error);
       registry.recordPlugin({ name, version: '', description: '', enabled: false, source: 'external', error: error.message });
