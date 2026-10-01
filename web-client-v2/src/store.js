@@ -150,12 +150,13 @@ async function loadMentionables(roomId) {
 export async function loadMessages() {
   if (!S.active) return;
   const { kind, id } = S.active;
-  const url = kind === 'room' ? `/api/rooms/${id}/messages?limit=40` : `/api/dm/conversations/${id}/messages?limit=40`;
+  // 初始加载取最新一页：before 用最大安全整数（与 v1 老 UI 一致）
+  const url = kind === 'room' ? `/api/rooms/${id}/messages?limit=40&before=9007199254740991` : `/api/dm/conversations/${id}/messages?limit=40&before=9007199254740991`;
   const ret = await api(url);
-  const msgs = (ret.messages || []).slice().reverse();
+  const msgs = (ret.messages || []).slice();
   S.messages = msgs;
   S.msgIds = new Set(msgs.map(m => m.id));
-  S.hasMore = (ret.messages || []).length >= 40;
+  S.hasMore = ret.has_more ?? (ret.messages || []).length >= 40;
   msgs.forEach(cacheMentions);
   if (kind === 'dm') markDmRead();
   emit('messages');
@@ -171,10 +172,10 @@ export async function loadMore() {
       ? `/api/rooms/${id}/messages?limit=40&before=${oldest}`
       : `/api/dm/conversations/${id}/messages?limit=40&before=${oldest}`;
     const ret = await api(url);
-    const msgs = (ret.messages || []).slice().reverse().filter(m => !S.msgIds.has(m.id));
+    const msgs = (ret.messages || []).slice().filter(m => !S.msgIds.has(m.id));
     msgs.forEach(m => S.msgIds.add(m.id));
     S.messages = [...msgs, ...S.messages];
-    S.hasMore = (ret.messages || []).length >= 40;
+    S.hasMore = ret.has_more ?? (ret.messages || []).length >= 40;
     msgs.forEach(cacheMentions);
   } catch {}
   S.loadingMore = false; emit('messages');
@@ -316,7 +317,7 @@ function startPollFallback() {
           ? `/api/rooms/${id}/messages?limit=20${last ? `&after=${last.id}` : ''}`
           : `/api/dm/conversations/${id}/messages?limit=20${last ? `&after=${last.id}` : ''}`;
         const ret = await api(url);
-        const fresh = (ret.messages || []).slice().reverse().filter(m => !S.msgIds.has(m.id));
+        const fresh = (ret.messages || []).slice().filter(m => !S.msgIds.has(m.id));
         if (fresh.length) {
           fresh.forEach(m => { S.msgIds.add(m.id); cacheMentions(m); S.messages.push(m); });
           emit('messages');
