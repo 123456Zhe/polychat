@@ -9,8 +9,9 @@
     "test": "node --test test/*.test.mjs",
     "web:dev": "vite --config web-client/vite.config.js",
     "web:build": "vite build --config web-client/vite.config.js",
+    "web:build:v2": "vite build --config web-client-v2/vite.config.js",
     "build:server": "node scripts/build-server.mjs",
-    "build:all": "npm run web:build && npm run build:server"
+    "build:all": "npm run web:build && npm run web:build:v2 && npm run build:server"
   },
   "engines": {
     "node": ">=22.5"
