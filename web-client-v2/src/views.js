@@ -14,7 +14,9 @@ export function avatarHTML(user, cls) {
   if (user?.avatar_url) {
     return `<img class="avatar ${cls || ''}" src="${escapeHTML(user.avatar_url)}" alt="${escapeHTML(name)}" loading="lazy">`;
   }
-  return `<div class="avatar ${cls || ''}">${escapeHTML(name.charAt(0).toUpperCase())}</div>`;
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.codePointAt(0)) >>> 0;
+  return `<div class="avatar g${h % 8} ${cls || ''}">${escapeHTML(name.charAt(0).toUpperCase())}</div>`;
 }
 
 export function timeStr(ts) {
@@ -309,6 +311,7 @@ function composerHTML() {
       <button class="composer-btn" data-action="emoji" title="表情">${icon('smile')}</button>
       <button class="send-btn" data-action="send" title="发送">${icon('send')}</button>
     </div>
+    <div class="composer-hint">Enter 发送 · Shift + Enter 换行 · 支持 Markdown / LaTeX</div>
     <input type="file" id="fileInput" style="display:none">
   </div>`;
 }
