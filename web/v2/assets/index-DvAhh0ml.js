@@ -593,6 +593,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       </div>
       <div class="watch-actions">
         <button class="watch-action" data-action="goto-oldver">${P("back")}<span>旧版</span></button>
+        <button class="watch-action" data-action="set-device" data-v="auto" title="退出手表模式，恢复按设备自动识别">${P("auto")}<span>自动</span></button>
         <button class="watch-action" data-action="logout">${P("logout")}<span>退出</span></button>
       </div>
     </div>`}else if(r==="chat"){const o=((t=f.active)==null?void 0:t.kind)==="room"?((a=f.roomDetail)==null?void 0:a.name)||"":((i=(n=f.convDetail)==null?void 0:n.peer)==null?void 0:i.username)||"";e=`
