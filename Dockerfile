@@ -3,13 +3,17 @@ FROM node:24-bookworm-slim
 WORKDIR /app
 
 COPY --chown=node:node package.json package-lock.json server.mjs embedded-assets.cjs ./
+COPY --chown=node:node lib ./lib
+COPY --chown=node:node routes ./routes
 COPY --chown=node:node modules ./modules
 COPY --chown=node:node plugins ./plugins
 COPY --chown=node:node web-client ./web-client
+COPY --chown=node:node web-client-v2 ./web-client-v2
 COPY --chown=node:node assets ./assets
 
 RUN npm ci --ignore-scripts \
     && npm run web:build \
+    && npm run web:build:v2 \
     && npm prune --omit=dev \
     && npm cache clean --force \
     && mkdir -p /app/data/uploads \
