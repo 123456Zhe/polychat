@@ -1,0 +1,63 @@
+/* polychat-plugin-minigames client styles */
+#mg-float-btn {
+  position: fixed; right: 18px; bottom: 18px; z-index: 9990;
+  width: 52px; height: 52px; border-radius: 50%;
+  font-size: 26px; line-height: 1; cursor: pointer;
+  background: #2b2f36; border: 1px solid #4a5058; color: #fff;
+  box-shadow: 0 4px 14px rgba(0,0,0,.35);
+}
+#mg-float-btn:hover { background: #3a4048; }
+#mg-float-btn.has-invite { border-color: #e5484d; }
+#mg-invite-badge {
+  position: absolute; top: -4px; right: -4px;
+  min-width: 20px; height: 20px; border-radius: 10px;
+  background: #e5484d; color: #fff; font-size: 12px;
+  display: flex; align-items: center; justify-content: center; padding: 0 5px;
+}
+#mg-overlay {
+  position: fixed; inset: 0; z-index: 9995;
+  background: rgba(0,0,0,.55);
+  display: flex; align-items: center; justify-content: center;
+}
+#mg-modal {
+  width: min(560px, 94vw); max-height: 88vh; overflow-y: auto;
+  background: #1e2228; color: #e8e8e8; border-radius: 12px;
+  border: 1px solid #3a4048; padding: 0 0 16px;
+}
+#mg-tabs { display: flex; gap: 4px; padding: 10px 12px; border-bottom: 1px solid #333; position: sticky; top: 0; background: #1e2228; }
+.mg-tab {
+  background: none; border: none; color: #aaa; font-size: 15px;
+  padding: 6px 12px; cursor: pointer; border-radius: 6px;
+}
+.mg-tab.active { background: #333a44; color: #fff; }
+.mg-tab.mg-close { margin-left: auto; }
+#mg-body { padding: 12px 16px; }
+.mg-card { background: #262b33; border: 1px solid #383f49; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+.mg-card-title { font-weight: 600; margin-bottom: 8px; }
+.mg-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
+.mg-center { justify-content: center; text-align: center; }
+.mg-clickable { cursor: pointer; }
+.mg-clickable:hover { background: #2f3540; border-radius: 6px; }
+.mg-input {
+  background: #16191e; border: 1px solid #3a4048; color: #eee;
+  border-radius: 6px; padding: 7px 10px; font-size: 14px; flex: 1; min-width: 120px;
+}
+.mg-btn {
+  background: #3f7de0; border: none; color: #fff; border-radius: 6px;
+  padding: 7px 14px; font-size: 14px; cursor: pointer; white-space: nowrap;
+}
+.mg-btn:hover { background: #3569c4; }
+.mg-btn-ghost { background: #333a44; }
+.mg-muted { color: #888; font-size: 13px; padding: 4px 0; }
+#mg-board { display: block; margin: 8px auto; max-width: 100%; height: auto; border-radius: 8px; cursor: pointer; }
+.mg-bomb-range { font-size: 26px; font-weight: 700; text-align: center; margin: 10px 0; letter-spacing: 2px; }
+.mg-bomb-input { max-width: 140px; flex: none; }
+.mg-bomb-hist { margin-top: 8px; font-size: 12px; }
+.mg-rank-row { padding: 5px 2px; border-bottom: 1px solid #2c313a; font-size: 14px; }
+.mg-toast {
+  position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%) translateY(10px);
+  background: #333a44; color: #fff; padding: 9px 18px; border-radius: 8px;
+  font-size: 14px; z-index: 9999; opacity: 0; transition: all .25s; pointer-events: none;
+  border: 1px solid #4a5058; max-width: 80vw;
+}
+.mg-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
