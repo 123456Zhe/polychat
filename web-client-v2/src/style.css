@@ -26,7 +26,7 @@
     .avatar.g0{background:linear-gradient(135deg,#6366f1,#8b5cf6)}.avatar.g1{background:linear-gradient(135deg,#0ea5e9,#22d3ee)}.avatar.g2{background:linear-gradient(135deg,#10b981,#34d399)}.avatar.g3{background:linear-gradient(135deg,#f59e0b,#f97316)}.avatar.g4{background:linear-gradient(135deg,#ef4444,#f472b6)}.avatar.g5{background:linear-gradient(135deg,#8b5cf6,#d946ef)}.avatar.g6{background:linear-gradient(135deg,#64748b,#94a3b8)}.avatar.g7{background:linear-gradient(135deg,#14b8a6,#84cc16)}
     /* v2 滚动条：webkit 主题细滚动条（firefox 侧已用 scrollbar-width: thin） */
     .messages::-webkit-scrollbar,.sidebar-body::-webkit-scrollbar{width:10px;height:10px}
-    .messages::-webkit-scrollbar-thumb,.sidebar-body::-webkit-scrollbar-thumb{background:var(--line-strong);border-radius:8px;border:3px solid transparent;background-clip:content-box}
+    .messages::-webkit-scrollbar-thumb,.sidebar-body::-webkit-scrollbar-thumb{background:var(--faint);border-radius:8px;border:3px solid transparent;background-clip:content-box;min-height:40px}
     .messages::-webkit-scrollbar-thumb:hover,.sidebar-body::-webkit-scrollbar-thumb:hover{background:var(--muted);border:3px solid transparent;background-clip:content-box}
     .messages::-webkit-scrollbar-track,.sidebar-body::-webkit-scrollbar-track{background:transparent}
     .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
