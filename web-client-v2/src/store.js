@@ -357,21 +357,26 @@ async function handleEvent(ev) {
   switch (ev.type) {
     case 'message': {
       const m = ev.message; if (!m) break;
-      if (S.active?.kind === 'room' && S.active.id === m.room_id) {
+      // 广播的 message 对象不带 room_id（用事件级 ev.room_id），补上以便后续表情/编辑/撤回使用
+      const roomId = ev.room_id ?? m.room_id;
+      if (roomId != null) m.room_id = roomId;
+      if (S.active?.kind === 'room' && S.active.id === roomId) {
         if (!S.msgIds.has(m.id)) { S.msgIds.add(m.id); cacheMentions(m); S.messages.push(m); emit('messages'); }
-      } else if (m.room_id) {
-        S.unreadRooms[m.room_id] = (S.unreadRooms[m.room_id] || 0) + 1;
+      } else if (roomId != null) {
+        S.unreadRooms[roomId] = (S.unreadRooms[roomId] || 0) + 1;
         persistUnread(); emit('rooms');
       }
       break;
     }
     case 'dm_message': {
       const m = ev.message; if (!m) break;
-      if (S.active?.kind === 'dm' && S.active.id === m.dm_id) {
+      const convId = ev.conversation_id ?? m.dm_id;
+      if (convId != null) m.dm_id = convId;
+      if (S.active?.kind === 'dm' && S.active.id === convId) {
         if (!S.msgIds.has(m.id)) { S.msgIds.add(m.id); cacheMentions(m); S.messages.push(m); emit('messages'); }
         markDmRead();
-      } else if (m.dm_id) {
-        S.unreadDms[m.dm_id] = (S.unreadDms[m.dm_id] || 0) + 1;
+      } else if (convId != null) {
+        S.unreadDms[convId] = (S.unreadDms[convId] || 0) + 1;
         persistUnread(); emit('convs');
       }
       loadConvsSilent();
