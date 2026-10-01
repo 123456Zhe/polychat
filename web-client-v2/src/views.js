@@ -505,6 +505,7 @@ export function watchHTML() {
       </div>
       <div class="watch-actions">
         <button class="watch-action" data-action="goto-oldver">${icon('back')}<span>旧版</span></button>
+        <button class="watch-action" data-action="set-device" data-v="auto" title="退出手表模式，恢复按设备自动识别">${icon('auto')}<span>自动</span></button>
         <button class="watch-action" data-action="logout">${icon('logout')}<span>退出</span></button>
       </div>
     </div>`;
