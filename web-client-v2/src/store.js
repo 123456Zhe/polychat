@@ -218,7 +218,12 @@ export async function toggleReaction(msg, emoji) {
   const url = msg.dm_id
     ? `/api/dm/messages/${msg.id}/reactions`
     : `/api/messages/${msg.id}/reactions`;
-  await api(url, { method: 'POST', body: { emoji } });
+  const ret = await api(url, { method: 'POST', body: { emoji } });
+  // 立刻本地更新表情（服务端返回最新 reactions），不再干等广播
+  if (ret && ret.reactions) {
+    const i = S.messages.findIndex(m => m.id === msg.id);
+    if (i >= 0) { S.messages[i] = { ...S.messages[i], reactions: ret.reactions }; emit('messages'); }
+  }
 }
 
 export async function editMessage(msg, content) {
@@ -230,6 +235,12 @@ export async function editMessage(msg, content) {
 export async function retractMessage(msg) {
   const url = msg.dm_id ? `/api/dm/messages/${msg.id}` : `/api/messages/${msg.id}`;
   await api(url, { method: 'DELETE' });
+  // 立刻本地标记已撤回（广播只带 message_id，靠上面的拉取更新他人视角）
+  const i = S.messages.findIndex(m => m.id === msg.id);
+  if (i >= 0) {
+    S.messages[i] = { ...S.messages[i], is_deleted: true, deleted_at: new Date().toISOString() };
+    emit('messages');
+  }
 }
 
 function applyLocalUpdate(updated) {
@@ -342,7 +353,7 @@ function typingKey(ev) {
   return null;
 }
 
-function handleEvent(ev) {
+async function handleEvent(ev) {
   switch (ev.type) {
     case 'message': {
       const m = ev.message; if (!m) break;
@@ -366,9 +377,25 @@ function handleEvent(ev) {
       loadConvsSilent();
       break;
     }
-    case 'message_update':
+    case 'message_update': {
+      if (ev.message) { applyLocalUpdate(ev.message); break; }
+      // 服务端广播只带 message_id（无消息体），按 id 拉单条再更新
+      if (ev.message_id) {
+        try {
+          const ret = await api(`/api/messages/${ev.message_id}`);
+          if (ret.message) applyLocalUpdate(ret.message);
+        } catch {}
+      }
+      break;
+    }
     case 'dm_message_update': {
-      if (ev.message) applyLocalUpdate(ev.message);
+      if (ev.message) { applyLocalUpdate(ev.message); break; }
+      if (ev.message_id) {
+        try {
+          const ret = await api(`/api/dm/messages/${ev.message_id}`);
+          if (ret.message) applyLocalUpdate(ret.message);
+        } catch {}
+      }
       break;
     }
     case 'dm_read': {

@@ -121,6 +121,15 @@ export async function handleDmRoutes(req, res, url) {
   }
 
   const dmSingleMatch = url.pathname.match(/^\/api\/dm\/messages\/(\d+)$/);
+  if (dmSingleMatch && req.method === 'GET') {
+    const user = requireUser(req, res); if (!user) return true;
+    const messageId = Number(dmSingleMatch[1]);
+    const message = db.prepare('SELECT * FROM messages WHERE id = ? AND dm_id IS NOT NULL').get(messageId);
+    if (!message) return (json(res, 404, { error: '消息不存在' }), true);
+    if (!db.prepare('SELECT 1 FROM dm_members WHERE conversation_id = ? AND user_id = ?').get(message.dm_id, user.id)) return (json(res, 403, { error: '无权访问该会话' }), true);
+    const row = db.prepare(`SELECT ${dmMessageColumns} FROM messages JOIN users ON users.id = messages.user_id LEFT JOIN messages AS parent ON parent.id = messages.reply_to LEFT JOIN users AS parent_user ON parent_user.id = parent.user_id LEFT JOIN attachments ON attachments.id = messages.attachment_id LEFT JOIN p2p_transfers ON p2p_transfers.id = messages.p2p_transfer_id WHERE messages.id = ?`).get(message.id);
+    return (json(res, 200, { message: hydrateMessages([row], user.id)[0] }), true);
+  }
   if (dmSingleMatch && (req.method === 'PUT' || req.method === 'DELETE')) {
     const user = requireUser(req, res); if (!user) return true;
     const messageId = Number(dmSingleMatch[1]);
