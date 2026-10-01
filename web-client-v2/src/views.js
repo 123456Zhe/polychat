@@ -11,8 +11,11 @@ export function $all(sel, root) { return [...(root || document).querySelectorAll
 
 export function avatarHTML(user, cls) {
   const name = user?.username || '?';
-  if (user?.avatar_url) {
-    return `<img class="avatar ${cls || ''}" src="${escapeHTML(user.avatar_url)}" alt="${escapeHTML(name)}" loading="lazy">`;
+  // 消息接口返回的是 avatar_updated_at（无 avatar_url），按 v1 方式拼出地址
+  const url = user?.avatar_url
+    || (user?.avatar_updated_at ? `/api/users/${user.user_id ?? user.id}/avatar?v=${user.avatar_updated_at}` : null);
+  if (url) {
+    return `<img class="avatar ${cls || ''}" src="${escapeHTML(url)}" alt="${escapeHTML(name)}" loading="lazy">`;
   }
   let h = 0;
   for (const c of name) h = (h * 31 + c.codePointAt(0)) >>> 0;
@@ -247,17 +250,24 @@ export function messageHTML(m) {
   const own = m.user_id === S.user?.id;
   const deleted = m.is_deleted;
   const uname = m.username || mentionNames[m.user_id] || `用户${m.user_id}`;
-  const user = { username: uname, avatar_url: m.avatar_url };
+  const user = { username: uname, avatar_url: m.avatar_url, avatar_updated_at: m.avatar_updated_at, user_id: m.user_id };
   let body;
   if (deleted) {
     body = `<div class="msg-deleted">${m.deleted_by_admin ? '该消息已被管理员删除' : '该消息已撤回'}</div>`;
   } else {
     const reply = m.reply_to ? replyQuoteHTML(m.reply_to) : '';
     const md = renderMarkdown(m.content || '');
-    const atts = m.attachments && m.attachments.length
+    // 接口返回扁平字段 attachment_id/_name/_type（无嵌套 attachment 对象），在此组装
+    const att = (m.attachments && m.attachments.length)
       ? m.attachments.map(renderAttachment).join('')
-      : (m.attachment ? renderAttachment(m.attachment) : '');
-    body = `${reply}${md ? `<div class="msg-body">${md}</div>` : ''}${atts}`;
+      : (m.attachment ? renderAttachment(m.attachment)
+        : (m.attachment_id ? renderAttachment({
+            id: m.attachment_id,
+            name: m.attachment_name,
+            type: m.attachment_type,
+            url: `/api/files/${m.attachment_id}${(m.attachment_type || '').startsWith('image/') ? '?inline=1' : ''}`,
+          }) : ''));
+    body = `${reply}${md ? `<div class="msg-body">${md}</div>` : ''}${att}`;
   }
   const reactions = (m.reactions || []).map(r =>
     `<button class="reaction${r.reacted ? ' selected' : ''}" data-action="react" data-id="${m.id}" data-emoji="${escapeHTML(r.emoji)}">${escapeHTML(r.emoji)}<span>${r.count}</span></button>`
