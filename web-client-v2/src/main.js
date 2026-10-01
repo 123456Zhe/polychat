@@ -130,11 +130,14 @@ async function renderPhoneFriends() {
 }
 
 // ---------- 消息发送 ----------
+let sending = false; // 发送中锁：防止连点/回车+按钮重复发送
 async function doSend() {
+  if (sending) return;
   const input = document.getElementById('composerInput');
   if (!input || !S.active) return;
   const text = input.value.trim();
   if (!text && !S.editing) return;
+  sending = true;
   sendTyping(false);
   try {
     if (S.editing) {
@@ -146,6 +149,7 @@ async function doSend() {
     input.value = '';
     autoresize(input);
   } catch (e) { V.showToast(e.message); }
+  finally { sending = false; }
 }
 
 function autoresize(ta) {
@@ -377,9 +381,10 @@ document.addEventListener('click', async ev => {
         break;
       }
       case 'watch-send': {
+        if (sending) break;
         const ta = document.getElementById('watchInput');
         const text = ta?.value.trim();
-        if (text && S.active) { await sendMessage(text); S.watchView = 'chat'; refreshWatch(); }
+        if (text && S.active) { sending = true; try { await sendMessage(text); } finally { sending = false; } S.watchView = 'chat'; refreshWatch(); }
         break;
       }
     }
