@@ -172,9 +172,9 @@ function updateMentionPop(ta) {
   const m = before.match(/@([\p{L}\p{N}_-]*)$/u);
   if (!m) { pop.classList.remove('open'); pop.innerHTML = ''; return; }
   const q = m[1].toLowerCase();
-  const list = S.mentionables.filter(u => u.username.toLowerCase().includes(q)).slice(0, 8);
+  const list = S.mentionables.filter(u => u.username.toLowerCase().includes(q) || String(u.id).includes(m[1])).slice(0, 8);
   if (!list.length) { pop.classList.remove('open'); return; }
-  pop.innerHTML = list.map(u => `<button data-action="mention-pick" data-uid="${u.id}">${V.avatarHTML(u)}<span>${escapeHTML(u.username)}</span></button>`).join('');
+  pop.innerHTML = list.map(u => `<button data-action="mention-pick" data-uid="${u.id}">${V.avatarHTML(u)}<span>${escapeHTML(u.username)}</span><span class="mention-id">#${u.id}</span></button>`).join('');
   pop.classList.add('open');
 }
 

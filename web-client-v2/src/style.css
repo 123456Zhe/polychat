@@ -115,10 +115,11 @@
 .reply-bar .rb-text b{color:var(--text)}
 .reply-bar button{border:0;background:transparent;color:var(--muted);display:grid;place-items:center;width:24px;height:24px;border-radius:6px}
 .reply-bar button:hover{background:var(--panel-3);color:var(--text)}
-.mention-pop{position:absolute;z-index:75;left:16px;bottom:118px;width:250px;max-height:220px;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--small-shadow);padding:6px;display:none}
+.mention-pop{position:absolute;z-index:75;left:16px;bottom:118px;width:250px;max-height:308px;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--small-shadow);padding:6px;display:none}
 .mention-pop.open{display:block}
 .mention-pop button{width:100%;border:0;background:transparent;border-radius:8px;padding:8px 10px;display:flex;align-items:center;gap:9px;font-size:13px;text-align:left}
 .mention-pop button:hover,.mention-pop button.sel{background:var(--panel-2)}
+.mention-pop .mention-id{margin-left:auto;font-size:11px;color:var(--faint);flex:0 0 auto}
 .emoji-pop{position:absolute;z-index:75;right:16px;bottom:118px;width:300px;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--small-shadow);padding:10px;display:none}
 .emoji-pop.open{display:block}
 .emoji-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;max-height:190px;overflow:auto}
