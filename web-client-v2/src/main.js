@@ -27,21 +27,27 @@ function refreshSidebar() {
   if (body) body.innerHTML = V.sessionListHTML();
 }
 
-let prevFirstId = null, prevScrollH = 0;
+let prevFirstId = null, prevScrollH = 0, prevMsgKey = null;
 function refreshMessages() {
   const list = document.getElementById('msgList');
   const sc = document.getElementById('msgScroll');
   if (!list || !sc) { if (S.resolved === 'watch') refreshWatch(); return; }
+  const msgKey = S.active ? S.active.kind + ':' + S.active.id : null;
+  const freshLoad = msgKey !== prevMsgKey;
   const nearBottom = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 120;
   const firstId = S.messages[0]?.id ?? null;
-  const grewTop = prevFirstId !== null && firstId !== null && firstId !== prevFirstId;
+  const grewTop = !freshLoad && prevFirstId !== null && firstId !== null && firstId !== prevFirstId;
   list.innerHTML = V.messagesHTML();
-  if (grewTop) {
+  if (freshLoad) {
+    // 首次加载/切换会话：直接定位到底部看最新消息
+    scrollBottom(true);
+  } else if (grewTop) {
     // 加载更早消息：保持滚动位置
     sc.scrollTop = sc.scrollHeight - prevScrollH + sc.scrollTop;
   } else if (nearBottom) {
     scrollBottom();
   }
+  prevMsgKey = msgKey;
   prevFirstId = firstId;
   prevScrollH = sc.scrollHeight;
   if (S.resolved === 'watch') refreshWatch();
@@ -68,10 +74,10 @@ function refreshWatch() {
 onChange(what => {
   if (typeof what === 'object' && what?.text !== undefined) { V.showToast(what.text); return; }
   switch (what) {
-    case 'auth': renderAll(); break;
+    case 'auth': prevMsgKey = null; prevFirstId = null; renderAll(); break;
     case 'enter': renderAll(); break;
     case 'rooms': case 'convs': refreshSidebar(); break;
-    case 'active': prevFirstId = null; renderAll(); break;
+    case 'active': prevMsgKey = null; prevFirstId = null; renderAll(); break;
     case 'messages': refreshMessages(); break;
     case 'typing': refreshTyping(); break;
     case 'announcement': refreshNotice(); break;
