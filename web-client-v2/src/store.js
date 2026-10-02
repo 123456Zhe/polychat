@@ -16,6 +16,10 @@ export const S = {
   globalAnnouncement: null,
   pins: [],
   mentionables: [],
+  gallery: { images: [], quota_mb: 0, used_mb: 0 },
+  thread: { root: null, messages: [] },
+  members: [], joinRequests: [], inviteCodes: [],
+  admin: { tab: 'users', overview: null, bannedIps: [], bannedFps: [], botRequests: [], botTokens: [], plugins: [], pluginMarket: [], pluginsEnabled: {} },
   ws: null, wsOk: false, pollTimer: null,
   device: 'auto', resolved: 'desktop',
   replyTo: null, editing: null,
@@ -247,6 +251,8 @@ function applyLocalUpdate(updated) {
   if (!updated) return;
   const i = S.messages.findIndex(m => m.id === updated.id);
   if (i >= 0) { S.messages[i] = updated; cacheMentions(updated); emit('messages'); }
+  const j = S.thread.messages.findIndex(m => m.id === updated.id);
+  if (j >= 0) { S.thread.messages[j] = updated; emit('thread'); }
 }
 
 export async function pinMessage(msgId) {
@@ -266,6 +272,169 @@ export async function loadPins(roomId, silent) {
     if (!silent) emit('pins'); else emit('pins-silent');
   } catch { S.pins = []; }
 }
+
+// ---------- 图床 ----------
+export async function loadGallery() {
+  try {
+    const ret = await api('/api/gallery');
+    S.gallery = { images: ret.images || [], quota_mb: ret.quota_mb || 0, used_mb: ret.used_mb || 0 };
+    emit('gallery');
+  } catch (e) { emit({ text: e.message }); }
+}
+// ---------- 话题串 ----------
+export async function openThread(msgId) {
+  const ret = await api(`/api/messages/${msgId}/thread`);
+  const msgs = ret.messages || [];
+  S.thread = { root: msgs[0] || null, messages: msgs };
+  emit('thread');
+}
+export async function sendThreadReply(rootId, content) {
+  const roomId = S.thread.root?.room_id ?? S.active?.id;
+  if (!roomId) throw new Error('无法确定房间');
+  await api(`/api/rooms/${roomId}/messages`, { method: 'POST', body: { content, thread_root: rootId } });
+  // 回复经 thread_message 实时事件推回；若 WS 未连则补拉一次
+  if (!S.wsOk) { try { await openThread(rootId); } catch {} }
+}
+// 图床上传：服务端只接受原始字节 + 真实图片 MIME（非 multipart/JSON）
+export async function uploadGalleryImage(file) {
+  const res = await fetch('/api/gallery', {
+    method: 'POST',
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    body: file,
+    credentials: 'same-origin',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `上传失败 (${res.status})`);
+  await loadGallery();
+  return data.image;
+}
+export async function deleteGalleryImage(id) {
+  await api(`/api/gallery/${id}`, { method: 'DELETE' });
+  await loadGallery();
+}
+
+// ---------- 房间管理 ----------
+export async function renameRoom(roomId, name) {
+  await api(`/api/rooms/${roomId}`, { method: 'PUT', body: { name } });
+  await loadRooms();
+}
+export async function deleteRoom(roomId) {
+  await api(`/api/rooms/${roomId}`, { method: 'DELETE' });
+  if (S.active?.kind === 'room' && S.active.id === roomId) {
+    S.active = null; S.roomDetail = null; S.messages = []; S.msgIds = new Set();
+    emit('active');
+  }
+  await loadRooms();
+}
+export async function saveRoomSettings(roomId, settings) {
+  await api(`/api/rooms/${roomId}/settings`, { method: 'PATCH', body: settings });
+  await loadRooms();
+}
+export async function loadMembers(roomId) {
+  const ret = await api(`/api/rooms/${roomId}/members`);
+  S.members = ret.members || [];
+  emit('members');
+}
+export async function inviteMember(roomId, username, role) {
+  await api(`/api/rooms/${roomId}/members`, { method: 'POST', body: { username, role } });
+  await loadMembers(roomId);
+}
+export async function removeMember(roomId, uid) {
+  await api(`/api/rooms/${roomId}/members/${uid}`, { method: 'DELETE' });
+  await loadMembers(roomId);
+}
+export async function setMemberRole(roomId, username, role) {
+  // 服务端 POST members 为 upsert：已是成员则更新角色
+  await api(`/api/rooms/${roomId}/members`, { method: 'POST', body: { username, role } });
+  await loadMembers(roomId);
+}
+export async function loadJoinRequests(roomId) {
+  const ret = await api(`/api/rooms/${roomId}/join-requests`);
+  S.joinRequests = ret.requests || [];
+  emit('join-requests');
+}
+export async function decideJoinRequest(roomId, uid, action) {
+  await api(`/api/rooms/${roomId}/join-requests/${uid}/${action}`, { method: 'POST' });
+  await loadJoinRequests(roomId);
+}
+export async function loadInviteCodes(roomId) {
+  const ret = await api(`/api/rooms/${roomId}/invite-codes`);
+  S.inviteCodes = ret.codes || [];
+  emit('invite-codes');
+}
+export async function createInviteCode(roomId, maxUses, durationHours) {
+  await api(`/api/rooms/${roomId}/invite-codes`, { method: 'POST', body: { max_uses: maxUses, duration_hours: durationHours } });
+  await loadInviteCodes(roomId);
+}
+export async function deleteInviteCode(roomId, codeId) {
+  await api(`/api/rooms/${roomId}/invite-codes/${codeId}`, { method: 'DELETE' });
+  await loadInviteCodes(roomId);
+}
+export async function searchUsers(q) {
+  const ret = await api(`/api/users/search?q=${encodeURIComponent(q)}`);
+  return ret.users || [];
+}
+export async function saveAnnouncement(roomId, content) {
+  await api(`/api/rooms/${roomId}/announcement`, { method: 'PUT', body: { content } });
+  await loadRooms();
+}
+export async function deleteAnnouncement(roomId) {
+  await api(`/api/rooms/${roomId}/announcement`, { method: 'DELETE' });
+  await loadRooms();
+}
+
+// ---------- 管理面板 ----------
+export const adminApi = {
+  async loadAll() {
+    const [overview, ips, fps, botRequests, botTokens, plugins, pubPlugins] = await Promise.all([
+      api('/api/admin/overview').catch(() => null),
+      api('/api/admin/banned-ips').catch(() => ({ ips: [] })),
+      api('/api/admin/banned-fingerprints').catch(() => ({ fingerprints: [] })),
+      api('/api/admin/bot-requests').catch(() => ({ requests: [] })),
+      api('/api/admin/bot/tokens').catch(() => ({ tokens: [] })),
+      api('/api/admin/plugins').catch(() => ({ plugins: [] })),
+      api('/api/plugins').catch(() => ({ plugins: [] })),
+    ]);
+    S.admin.overview = overview;
+    S.admin.bannedIps = ips.ips || [];
+    S.admin.bannedFps = fps.fingerprints || [];
+    S.admin.botRequests = botRequests.requests || [];
+    S.admin.botTokens = botTokens.tokens || [];
+    S.admin.plugins = plugins.plugins || [];
+    const enabled = {};
+    (pubPlugins.plugins || []).forEach(p => { enabled[p.name] = !!p.enabled; });
+    S.admin.pluginsEnabled = enabled;
+    emit('admin');
+  },
+  setTab(tab) { S.admin.tab = tab; emit('admin'); },
+  async setUserAdmin(id, isAdmin) {
+    await api(`/api/admin/users/${id}/admin`, { method: 'PUT', body: { is_admin: isAdmin } });
+    S.admin.overview = await api('/api/admin/overview'); emit('admin');
+  },
+  async banUser(id, hours) { await api(`/api/admin/users/${id}/ban`, { method: 'PUT', body: { duration_hours: hours } }); S.admin.overview = await api('/api/admin/overview'); emit('admin'); },
+  async unbanUser(id) { await api(`/api/admin/users/${id}/unban`, { method: 'PUT' }); S.admin.overview = await api('/api/admin/overview'); emit('admin'); },
+  async muteUser(id, hours) { await api(`/api/admin/users/${id}/mute`, { method: 'PUT', body: { duration_hours: hours } }); S.admin.overview = await api('/api/admin/overview'); emit('admin'); },
+  async unmuteUser(id) { await api(`/api/admin/users/${id}/unmute`, { method: 'PUT' }); S.admin.overview = await api('/api/admin/overview'); emit('admin'); },
+  async banIp(ip, hours, reason) { await api('/api/admin/banned-ips/ban', { method: 'PUT', body: { ip, duration_hours: hours, reason } }); const r = await api('/api/admin/banned-ips'); S.admin.bannedIps = r.ips || []; emit('admin'); },
+  async unbanIp(ip) { await api('/api/admin/banned-ips/unban', { method: 'PUT', body: { ip } }); const r = await api('/api/admin/banned-ips'); S.admin.bannedIps = r.ips || []; emit('admin'); },
+  async banFp(fp, hours, reason) { await api('/api/admin/banned-fingerprints/ban', { method: 'PUT', body: { fingerprint: fp, duration_hours: hours, reason } }); const r = await api('/api/admin/banned-fingerprints'); S.admin.bannedFps = r.fingerprints || []; emit('admin'); },
+  async unbanFp(fp) { await api('/api/admin/banned-fingerprints/unban', { method: 'PUT', body: { fingerprint: fp } }); const r = await api('/api/admin/banned-fingerprints'); S.admin.bannedFps = r.fingerprints || []; emit('admin'); },
+  async submitBotRequest(name, reason) { await api('/api/bot-requests', { method: 'POST', body: { name, reason } }); const r = await api('/api/admin/bot-requests'); S.admin.botRequests = r.requests || []; emit('admin'); },
+  async reviewBotRequest(id, status) { await api(`/api/admin/bot-requests/${id}`, { method: 'PUT', body: { status } }); const r = await api('/api/admin/bot-requests'); S.admin.botRequests = r.requests || []; emit('admin'); },
+  async revokeBotToken(token) { await api(`/api/admin/bot/tokens/${token}`, { method: 'DELETE' }); const r = await api('/api/admin/bot/tokens'); S.admin.botTokens = r.tokens || []; emit('admin'); },
+  async setPluginEnabled(name, enabled) { await api(`/api/admin/plugins/${name}/enabled`, { method: 'PATCH', body: { enabled } }); const r = await api('/api/admin/plugins'); S.admin.plugins = r.plugins || []; emit('admin'); },
+  async uninstallPlugin(name, deleteConfig) { await api(`/api/admin/plugins/${name}`, { method: 'DELETE', body: { delete_config: deleteConfig } }); const r = await api('/api/admin/plugins'); S.admin.plugins = r.plugins || []; emit('admin'); },
+  async installPlugin(url) { await api('/api/admin/plugins/install', { method: 'POST', body: { url } }); const r = await api('/api/admin/plugins'); S.admin.plugins = r.plugins || []; emit('admin'); },
+  async uploadPlugin(file) {
+    const res = await fetch(`/api/admin/plugins/install/upload?filename=${encodeURIComponent(file.name)}`, { method: 'POST', body: file, credentials: 'same-origin' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `安装失败 (${res.status})`);
+    const r = await api('/api/admin/plugins'); S.admin.plugins = r.plugins || []; emit('admin');
+  },
+  async loadMarket() { const r = await api('/api/admin/plugins/market'); S.admin.pluginMarket = r.plugins || []; emit('admin'); },
+  async saveGlobalAnnouncement(content) { const r = await api('/api/admin/announcement', { method: 'POST', body: { content } }); S.globalAnnouncement = r.announcement; emit('admin'); },
+  async clearGlobalAnnouncement() { await api('/api/admin/announcement', { method: 'DELETE' }); S.globalAnnouncement = null; emit('admin'); },
+};
 
 // ---------- 房间 ----------
 export async function createRoom({ name, isPrivate }) {
@@ -355,6 +524,18 @@ function typingKey(ev) {
 
 async function handleEvent(ev) {
   switch (ev.type) {
+    case 'thread_message': {
+      const m = ev.message; if (!m) break;
+      // 广播的 message 对象不带 room_id（用事件级 ev.room_id），补上
+      const roomId = ev.room_id ?? m.room_id;
+      if (roomId != null) m.room_id = roomId;
+      const rootId = ev.thread_root ?? m.thread_root;
+      // 仅在正查看该话题时更新；不在当前话题时忽略（无未读徽标，与 v1 一致）
+      if (S.thread.root && S.thread.root.id === rootId) {
+        if (!S.thread.messages.some(x => x.id === m.id)) { S.thread.messages.push(m); emit('thread'); }
+      }
+      break;
+    }
     case 'message': {
       const m = ev.message; if (!m) break;
       // 广播的 message 对象不带 room_id（用事件级 ev.room_id），补上以便后续表情/编辑/撤回使用
@@ -463,7 +644,7 @@ async function handleEvent(ev) {
     }
     case 'rooms':
     case 'room_settings': {
-      loadRooms();
+      loadRooms(); // 内部已用最新房间列表同步 S.roomDetail
       break;
     }
     case 'friend_request':

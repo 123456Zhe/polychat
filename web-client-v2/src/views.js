@@ -330,6 +330,9 @@ function composerHTML() {
 export function morePopHTML() {
   const isAdmin = S.user?.is_admin;
   const isRoom = S.active?.kind === 'room';
+  const role = S.roomDetail?.role;
+  const canManage = isRoom && (isAdmin || role === 'owner' || role === 'admin');
+  const canMembers = isRoom && S.roomDetail?.is_private && (isAdmin || role === 'owner' || role === 'admin');
   const devices = [['auto', '自动', 'auto'], ['desktop', '电脑', 'monitor'], ['tablet', '平板', 'tablet'], ['phone', '手机', 'phone'], ['watch', '手表', 'watch']];
   return `
   <div class="popover more-pop open" id="morePop" role="menu">
@@ -340,9 +343,11 @@ export function morePopHTML() {
       <button class="menu-item" data-action="open-friends">${icon('friend')}<span>好友管理</span></button>
       <button class="menu-item" data-action="open-notif">${icon('bell')}<span>通知中心${S.notifUnread ? ` (${S.notifUnread})` : ''}</span></button>
       <button class="menu-item" data-action="create-room">${icon('plus')}<span>新建聊天室</span></button>
-      <button class="menu-item" data-action="oldver" data-feature="管理面板" ${isAdmin ? '' : 'disabled style="opacity:.4"'}>${icon('shield')}<span>管理面板</span></button>
-      <button class="menu-item" data-action="oldver" data-feature="图床">${icon('image')}<span>图床</span></button>
-      <button class="menu-item" data-action="oldver" data-feature="话题串">${icon('thread')}<span>话题串</span></button>
+      ${canManage ? `<button class="menu-item" data-action="open-announcement">${icon('bell')}<span>房间公告</span></button>` : ''}
+      ${canMembers ? `<button class="menu-item" data-action="open-members">${icon('friend')}<span>成员管理</span></button>` : ''}
+      ${canManage ? `<button class="menu-item" data-action="open-room-settings">${icon('gear')}<span>房间设置</span></button>` : ''}
+      <button class="menu-item" data-action="open-admin" ${isAdmin ? '' : 'disabled style="opacity:.4"'}>${icon('shield')}<span>管理面板</span></button>
+      <button class="menu-item" data-action="open-gallery">${icon('image')}<span>图床</span></button>
     </div>
     <div class="menu-sep"></div>
     <div class="pop-heading">外观与设备</div>
@@ -441,6 +446,294 @@ export function pinsModalHTML() {
   return modalShell('置顶消息', items);
 }
 
+// ---------- 房间管理 ----------
+function canManageRoom() {
+  const role = S.roomDetail?.role;
+  return S.user?.is_admin || role === 'owner' || role === 'admin';
+}
+
+export function roomSettingsModalHTML() {
+  const r = S.roomDetail;
+  if (!r) return modalShell('房间设置', '<div class="empty-note">未选择房间</div>');
+  const showPerms = r.is_private || S.user?.is_admin;
+  const reqs = S.joinRequests.length ? S.joinRequests.map(q => `
+    <div class="member-row"><span>${escapeHTML(q.username)}</span>
+      <button class="mini-btn primary" data-action="joinreq-approve" data-id="${q.user_id}">通过</button>
+      <button class="mini-btn danger" data-action="joinreq-reject" data-id="${q.user_id}">拒绝</button>
+    </div>`).join('') : '<div class="empty-note">暂无待审批申请</div>';
+  return modalShell('房间设置', `
+    <div class="form-row"><label>房间名称</label>
+      <input id="roomNameInput" maxlength="30" value="${escapeHTML(r.name || '')}">
+    </div>
+    <div class="form-actions">
+      <button class="mini-btn primary" data-action="room-rename">保存名称</button>
+      <button class="mini-btn danger" data-action="room-delete">删除房间</button>
+    </div>
+    ${showPerms ? `
+    <div class="form-sep">房间权限</div>
+    <label class="check-row"><input type="checkbox" id="roomLocked" ${r.locked ? 'checked' : ''}> 锁定（禁止新成员加入）</label>
+    <label class="check-row"><input type="checkbox" id="roomHidden" ${r.hidden ? 'checked' : ''}> 隐藏（不在房间列表显示）</label>
+    <label class="check-row"><input type="checkbox" id="roomReadonly" ${r.readonly ? 'checked' : ''}> 只读（仅房主/管理员可发言）</label>
+    <div class="form-row"><label>加入密码</label>
+      <input id="roomPassword" type="password" placeholder="留空不改 / 填新值；清空密码请点「清除密码」">
+    </div>
+    <div class="form-actions">
+      <button class="mini-btn primary" data-action="room-settings-save">保存权限</button>
+      <button class="mini-btn" data-action="room-password-clear">清除密码</button>
+    </div>
+    <div class="form-sep">加入申请 <button class="mini-btn" data-action="joinreq-refresh">刷新</button></div>
+    <div id="joinReqList">${reqs}</div>` : ''}`);
+}
+
+export function membersModalHTML() {
+  const members = S.members.map(m => `
+    <div class="member-row"><span>${escapeHTML(m.username)}</span>
+      <small>${m.role === 'owner' ? '房主' : m.role === 'admin' ? '管理员' : '成员'}</small>
+      ${m.role !== 'owner' ? `
+        <select data-role-select="${escapeHTML(m.username)}">
+          <option value="member" ${m.role === 'member' ? 'selected' : ''}>成员</option>
+          <option value="admin" ${m.role === 'admin' ? 'selected' : ''}>管理员</option>
+        </select>
+        <button class="mini-btn" data-action="member-role" data-username="${escapeHTML(m.username)}">改角色</button>
+        <button class="mini-btn danger" data-action="member-remove" data-id="${m.id}">移除</button>` : ''}
+    </div>`).join('') || '<div class="empty-note">暂无成员</div>';
+  const codes = S.inviteCodes.map(c => `
+    <div class="member-row"><span class="code-value">${escapeHTML(c.code)}</span>
+      <small>${c.max_uses ? `${c.use_count}/${c.max_uses}` : `${c.use_count} 次`}${c.expires_at ? ` · 过期 ${timeStr(c.expires_at)}` : ''}</small>
+      <button class="mini-btn" data-action="invitecode-copy" data-code="${escapeHTML(c.code)}">复制</button>
+      <button class="mini-btn danger" data-action="invitecode-delete" data-id="${c.id}">删除</button>
+    </div>`).join('') || '<div class="empty-note">暂无邀请码</div>';
+  return modalShell('成员管理', `
+    <div class="form-row"><label>邀请用户</label>
+      <div class="invite-row">
+        <input id="inviteNameInput" placeholder="输入用户名" autocomplete="off">
+        <select id="inviteRoleSelect"><option value="member">成员</option><option value="admin">房间管理员</option></select>
+        <button class="mini-btn primary" data-action="member-invite">邀请</button>
+      </div>
+      <div id="inviteSuggest"></div>
+    </div>
+    <div class="form-sep">成员</div>
+    <div>${members}</div>
+    <div class="form-sep">邀请码</div>
+    <div class="form-actions" style="margin-bottom:8px">
+      <button class="mini-btn" data-action="invitecode-create" data-kind="perm">永久</button>
+      <button class="mini-btn" data-action="invitecode-create" data-kind="once">一次性</button>
+      <button class="mini-btn" data-action="invitecode-create" data-kind="day">24小时</button>
+    </div>
+    <div>${codes}</div>`);
+}
+
+export function announcementModalHTML() {
+  const cur = S.roomDetail?.announcement || '';
+  return modalShell('房间公告', `
+    <div class="form-row"><label>公告内容（支持 Markdown）</label>
+      <textarea id="announcementInput" class="modal-textarea" rows="5" placeholder="输入公告内容…">${escapeHTML(cur)}</textarea>
+    </div>
+    <div class="form-actions">
+      <button class="mini-btn primary" data-action="announcement-save">保存</button>
+      <button class="mini-btn danger" data-action="announcement-delete">清除公告</button>
+    </div>`);
+}
+
+// ---------- 管理面板 ----------
+const ADMIN_TABS = [['users', '用户'], ['security', '安全'], ['bots', '机器人'], ['notice', '公告'], ['plugins', '插件']];
+
+export function adminModalHTML() {
+  const tab = S.admin.tab;
+  const tabs = ADMIN_TABS.map(([k, label]) =>
+    `<button class="admin-tab${tab === k ? ' active' : ''}" data-action="admin-tab" data-tab="${k}">${label}</button>`).join('');
+  let body = '';
+  if (tab === 'users') body = adminUsersHTML();
+  else if (tab === 'security') body = adminSecurityHTML();
+  else if (tab === 'bots') body = adminBotsHTML();
+  else if (tab === 'notice') body = adminNoticeHTML();
+  else if (tab === 'plugins') body = adminPluginsHTML();
+  return modalShell('管理面板', `<div class="admin-tabs">${tabs}</div><div class="admin-body">${body}</div>`);
+}
+
+function adminUsersHTML() {
+  const ov = S.admin.overview;
+  if (!ov) return '<div class="empty-note">加载中…</div>';
+  const st = ov.stats || {};
+  const users = ov.users || [];
+  const rows = users.map(u => {
+    const badges = [];
+    if (u.banned_until) badges.push(`<span class="badge danger">封禁至 ${timeStr(u.banned_until)}</span>`);
+    if (u.muted_until) badges.push(`<span class="badge warn">禁言至 ${timeStr(u.muted_until)}</span>`);
+    if (u.last_ip) badges.push(`<span class="badge" title="最后登录 IP">${escapeHTML(u.last_ip)}</span>`);
+    if (u.device_fingerprint) badges.push(`<span class="badge" title="${escapeHTML(u.device_fingerprint)}">设备 ${escapeHTML(u.device_fingerprint.slice(0, 8))}</span>`);
+    const ops = [];
+    ops.push(`<button class="mini-btn" data-action="admin-toggle-admin" data-id="${u.id}" data-cur="${u.is_admin ? 1 : 0}">${u.is_admin ? '撤销管理员' : '设为管理员'}</button>`);
+    if (!u.is_admin) {
+      ops.push(u.banned_until
+        ? `<button class="mini-btn" data-action="admin-unban" data-id="${u.id}">解封</button>`
+        : `<button class="mini-btn danger" data-action="admin-ban" data-id="${u.id}">封禁 24h</button>`);
+      ops.push(u.muted_until
+        ? `<button class="mini-btn" data-action="admin-unmute" data-id="${u.id}">解除禁言</button>`
+        : `<button class="mini-btn danger" data-action="admin-mute" data-id="${u.id}">禁言 1h</button>`);
+      ops.push(`<button class="mini-btn" data-action="admin-banip" data-id="${u.id}" data-username="${escapeHTML(u.username)}" data-ip="${escapeHTML(u.last_ip || '')}">封禁 IP</button>`);
+      if (u.device_fingerprint) ops.push(`<button class="mini-btn" data-action="admin-banfp" data-id="${u.id}" data-username="${escapeHTML(u.username)}" data-fp="${escapeHTML(u.device_fingerprint)}">封禁设备</button>`);
+    }
+    return `<div class="member-row"><span><b>${escapeHTML(u.username)}</b> <small>#${u.id}</small> ${u.is_admin ? '<span class="badge primary">管理员</span>' : ''} ${badges.join(' ')}</span>
+      <small>${u.message_count || 0} 条消息</small><div class="admin-ops">${ops.join('')}</div></div>`;
+  }).join('') || '<div class="empty-note">暂无用户</div>';
+  return `
+    <div class="admin-stats">
+      <div class="stat"><b>${st.users ?? '-'}</b><span>用户</span></div>
+      <div class="stat"><b>${st.rooms ?? '-'}</b><span>聊天室</span></div>
+      <div class="stat"><b>${st.messages ?? '-'}</b><span>消息</span></div>
+      <div class="stat"><b>${st.files ?? '-'}</b><span>文件</span></div>
+    </div>
+    <div>${rows}</div>`;
+}
+
+function banFormHTML(kind) {
+  // kind: 'ip' | 'fp'
+  return `
+    <div class="form-row"><label>${kind === 'ip' ? 'IP 地址' : '设备指纹'}</label>
+      <div class="invite-row">
+        <input id="ban${kind === 'ip' ? 'Ip' : 'Fp'}Input" placeholder="${kind === 'ip' ? '如 1.2.3.4' : '设备指纹'}">
+        <select id="ban${kind === 'ip' ? 'Ip' : 'Fp'}Dur">
+          <option value="">永久</option><option value="1">1 小时</option>
+          <option value="24" selected>24 小时</option><option value="168">7 天</option><option value="720">30 天</option>
+        </select>
+        <button class="mini-btn danger" data-action="admin-ban-${kind}-go">封禁</button>
+      </div>
+    </div>`;
+}
+
+function adminSecurityHTML() {
+  const ips = S.admin.bannedIps.map(x => `
+    <div class="member-row"><span class="code-value">${escapeHTML(x.ip)}</span>
+      <small>${x.expires_at ? '到期 ' + timeStr(x.expires_at) : '永久'}${x.reason ? ' · ' + escapeHTML(x.reason) : ''}${x.admin_name ? ' · by ' + escapeHTML(x.admin_name) : ''}</small>
+      <button class="mini-btn" data-action="admin-unban-ip" data-ip="${escapeHTML(x.ip)}">解封</button>
+    </div>`).join('') || '<div class="empty-note">暂无封禁 IP</div>';
+  const fps = S.admin.bannedFps.map(x => `
+    <div class="member-row"><span class="code-value" title="${escapeHTML(x.fingerprint)}">设备 ${escapeHTML((x.fingerprint || '').slice(0, 12))}</span>
+      <small>${x.expires_at ? '到期 ' + timeStr(x.expires_at) : '永久'}${x.reason ? ' · ' + escapeHTML(x.reason) : ''}${x.admin_name ? ' · by ' + escapeHTML(x.admin_name) : ''}</small>
+      <button class="mini-btn" data-action="admin-unban-fp" data-fp="${escapeHTML(x.fingerprint)}">解封</button>
+    </div>`).join('') || '<div class="empty-note">暂无封禁设备</div>';
+  return `
+    <div class="form-sep">IP 封禁</div>${banFormHTML('ip')}<div>${ips}</div>
+    <div class="form-sep">设备封禁</div>${banFormHTML('fp')}<div>${fps}</div>`;
+}
+
+function adminBotsHTML() {
+  const enabled = S.admin.pluginsEnabled['polychat-plugin-onebot'];
+  if (!enabled) return '<div class="empty-note">OneBot 插件未启用，机器人功能不可用。</div>';
+  const reqs = S.admin.botRequests.map(r => `
+    <div class="member-row"><span><b>${escapeHTML(r.name)}</b> <small>申请人 ${escapeHTML(r.username || '')}</small>
+      ${r.status === 'pending' ? '<span class="badge warn">待审批</span>' : r.status === 'approved' ? '<span class="badge primary">已通过</span>' : '<span class="badge">已拒绝</span>'}
+      ${r.reason ? `<div><small>${escapeHTML(r.reason)}</small></div>` : ''}</span>
+      ${r.status === 'pending' ? `<button class="mini-btn primary" data-action="admin-bot-approve" data-id="${r.id}">通过</button>
+      <button class="mini-btn danger" data-action="admin-bot-reject" data-id="${r.id}">拒绝</button>` : ''}
+    </div>`).join('') || '<div class="empty-note">暂无申请</div>';
+  const wsBase = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/onebot/ws`;
+  const tokens = S.admin.botTokens.map(t => {
+    const tok = t.token || '';
+    const masked = tok.length > 10 ? tok.slice(0, 6) + '••••' + tok.slice(-4) : '••••';
+    return `<div class="member-row"><span><b>${escapeHTML(t.name || '')}</b> <small>${escapeHTML(t.username || '')} #${t.user_id}</small>
+      <div><small class="code-value">${escapeHTML(masked)}</small> <small>签发 ${timeStr(t.created_at)}</small></div></span>
+      <button class="mini-btn" data-action="admin-token-copy" data-token="${escapeHTML(tok)}">复制 Token</button>
+      <button class="mini-btn" data-action="admin-token-copyws" data-token="${escapeHTML(tok)}">复制 WS</button>
+      <button class="mini-btn" data-action="admin-token-copycfg" data-token="${escapeHTML(tok)}">复制配置</button>
+      <button class="mini-btn danger" data-action="admin-token-revoke" data-token="${escapeHTML(tok)}">撤销</button>
+    </div>`;
+  }).join('') || '<div class="empty-note">暂无已签发 Token</div>';
+  return `
+    <div class="form-sep">OneBot 接入地址</div>
+    <div class="member-row"><span class="code-value">${escapeHTML(wsBase)}</span>
+      <button class="mini-btn" data-action="admin-ws-copy">复制地址</button></div>
+    <div class="form-sep">申请机器人</div>
+    <div class="form-row"><label>机器人名称（2–24 位字母数字下划线连字符）</label>
+      <div class="invite-row"><input id="botNameInput" placeholder="名称"><input id="botReasonInput" placeholder="用途说明（可选）">
+      <button class="mini-btn primary" data-action="admin-bot-apply">提交申请</button></div></div>
+    <div class="form-sep">待处理申请</div><div>${reqs}</div>
+    <div class="form-sep">已签发 Token</div><div>${tokens}</div>`;
+}
+
+function adminNoticeHTML() {
+  const enabled = S.admin.pluginsEnabled['polychat-plugin-announcement'];
+  if (!enabled) return '<div class="empty-note">公告插件未启用。</div>';
+  const cur = S.globalAnnouncement;
+  return `
+    <div class="form-row"><label>发布全局公告（支持 Markdown）</label>
+      <textarea id="globalAnnInput" class="modal-textarea" rows="4" placeholder="输入公告内容…"></textarea></div>
+    <div class="form-actions"><button class="mini-btn primary" data-action="admin-announce-save">发布</button></div>
+    <div class="form-sep">当前公告</div>
+    ${cur ? `<div class="admin-ann"><div class="pin-meta">${escapeHTML(cur.admin_name || '')} · ${timeStr(cur.created_at)}</div>
+      <div class="msg-body">${renderMarkdown(cur.content || '')}</div>
+      <div style="margin-top:8px"><button class="mini-btn danger" data-action="admin-announce-clear">清除公告</button></div></div>`
+      : '<div class="empty-note">暂无公告</div>'}`;
+}
+
+function adminPluginsHTML() {
+  const list = S.admin.plugins.map(p => {
+    const builtin = p.source === 'builtin' || p.builtin;
+    return `<div class="member-row"><span><b>${escapeHTML(p.name)}</b> <small>v${escapeHTML(p.version || '')}</small>
+      ${p.enabled ? '<span class="badge primary">已启用</span>' : '<span class="badge">已停用</span>'}
+      ${builtin ? '<span class="badge">内置</span>' : ''}
+      ${p.description ? `<div><small>${escapeHTML(p.description)}</small></div>` : ''}</span>
+      <button class="mini-btn" data-action="admin-plugin-toggle" data-name="${escapeHTML(p.name)}" data-cur="${p.enabled ? 1 : 0}">${p.enabled ? '停用' : '启用'}</button>
+      ${builtin ? '' : `<button class="mini-btn danger" data-action="admin-plugin-uninstall" data-name="${escapeHTML(p.name)}">卸载</button>`}
+    </div>`;
+  }).join('') || '<div class="empty-note">暂无插件</div>';
+  const market = S.admin.pluginMarket.map(p => `
+    <div class="member-row"><span><b>${escapeHTML(p.name)}</b> <small>★${p.stars ?? ''}</small>
+      ${p.description ? `<div><small>${escapeHTML(p.description)}</small></div>` : ''}</span>
+      <button class="mini-btn primary" data-action="admin-plugin-install-market" data-repo="${escapeHTML(p.repo || p.url || '')}">安装</button>
+    </div>`).join('') || '<div class="empty-note">市场为空或加载失败</div>';
+  return `
+    <div class="empty-note" style="text-align:left">插件热加载无需重启；仅安装可信来源。</div>
+    <div class="form-sep">已安装</div><div>${list}</div>
+    <div class="form-sep">安装插件</div>
+    <div class="form-row"><label>GitHub 仓库地址或 zip 直链</label>
+      <div class="invite-row"><input id="pluginUrlInput" placeholder="https://github.com/…">
+      <button class="mini-btn primary" data-action="admin-plugin-install">安装</button></div></div>
+    <div class="form-row"><label class="check-row"><input type="file" id="pluginZipInput" accept=".zip" hidden>
+      <span class="mini-btn" data-action="admin-plugin-upload-pick">上传 zip 安装</span></label>
+      <label class="check-row"><input type="checkbox" id="pluginDelCfg" checked> 卸载插件时同时删除其配置</label></div>
+    <div class="form-sep">插件市场 <button class="mini-btn" data-action="admin-market-load">刷新</button></div>
+    <div>${market}</div>`;
+}
+
+export function galleryModalHTML() {
+  const g = S.gallery;
+  const used = (g.used_mb || 0).toFixed(1);
+  const quota = g.quota_mb || 0;
+  const items = g.images.length ? g.images.map(img => {
+    const url = img.url || '';
+    return `<div class="gallery-item">
+      <img src="${escapeHTML(url)}" alt="${escapeHTML(img.filename || '图片')}" loading="lazy" data-action="gallery-preview" data-id="${img.id}">
+      <div class="gallery-ops">
+        <button class="mini-btn" data-action="gallery-copy" data-id="${img.id}">复制外链</button>
+        <button class="mini-btn" data-action="gallery-send" data-id="${img.id}">发到聊天</button>
+        <button class="mini-btn danger" data-action="gallery-delete" data-id="${img.id}">删除</button>
+      </div></div>`;
+  }).join('') : '<div class="empty-note">图床还是空的，选一张图片上传吧。</div>';
+  return modalShell('我的图床', `
+    <div class="gallery-quota">已用 ${escapeHTML(used)} / ${escapeHTML(String(quota))} MB</div>
+    <label class="gallery-upload-btn">选择图片上传
+      <input type="file" id="galleryFileInput" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+    </label>
+    <div class="gallery-grid">${items}</div>`);
+}
+
+export function threadModalHTML() {
+  const t = S.thread;
+  const root = t.root;
+  const replies = root ? t.messages.filter(m => m.id !== root.id) : [];
+  const body = `
+    ${root ? `<div class="thread-root">${messageHTML(root)}</div>` : '<div class="empty-note">加载中…</div>'}
+    ${root ? `<div class="thread-sep">共 ${replies.length} 条回复</div>
+    <div class="thread-replies">${replies.length ? replies.map(messageHTML).join('') : '<div class="empty-note">还没有回复，来抢沙发吧。</div>'}</div>
+    <div class="thread-composer">
+      <input id="threadInput" placeholder="回复这个话题…" autocomplete="off" maxlength="2000">
+      <button class="mini-btn primary" data-action="thread-send">发送</button>
+    </div>` : ''}`;
+  return modalShell('话题串', body);
+}
+
 export function searchModalHTML() {
   return modalShell('搜索消息', `
     <input class="search-input" id="msgSearchInput" placeholder="输入关键词，回车搜索${S.active?.kind === 'room' ? '（当前房间）' : '（全站）'}">
@@ -485,7 +778,7 @@ export function msgMenuHTML(msgId, msg) {
     ${own ? `<button class="menu-item" data-action="msg-edit" data-id="${msgId}">${icon('code')}<span>编辑</span></button>
     <button class="menu-item danger" data-action="msg-retract" data-id="${msgId}">${icon('x')}<span>撤回</span></button>` : ''}
     ${canPin ? `<button class="menu-item" data-action="msg-pin" data-id="${msgId}">${icon('pin')}<span>置顶</span></button>` : ''}
-    <button class="menu-item" data-action="oldver" data-feature="话题串">${icon('thread')}<span>查看话题串</span></button>
+    <button class="menu-item" data-action="open-thread" data-id="${msgId}">${icon('thread')}<span>打开话题串</span></button>
   </div>`;
 }
 

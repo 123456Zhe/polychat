@@ -4,7 +4,13 @@ import './style.css';
 import { S, onChange, emit, init, doLogin, doRegister, doLogout, selectRoom, selectDM,
   loadMessages, loadMore, sendMessage, toggleReaction, editMessage, retractMessage,
   pinMessage, unpinMessage, loadPins, createRoom, joinRoom, friendsApi, notifApi,
-  searchMessages, sendTyping, resolveDevice, setDevice, activeKey } from './store.js';
+  searchMessages, sendTyping, resolveDevice, setDevice, activeKey,
+  loadGallery, uploadGalleryImage, deleteGalleryImage,
+  openThread, sendThreadReply,
+  renameRoom, deleteRoom, saveRoomSettings, loadMembers, inviteMember, removeMember,
+  setMemberRole, loadJoinRequests, decideJoinRequest, loadInviteCodes, createInviteCode,
+  deleteInviteCode, searchUsers, saveAnnouncement, deleteAnnouncement,
+  adminApi } from './store.js';
 import { api, uploadFile, ApiError } from './api.js';
 import { ICONS, icon } from './icons.js';
 import { escapeHTML } from './markdown.js';
@@ -84,6 +90,31 @@ onChange(what => {
     case 'pins': {
       refreshNotice();
       if (document.querySelector('[data-modal-veil]')?.textContent.includes('置顶消息')) V.openModal(V.pinsModalHTML());
+      break;
+    }
+    case 'thread': {
+      if (document.querySelector('[data-modal-veil]')?.textContent.includes('话题串')) {
+        const input = document.getElementById('threadInput');
+        const draft = input ? input.value : '';
+        const active = document.activeElement === input;
+        V.openModal(V.threadModalHTML());
+        const ni = document.getElementById('threadInput');
+        if (ni && draft) { ni.value = draft; if (active) ni.focus(); }
+        const replies = document.querySelector('.thread-replies');
+        if (replies) replies.scrollTop = replies.scrollHeight;
+      }
+      break;
+    }
+    case 'members': case 'invite-codes': {
+      if (document.querySelector('[data-modal-veil]')?.textContent.includes('成员管理')) V.openModal(V.membersModalHTML());
+      break;
+    }
+    case 'admin': {
+      if (document.querySelector('[data-modal-veil]')?.textContent.includes('管理面板')) V.openModal(V.adminModalHTML());
+      break;
+    }
+    case 'join-requests': {
+      if (document.querySelector('[data-modal-veil]')?.textContent.includes('房间设置')) V.openModal(V.roomSettingsModalHTML());
       break;
     }
     case 'notif': refreshSidebar(); {
@@ -320,6 +351,352 @@ document.addEventListener('click', async ev => {
       case 'open-theme': V.closePop(); V.openModal(themeModalHTML(document.documentElement.dataset.theme)); break;
       case 'open-search': V.closePop(); V.openModal(V.searchModalHTML()); setTimeout(() => document.getElementById('msgSearchInput')?.focus(), 50); break;
       case 'open-pins': V.closePop(); if (S.active?.kind === 'room') { await loadPins(S.active.id); V.openModal(V.pinsModalHTML()); } break;
+      case 'open-thread': {
+        V.closePop();
+        const tid = Number(id);
+        try {
+          await openThread(tid);
+          V.openModal(V.threadModalHTML());
+        } catch (e) { V.showToast(e.message); }
+        break;
+      }
+      // ---------- 房间管理 ----------
+      case 'open-room-settings': {
+        V.closePop();
+        const rid = S.active?.id;
+        try { await loadJoinRequests(rid); } catch {}
+        V.openModal(V.roomSettingsModalHTML());
+        break;
+      }
+      case 'room-rename': {
+        const name = document.getElementById('roomNameInput')?.value.trim();
+        if (!name) { V.showToast('名称不能为空'); break; }
+        try { await renameRoom(S.active.id, name); V.openModal(V.roomSettingsModalHTML()); V.showToast('已保存'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'room-delete': {
+        if (!confirm(`删除房间「${S.roomDetail?.name}」？此操作不可恢复。`)) break;
+        try { await deleteRoom(S.active.id); V.closeModal(); V.showToast('房间已删除'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'room-settings-save': {
+        const body = {
+          locked: document.getElementById('roomLocked')?.checked || false,
+          hidden: document.getElementById('roomHidden')?.checked || false,
+          readonly: document.getElementById('roomReadonly')?.checked || false,
+        };
+        const pw = document.getElementById('roomPassword')?.value;
+        if (pw) body.password = pw;
+        try { await saveRoomSettings(S.active.id, body); V.openModal(V.roomSettingsModalHTML()); V.showToast('房间设置已保存'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'room-password-clear': {
+        if (!confirm('清除加入密码？')) break;
+        try { await saveRoomSettings(S.active.id, { password: '' }); V.openModal(V.roomSettingsModalHTML()); V.showToast('密码已清除'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'joinreq-refresh': {
+        try { await loadJoinRequests(S.active.id); V.openModal(V.roomSettingsModalHTML()); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'joinreq-approve': case 'joinreq-reject': {
+        const act = action === 'joinreq-approve' ? 'approve' : 'reject';
+        try { await decideJoinRequest(S.active.id, Number(id), act); V.openModal(V.roomSettingsModalHTML()); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'open-members': {
+        V.closePop();
+        const rid = S.active?.id;
+        try { await loadMembers(rid); await loadInviteCodes(rid); }
+        catch (e) { V.showToast(e.message); break; }
+        V.openModal(V.membersModalHTML());
+        break;
+      }
+      case 'member-invite': {
+        const name = document.getElementById('inviteNameInput')?.value.trim();
+        const role = document.getElementById('inviteRoleSelect')?.value || 'member';
+        if (!name) { V.showToast('请输入用户名'); break; }
+        try { await inviteMember(S.active.id, name, role); V.openModal(V.membersModalHTML()); V.showToast('已邀请'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'member-remove': {
+        const m = S.members.find(x => x.id === Number(id));
+        if (!confirm(`移除成员 ${m?.username || ''}？`)) break;
+        try { await removeMember(S.active.id, Number(id)); V.openModal(V.membersModalHTML()); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'member-role': {
+        const uname = el.dataset.username;
+        const sel = document.querySelector(`[data-role-select="${CSS.escape(uname)}"]`);
+        const role = sel?.value || 'member';
+        try { await setMemberRole(S.active.id, uname, role); V.openModal(V.membersModalHTML()); V.showToast('角色已更新'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'invitecode-create': {
+        const kind = el.dataset.kind;
+        const args = kind === 'once' ? [1, null] : kind === 'day' ? [null, 24] : [null, null];
+        try { await createInviteCode(S.active.id, ...args); V.openModal(V.membersModalHTML()); V.showToast('邀请码已创建'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'invitecode-delete': {
+        try { await deleteInviteCode(S.active.id, Number(id)); V.openModal(V.membersModalHTML()); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'invitecode-copy': {
+        const code = el.dataset.code;
+        const link = `${location.origin}/?invite=${encodeURIComponent(code)}`;
+        try { await navigator.clipboard.writeText(link); V.showToast('邀请链接已复制'); }
+        catch { V.showToast('复制失败'); }
+        break;
+      }
+      case 'open-announcement': {
+        V.closePop();
+        V.openModal(V.announcementModalHTML());
+        break;
+      }
+      case 'announcement-save': {
+        const content = document.getElementById('announcementInput')?.value || '';
+        if (!content.trim()) { V.showToast('公告内容不能为空'); break; }
+        try { await saveAnnouncement(S.active.id, content); V.closeModal(); V.showToast('公告已更新'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'announcement-delete': {
+        if (!confirm('确定清除公告？')) break;
+        try { await deleteAnnouncement(S.active.id); V.closeModal(); V.showToast('公告已清除'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      // ---------- 管理面板 ----------
+      case 'open-admin': {
+        if (!S.user?.is_admin) { V.showToast('需要管理员权限'); break; }
+        V.closePop();
+        adminApi.setTab('users');
+        V.openModal(V.adminModalHTML());
+        adminApi.loadAll().then(() => {
+          if (document.querySelector('[data-modal-veil]')?.textContent.includes('管理面板')) V.openModal(V.adminModalHTML());
+        }).catch(e => V.showToast(e.message));
+        break;
+      }
+      case 'admin-tab': adminApi.setTab(el.dataset.tab); V.openModal(V.adminModalHTML()); break;
+      case 'admin-toggle-admin': {
+        const cur = el.dataset.cur === '1';
+        if (cur && !confirm('撤销该用户的管理员权限？')) break;
+        try { await adminApi.setUserAdmin(Number(id), !cur); V.showToast('已更新'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-ban': {
+        try { await adminApi.banUser(Number(id), 24); V.showToast('已封禁 24 小时'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-unban': {
+        try { await adminApi.unbanUser(Number(id)); V.showToast('已解封'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-mute': {
+        try { await adminApi.muteUser(Number(id), 1); V.showToast('已禁言 1 小时'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-unmute': {
+        try { await adminApi.unmuteUser(Number(id)); V.showToast('已解除禁言'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-banip': {
+        let ip = el.dataset.ip;
+        if (!ip) { ip = prompt('输入要封禁的 IP：'); if (!ip) break; }
+        const hoursStr = prompt('封禁时长（小时），留空=永久：', '24');
+        if (hoursStr === null) break;
+        const hours = hoursStr.trim() === '' ? null : Number(hoursStr);
+        try { await adminApi.banIp(ip.trim(), hours, `用户 ${el.dataset.username} 的 IP`); V.showToast('IP 已封禁'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-banfp': {
+        const hoursStr = prompt('封禁时长（小时），留空=永久：', '24');
+        if (hoursStr === null) break;
+        const hours = hoursStr.trim() === '' ? null : Number(hoursStr);
+        try { await adminApi.banFp(el.dataset.fp, hours, `用户 ${el.dataset.username} 的设备`); V.showToast('设备已封禁'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-ban-ip-go': {
+        const ip = document.getElementById('banIpInput')?.value.trim();
+        const dur = document.getElementById('banIpDur')?.value;
+        if (!ip) { V.showToast('请输入 IP'); break; }
+        try { await adminApi.banIp(ip, dur === '' ? null : Number(dur)); V.showToast('IP 已封禁'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-ban-fp-go': {
+        const fp = document.getElementById('banFpInput')?.value.trim();
+        const dur = document.getElementById('banFpDur')?.value;
+        if (!fp) { V.showToast('请输入设备指纹'); break; }
+        try { await adminApi.banFp(fp, dur === '' ? null : Number(dur)); V.showToast('设备已封禁'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-unban-ip': {
+        try { await adminApi.unbanIp(el.dataset.ip); V.showToast('已解封'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-unban-fp': {
+        try { await adminApi.unbanFp(el.dataset.fp); V.showToast('已解封'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-bot-apply': {
+        const name = document.getElementById('botNameInput')?.value.trim();
+        const reason = document.getElementById('botReasonInput')?.value.trim();
+        if (!name) { V.showToast('请输入机器人名称'); break; }
+        try { await adminApi.submitBotRequest(name, reason); V.showToast('申请已提交'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-bot-approve': case 'admin-bot-reject': {
+        const st = action === 'admin-bot-approve' ? 'approved' : 'rejected';
+        try { await adminApi.reviewBotRequest(Number(id), st); V.showToast(st === 'approved' ? '已通过' : '已拒绝'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-ws-copy': {
+        const ws = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/onebot/ws`;
+        try { await navigator.clipboard.writeText(ws); V.showToast('地址已复制'); } catch { V.showToast('复制失败'); }
+        break;
+      }
+      case 'admin-token-copy': {
+        try { await navigator.clipboard.writeText(el.dataset.token); V.showToast('Token 已复制'); } catch { V.showToast('复制失败'); }
+        break;
+      }
+      case 'admin-token-copyws': {
+        const ws = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/onebot/ws?token=${el.dataset.token}`;
+        try { await navigator.clipboard.writeText(ws); V.showToast('WS 地址已复制'); } catch { V.showToast('复制失败'); }
+        break;
+      }
+      case 'admin-token-copycfg': {
+        const cfg = JSON.stringify({ adapter: 'OneBot v11', websocket_url: `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/onebot/ws`, access_token: el.dataset.token }, null, 2);
+        try { await navigator.clipboard.writeText(cfg); V.showToast('配置已复制'); } catch { V.showToast('复制失败'); }
+        break;
+      }
+      case 'admin-token-revoke': {
+        if (!confirm('撤销后机器人会立即断开，确定继续？')) break;
+        try { await adminApi.revokeBotToken(el.dataset.token); V.showToast('Token 已撤销'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-announce-save': {
+        const content = document.getElementById('globalAnnInput')?.value || '';
+        if (!content.trim()) { V.showToast('公告内容不能为空'); break; }
+        try { await adminApi.saveGlobalAnnouncement(content); V.showToast('全局公告已发布'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-announce-clear': {
+        try { await adminApi.clearGlobalAnnouncement(); V.showToast('公告已清除'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-plugin-toggle': {
+        const name = el.dataset.name;
+        const cur = el.dataset.cur === '1';
+        try { await adminApi.setPluginEnabled(name, !cur); V.showToast(cur ? '已停用' : '已启用'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-plugin-uninstall': {
+        const name = el.dataset.name;
+        const delCfg = document.getElementById('pluginDelCfg')?.checked ?? true;
+        if (!confirm(`确定卸载插件 ${name}？${delCfg ? '将同时删除其配置。' : '插件配置将保留。'}`)) break;
+        try { await adminApi.uninstallPlugin(name, delCfg); V.showToast('已卸载'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-plugin-install': {
+        const url = document.getElementById('pluginUrlInput')?.value.trim();
+        if (!url) { V.showToast('请输入地址'); break; }
+        V.showToast('安装中…');
+        try { await adminApi.installPlugin(url); V.showToast('安装成功'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-plugin-upload-pick': document.getElementById('pluginZipInput')?.click(); break;
+      case 'admin-plugin-install-market': {
+        const repo = el.dataset.repo;
+        if (!repo) { V.showToast('地址缺失'); break; }
+        V.showToast('安装中…');
+        try { await adminApi.installPlugin(repo); V.showToast('安装成功'); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'admin-market-load': {
+        try { await adminApi.loadMarket(); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'thread-send': {
+        const input = document.getElementById('threadInput');
+        const text = (input?.value || '').trim();
+        const root = S.thread.root;
+        if (!text || !root) break;
+        input.value = '';
+        try { await sendThreadReply(root.id, text); }
+        catch (e) { V.showToast(e.message); input.value = text; }
+        break;
+      }
+      case 'open-gallery': {
+        V.closePop();
+        V.openModal(V.galleryModalHTML());
+        loadGallery().then(() => {
+          if (document.querySelector('[data-modal-veil]')?.textContent.includes('我的图床')) V.openModal(V.galleryModalHTML());
+        });
+        break;
+      }
+      case 'gallery-delete': {
+        const gid = Number(id);
+        if (!confirm('删除这张图？')) break;
+        try { await deleteGalleryImage(gid); V.openModal(V.galleryModalHTML()); }
+        catch (e) { V.showToast(e.message); }
+        break;
+      }
+      case 'gallery-copy': {
+        const img = S.gallery.images.find(x => x.id === Number(id));
+        if (img?.url) {
+          try { await navigator.clipboard.writeText(new URL(img.url, location.origin).href); V.showToast('外链已复制'); }
+          catch { V.showToast('复制失败'); }
+        }
+        break;
+      }
+      case 'gallery-send': {
+        const img = S.gallery.images.find(x => x.id === Number(id));
+        if (img?.url) {
+          const input = document.getElementById('composerInput');
+          if (input) { input.value += `\n![](${img.url})\n`; input.focus(); }
+          V.closeModal();
+          V.showToast('已插入输入框');
+        }
+        break;
+      }
+      case 'gallery-preview': {
+        const img = S.gallery.images.find(x => x.id === Number(id));
+        if (img?.url) window.open(new URL(img.url, location.origin).href, '_blank', 'noopener');
+        break;
+      }
       case 'open-friends': V.closePop(); await openFriends('list'); break;
       case 'open-notif': {
         V.closePop();
@@ -455,9 +832,32 @@ document.addEventListener('input', ev => {
       } catch (e) { box.innerHTML = `<div class="empty-note">${escapeHTML(e.message)}</div>`; }
     }, 350);
   }
+  if (ev.target.id === 'inviteNameInput') {
+    const q = ev.target.value.trim();
+    const box = document.getElementById('inviteSuggest');
+    if (!box) return;
+    clearTimeout(window.__isT);
+    window.__isT = setTimeout(async () => {
+      if (!q) { box.innerHTML = ''; return; }
+      try {
+        const users = await searchUsers(q);
+        box.innerHTML = users.map(u =>
+          `<div class="invite-suggest-item" data-invite-pick="${escapeHTML(u.username)}">${escapeHTML(u.username)}</div>`).join('')
+          || '<div class="empty-note">没有找到该用户</div>';
+      } catch (e) { box.innerHTML = `<div class="empty-note">${escapeHTML(e.message)}</div>`; }
+    }, 350);
+  }
 });
 
 document.addEventListener('click', async ev => {
+  const pick = ev.target.closest('[data-invite-pick]');
+  if (pick) {
+    const input = document.getElementById('inviteNameInput');
+    if (input) { input.value = pick.dataset.invitePick; input.focus(); }
+    const box = document.getElementById('inviteSuggest');
+    if (box) box.innerHTML = '';
+    return;
+  }
   const add = ev.target.closest('[data-action="friend-add"]');
   if (add) {
     try { await friendsApi.request(add.dataset.username); V.showToast('好友请求已发送'); await openFriends('outgoing'); }
@@ -523,6 +923,19 @@ document.addEventListener('change', ev => {
   if (ev.target.id === 'fileInput' && ev.target.files?.length) {
     doAttach(ev.target.files[0]);
     ev.target.value = '';
+  }
+  if (ev.target.id === 'galleryFileInput' && ev.target.files?.length) {
+    const f = ev.target.files[0];
+    ev.target.value = '';
+    V.showToast('上传中…');
+    uploadGalleryImage(f).then(() => { V.openModal(V.galleryModalHTML()); V.showToast('已上传'); })
+      .catch(e => V.showToast(e.message));
+  }
+  if (ev.target.id === 'pluginZipInput' && ev.target.files?.length) {
+    const f = ev.target.files[0];
+    ev.target.value = '';
+    V.showToast('安装中…');
+    adminApi.uploadPlugin(f).then(() => V.showToast('安装成功')).catch(e => V.showToast(e.message));
   }
 });
 
