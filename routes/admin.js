@@ -275,10 +275,11 @@ export async function handleAdminRoutes(req, res, url, registry, pluginCtx) {
     return (json(res, 201, { token: { token, user_id, name: String(name).trim() || `Bot for ${target.username}` } }), true);
   }
 
-  const botTokenDeleteMatch = url.pathname.match(/^\/api\/admin\/bot\/tokens\/([A-Za-z0-9_-]+)$/);
-  if (botTokenDeleteMatch && req.method === 'DELETE') {
+  if (req.method === 'DELETE' && url.pathname === '/api/admin/bot/tokens') {
     const admin = requireAdmin(req, res); if (!admin) return true;
-    const token = botTokenDeleteMatch[1];
+    // token 走请求体，不放 URL path，避免明文进访问日志
+    const { token } = await readBody(req);
+    if (!token || typeof token !== 'string') return (json(res, 400, { error: '需要指定 token' }), true);
     const row = db.prepare('SELECT user_id FROM bot_tokens WHERE token = ?').get(token);
     if (!row) return (json(res, 404, { error: 'Token 不存在' }), true);
     db.prepare('DELETE FROM bot_tokens WHERE token = ?').run(token);

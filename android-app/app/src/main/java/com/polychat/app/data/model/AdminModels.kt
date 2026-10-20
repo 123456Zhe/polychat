@@ -157,6 +157,11 @@ data class CreateBotTokenRequest(
 )
 
 @Serializable
+data class RevokeBotTokenRequest(
+    val token: String
+)
+
+@Serializable
 data class CreateBotTokenResponse(
     val token: BotToken
 )

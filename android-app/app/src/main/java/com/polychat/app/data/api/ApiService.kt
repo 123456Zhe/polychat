@@ -290,8 +290,8 @@ interface ApiService {
     @POST("api/admin/bot/tokens")
     suspend fun createBotToken(@Body body: CreateBotTokenRequest): CreateBotTokenResponse
 
-    @DELETE("api/admin/bot/tokens/{token}")
-    suspend fun revokeBotToken(@Path("token") token: String): OkResponse
+    @HTTP(method = "DELETE", path = "api/admin/bot/tokens", hasBody = true)
+    suspend fun revokeBotToken(@Body body: RevokeBotTokenRequest): OkResponse
 
     @GET("api/admin/bot-requests")
     suspend fun botRequests(): BotRequestsResponse

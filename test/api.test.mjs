@@ -483,7 +483,7 @@ test('机器人申请校验、审批和通知 Token 完整流程', async () => {
   assert.equal(unread.body.count, 0);
   const tokens = await api('/api/admin/bot/tokens', { headers: adminAuth });
   assert.ok(tokens.body.tokens.some(item => item.token === notification.data.token));
-  const revoked = await api(`/api/admin/bot/tokens/${notification.data.token}`, { method: 'DELETE', headers: adminAuth });
+  const revoked = await api('/api/admin/bot/tokens', { method: 'DELETE', headers: adminAuth, body: JSON.stringify({ token: notification.data.token }) });
   assert.equal(revoked.response.status, 200);
   const afterRevoke = await api('/api/admin/bot/tokens', { headers: adminAuth });
   assert.ok(!afterRevoke.body.tokens.some(item => item.token === notification.data.token));

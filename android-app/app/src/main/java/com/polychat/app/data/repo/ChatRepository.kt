@@ -369,7 +369,7 @@ class ChatRepository @Inject constructor(
 
     suspend fun adminReviewBotRequest(id: Long, status: String) = api.reviewBotRequest(id, ReviewBotRequest(status))
 
-    suspend fun adminRevokeBotToken(token: String) = api.revokeBotToken(token)
+    suspend fun adminRevokeBotToken(token: String) = api.revokeBotToken(RevokeBotTokenRequest(token))
 
     // ---- Convenience accessors for UI ----
     suspend fun serverUrlOrNull(): String? = prefs.getServerUrl()
