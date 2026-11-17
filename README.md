@@ -136,18 +136,21 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 
 ## Web 前端开发
 
-Web UI 已独立为 `web-client/` 中的 Vue 3 + Vite 工程。开发模式会在 `5173` 端口启动，并将 `/api` 请求代理到本机服务端：
+Web UI 有两个独立的 Vite 工程：老版 `web-client/`（Vue 3，开发端口 `5173`，生产输出到 `web/`、由 Node 服务在 `/` 托管）和新版 `web-client-v2/`（原生 JS，开发端口 `5174`，生产输出到 `web/v2/`、由 Node 服务在 `/v2` 路由托管）。两个版本独立切换，不自动跳转。开发模式都会把 `/api` 请求代理到本机服务端：
 
 ```bash
 npm install
-npm run web:dev
+npm run web:dev       # 老版，5173
+npm run web:dev:v2    # 新版，5174
 ```
 
-生产构建会输出到 `web/`，由 Node 服务直接托管：
+生产构建两个版本都要跑（`web/` 是构建产物，不提交进仓库，首次部署/克隆后必须先构建）：
 
 ```bash
-npm run web:build
+npm run web:build && npm run web:build:v2
 ```
+
+`web:build`（v1）只清理 `web/` 下除 `v2/` 之外的内容，不会误删 v2 产物；但只跑 `web:build` 也不会更新 v2，所以两个命令都要跑。Docker 镜像构建与 `npm run build:all` 已包含这两步。
 
 ## 机器人接入
 
@@ -363,9 +366,9 @@ curl -I http://127.0.0.1:3000/
 不想在目标机器上安装 Node.js / 拷贝整个项目？可以把服务端打包成**一个独立的可执行文件**（Node SEA 单文件应用）：
 
 ```bash
-npm run web:build        # 先构建 Web 前端（只在 web/ 有改动时需要）
+npm run web:build && npm run web:build:v2   # 先构建 Web 前端（v1 + v2，只在 web/ 有改动时需要）
 npm run build:server     # 打包单文件（自动内嵌 web/ 与 KaTeX 静态资源）
-npm run build:all        # 或一次完成上面两步
+npm run build:all        # 或一次完成上面所有步骤
 ```
 
 构建产物（`dist/` 与中间文件 `build/` 均已被 gitignore）：

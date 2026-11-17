@@ -8,6 +8,7 @@
     "start": "node server.mjs",
     "test": "node --test test/*.test.mjs",
     "web:dev": "vite --config web-client/vite.config.js",
+    "web:dev:v2": "vite --config web-client-v2/vite.config.js",
     "web:build": "vite build --config web-client/vite.config.js",
     "web:build:v2": "vite build --config web-client-v2/vite.config.js",
     "build:server": "node scripts/build-server.mjs",

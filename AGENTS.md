@@ -37,8 +37,9 @@ Run `npm install` once before starting the server or building the web frontend. 
 | Start server | `./run-server.sh` or `node server.mjs` |
 | Run Node tests | `npm test` (runs `node --test test/*.test.mjs`) |
 | Web dev server | `npm run web:dev` (Vite on :5173, proxies `/api` to :3000) |
-| Web production build | `npm run web:build` (outputs to `web/`) |
-| Single-file server build | `npm run build:server` → `dist/polychat-server` (Node SEA binary, self-contained) + `dist/polychat-server.cjs` (bundled JS). `npm run build:all` = web:build + build:server |
+| Web v2 dev server | `npm run web:dev:v2` (Vite on :5174, proxies `/api` to :3000) |
+| Web production build | `npm run web:build` (v1 → `web/`, clears everything except `v2/`) + `npm run web:build:v2` (v2 → `web/v2/`) |
+| Single-file server build | `npm run build:server` → `dist/polychat-server` (Node SEA binary, self-contained) + `dist/polychat-server.cjs` (bundled JS). `npm run build:all` = web:build + web:build:v2 + build:server |
 | Run GUI client | `./run-gui.sh` (needs Python + Flet in `.venv-gui/`) |
 | Run TUI client | `./run-tui.sh` |
 | Build GUI standalone | `./build-gui.sh` (creates `dist/PolyChat-GUI/`) |
@@ -51,8 +52,8 @@ Run tests before committing. `npm test` creates a temporary SQLite DB and cleans
 
 - **Server**: `server.mjs` — HTTP server + SQLite (`node:sqlite`) + core API routes. Non-essential features are extracted as plugins in `plugins/polychat-plugin-*/` (unified `polychat-plugin-<name>` naming), loaded by `modules/plugin-loader.js` through the `modules/plugin-registry.js` registry (HTTP routes / WS message types / heartbeat / cleanup / services), and wired through an EventBus (`message:sent`, `dm:sent`). OneBot lives in `plugins/polychat-plugin-onebot/` (was `modules/onebot/`). No framework, no build step for the server.
 - **Database**: SQLite with WAL mode, auto-migrates schema on startup (adds columns if missing). DB file at `data/polychat.db`. All tables (incl. plugin-owned ones like `p2p_transfers`, `push_subscriptions`, `app_settings`, `bot_tokens`) stay centrally created here so plugins only move logic, not schema.
-- **Web frontend**: Vue 3 + Vite app in `web-client/`. `npm run web:build` outputs production assets to `web/`, which the Node server serves directly. Mobile-responsive with sidebar toggle.
-- **Android app**: Capacitor wrapper in `android-app/`. Uses built web assets from `web/`. Build with `./build-android.sh`.
+- **Web frontend**: Vue 3 + Vite app in `web-client/` (v1, served at `/`) plus a vanilla-JS v2 app in `web-client-v2/` (served at `/v2`). `npm run web:build` outputs v1 assets to `web/` (clears everything except `v2/`); `npm run web:build:v2` outputs to `web/v2/`. `web/` is a build artifact, not committed — build both before first run. The Node server serves both directly. Mobile-responsive with sidebar toggle.
+- **Android app**: Native Kotlin + Jetpack Compose app in `android-app/` (independent of the web build). Build with `./build-android.sh`.
 - **GUI client**: `clients/gui.py` — Flet desktop app, shares `clients/chat_api.py` for HTTP logic. Needs `.venv-gui/` virtualenv (created by `build-gui.sh`).
 - **TUI client**: `clients/tui.py` — curses terminal client, shares `clients/chat_api.py`.
 

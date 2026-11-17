@@ -44,6 +44,6 @@
 ## 验证要求
 
 - 服务端：`npm test`。
-- Web：`npm run web:build`。
+- Web：`npm run web:build && npm run web:build:v2`（两个版本都要构建，缺一不可）。
 - 语法：`node --check server.mjs`、`git diff --check`。
 - Android：在具备 Android SDK 的环境执行 `./gradlew assembleDebug`/release 构建。
