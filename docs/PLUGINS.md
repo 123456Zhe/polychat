@@ -45,7 +45,7 @@
 
 ## 三、插件目录结构（独立仓库 + 内置打包）
 
-每个插件是独立的 GitHub 仓库（公开，可作市场安装源），同时以 git subtree 方式同步进主仓库 `plugins/` 作为内置打包（构建/测试/SEA/Docker 零变化）：
+每个插件是独立的 GitHub 仓库（公开，可作市场安装源），同时以 git subtree 方式同步进主仓库 `plugins/` 作为内置打包（构建/测试/SEA/Docker 零变化）。`md-editor` 与 `minigames` 例外：两者仅随主仓库内置打包，没有独立仓库。
 
 | 插件 | 独立仓库 | 内置目录 |
 |---|---|---|
@@ -57,6 +57,8 @@
 | `onebot` | https://github.com/123456Zhe/polychat-plugin-onebot | `plugins/polychat-plugin-onebot/` |
 | `gallery` | https://github.com/123456Zhe/polychat-plugin-gallery | `plugins/polychat-plugin-gallery/` |
 | `lan-discovery` | https://github.com/123456Zhe/polychat-plugin-lan-discovery | `plugins/polychat-plugin-lan-discovery/` |
+| `md-editor` | —（仅内置，无独立仓库） | `plugins/polychat-plugin-md-editor/` |
+| `minigames` | —（仅内置，无独立仓库） | `plugins/polychat-plugin-minigames/` |
 
 ### subtree 同步工作流
 

@@ -24,3 +24,6 @@ android-app/captures/
 
 # 本地投放的外部插件（独立仓库，见 docs/PLUGINS.md）
 /plugins/polychat-plugin-sanguosha
+
+# Web 构建产物（v1 web/ + v2 web/v2/）：Docker/CI/本地均从 web-client* 源码重新构建，不提交
+/web/

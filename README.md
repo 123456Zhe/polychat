@@ -126,12 +126,14 @@ PolyChat 是一个带持久化账号的轻量聊天室，同时提供 Web、Flet
 | `onebot` | OneBot 机器人网关 | 失去 Bot 接入 |
 | `gallery` | 个人图床（本地/S3 兼容双后端） | 失去图床上传与外链 |
 | `lan-discovery` | `GET /api/discovery` 局域网发现 | 失去发现端点（404） |
+| `md-editor` | Markdown 分屏编辑器（左侧编写、右侧实时预览） | 失去编辑器展开按钮（输入框照常可用） |
+| `minigames` | 联机小游戏（五子棋双人对战 + 数字炸弹房间派对 + 胜场排行榜） | 失去小游戏入口与排行榜 |
 
 - **默认全部启用**，API 表面不变；按部署裁剪用 `DISABLED_PLUGINS=backup,p2p`。
 - 插件配置自动生成并自动迁移于 `data/plugins.json`（新增插件自动补默认、旧配置逐键合并、删除条目剪除），老项目升级零手工。
 - **WebUI 插件管理**（管理面板「插件」页签）：从市场/GitHub URL/上传 zip 安装、启用/停用、卸载，均**热加载无需重启**（管理员操作）。
 - 内置插件静态打包进单文件/SEA；外部插件（git clone 进 `plugins/` 或 `npm install polychat-plugin-*`）在目录部署下自动发现加载。
-- 每个插件是独立 GitHub 仓库（`123456Zhe/polychat-plugin-<name>`），主仓库用 git subtree 同步（见 docs/PLUGINS.md）。
+- 除 `md-editor` 与 `minigames` 仅随主仓库内置打包外，每个插件是独立 GitHub 仓库（`123456Zhe/polychat-plugin-<name>`），主仓库用 git subtree 同步（见 docs/PLUGINS.md）。
 - 管理员可 `GET /api/admin/plugins` 查看插件名称/版本/状态。
 
 ## Web 前端开发
@@ -192,6 +194,7 @@ npm run web:build && npm run web:build:v2
 ```bash
 cd /home/zhe/polychat
 npm install # 首次运行
+npm run web:build && npm run web:build:v2  # 首次运行：构建 Web 前端（v1 + v2，产物不进仓库）
 ./run-server.sh
 ```
 
