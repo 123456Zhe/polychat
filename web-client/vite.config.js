@@ -12,6 +12,8 @@ const outDir = resolve(import.meta.dirname, '../web');
 function cleanV1OutDir() {
   return {
     name: 'clean-v1-out-dir',
+    // 只在 build 时生效：dev 模式下 buildStart 也会跑，不加 apply 会把 web/ 的构建产物删掉
+    apply: 'build',
     buildStart() {
       if (!existsSync(outDir)) return;
       for (const name of readdirSync(outDir)) {
