@@ -455,3 +455,5 @@ ssh root@服务器 'chmod +x /opt/polychat-server && cd /opt && PORT=3000 ./poly
 | GET/POST/DELETE | `/api/admin/announcement` | 全局公告：查询（登录用户）/发布/清除（管理员） |
 
 拉取消息可加 `?after=<消息ID>&limit=100` 实现增量更新。私信会话列表返回未读数，拉取消息后可调用 `/api/dm/conversations/:id/read` 标记已读。WebSocket 地址为 `ws://host:port/ws?token=<token>`，连接后自动接收房间消息、私信和好友事件的实时推送。
+
+本项目由 AI Agent（zhezhe-agent）协助开发。
